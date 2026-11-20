@@ -368,3 +368,33 @@ def test_approved_oracle_is_database_immutable_except_for_revocation(policy):
                 "UPDATE oracle_proposal SET state = 'APPROVED' WHERE id = %s",
                 (oracle_id,),
             )
+
+
+
+def test_valid_late_tool_receipt_is_unknown_before_periodic_reconciliation(policy):
+    import asyncio
+    from uuid import UUID
+
+    from clashbolt.experiment import execute
+
+    proposed = policy.propose("late-receipt")
+    proposal_id = UUID(proposed["id"])
+    policy.approve(proposal_id, ORACLE_HASH, "reviewer")
+    plan = policy.record_plan(
+        proposal_id, choose_plan(strategy="semantic", variant="racy")
+    )
+    plan_id = UUID(plan["id"])
+    token = policy.issue(proposal_id, "racy", "overlap", plan_id=plan_id)
+    assert policy.authorize(token["token"], "racy", "overlap", plan_id)
+    with policy.connect() as connection:
+        connection.execute(
+            "UPDATE agent_plan SET deadline_at = now() - interval '1 second' "
+            "WHERE id = %s",
+            (plan_id,),
+        )
+    assert policy.record_outcome(plan_id, asyncio.run(execute("racy", "overlap")))
+    saved = policy.get_plan(plan_id)
+    assert saved["state"] == "UNKNOWN"
+    assert saved["result"]["verdict"] == "UNKNOWN"
+    assert saved["result"]["evidence_sha256"] is None
+    assert policy.evidence_gaps(plan_id)[0]["classification"] == "MISSING_RECEIPT"

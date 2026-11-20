@@ -803,6 +803,12 @@ class Policy(Ledger):
                 return False
 
             if (
+                plan["deadline_at"] is None
+                or plan["deadline_at"]
+                    <= conn.execute("SELECT now() AS now").fetchone()["now"]
+            ):
+                invalid = invalid or "Tool receipt arrived after deadline"
+            if (
                 witness.get("variant") != plan["plan"].get("variant")
                 or witness.get("schedule") != plan["plan"].get("schedule")
             ):

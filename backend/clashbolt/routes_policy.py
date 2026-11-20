@@ -275,6 +275,9 @@ def policy_router(dsn: str | None) -> APIRouter:
         witness = await execute(request.variant, request.schedule)
         if not policy.record_outcome(request.plan_id, witness):
             raise HTTPException(409, "A validated plan receipt could not be stored")
+        adjudicated = policy.get_plan(request.plan_id)
+        if not adjudicated or adjudicated["state"] != "COMPLETE":
+            raise HTTPException(409, "Tool receipt was not certifiable")
         return witness
 
     @router.get("/agent/plans/{plan_id}")
