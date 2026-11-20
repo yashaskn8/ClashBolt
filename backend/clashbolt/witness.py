@@ -29,11 +29,86 @@ def evidence_digest(witness: dict) -> str:
     return sha256(serialized).hexdigest()
 
 
+def _history_error(witness: dict) -> str | None:
+    """Replay every declared action without trusting reported reads or commits."""
+    gates = SCHEDULES[witness["schedule"]]
+    observed = witness.get("observed_steps")
+    if not isinstance(observed, list) or len(observed) > len(gates):
+        return "Invalid observed checkpoint count"
+    if witness.get("requested_gates") != list(gates):
+        return "Requested gates do not match the selected schedule"
+    if witness.get("complete") is True and len(observed) != len(gates):
+        return "Completed witness is missing checkpoints"
+
+    remaining = FIXTURE["initial_stock"]
+    confirmed = 0
+    reads: dict[str, int] = {}
+    for index, event in enumerate(observed):
+        client, phase = gates[index].split(".")
+        if not isinstance(event, dict):
+            return "Checkpoint must be a structured observation"
+        if (
+            type(event.get("sequence")) is not int
+            or event["sequence"] != index + 1
+            or event.get("client") != client
+            or event.get("checkpoint") != phase
+        ):
+            return "Checkpoint order or identity differs from the schedule"
+
+        if phase == "read":
+            if set(event) != {"sequence", "client", "checkpoint", "observed_stock"}:
+                return "Unexpected fields in a stock read"
+            if type(event.get("observed_stock")) is not int:
+                return "A stock read must be an integer"
+            if event["observed_stock"] != remaining:
+                return "Reported read does not match the preceding fixture state"
+            reads[client] = remaining
+        else:
+            if set(event) != {
+                "sequence", "client", "checkpoint",
+                "accepted", "stock_after", "confirmed_after",
+            }:
+                return "Unexpected fields in a commit"
+            if client not in reads:
+                return "Commit lacks its preceding read"
+            available = (
+                reads.pop(client) if witness["variant"] == "racy" else remaining
+            )
+            accepted = available >= 1
+            if accepted:
+                remaining = available - 1
+                confirmed += 1
+            if (
+                type(event.get("accepted")) is not bool
+                or type(event.get("stock_after")) is not int
+                or type(event.get("confirmed_after")) is not int
+                or event["accepted"] != accepted
+                or event["stock_after"] != remaining
+                or event["confirmed_after"] != confirmed
+            ):
+                return "Commit outcome is inconsistent with the synthetic fixture"
+
+    expected_state = {
+        "initial_stock": FIXTURE["initial_stock"],
+        "remaining_stock": remaining,
+        "confirmed_count": confirmed,
+    }
+    if witness.get("final_state") != expected_state:
+        return "Final state disagrees with the independently replayed history"
+    if type(witness.get("complete")) is not bool:
+        return "Completion status must be a boolean"
+    computed = check_invariant(expected_state, complete=witness["complete"])
+    if witness.get("verdict") != computed:
+        return "Verdict disagrees with the independent oracle"
+    return None
+
+
 def validate_contract(witness: dict) -> str | None:
-    """Return a reason for rejection; a valid digest alone is not a valid verdict."""
+    """A digest is necessary but insufficient: validate the entire fixed history."""
     if not isinstance(witness, dict):
         return "Expected a JSON object"
     oracle = witness.get("oracle")
+    variant, schedule = witness.get("variant"), witness.get("schedule")
     if not isinstance(oracle, dict):
         return "Missing immutable oracle binding"
     if (
@@ -42,44 +117,25 @@ def validate_contract(witness: dict) -> str | None:
         or witness.get("target_revision") != TARGET_REVISION
         or witness.get("fixture") != FIXTURE
         or witness.get("fixture_hash") != FIXTURE_HASH
-        or oracle.get("id") != ORACLE_ID
-        or oracle.get("sha256") != ORACLE_HASH
-        or oracle.get("version") != ORACLE_VERSION
-        or witness.get("variant") not in ("racy", "locked")
-        or witness.get("schedule") not in SCHEDULES
+        or oracle != {
+            "id": ORACLE_ID,
+            "version": ORACLE_VERSION,
+            "sha256": ORACLE_HASH,
+            "authority": "fixed-demo-rule",
+        }
+        or type(variant) is not str
+        or variant not in ("racy", "locked")
+        or type(schedule) is not str
+        or schedule not in SCHEDULES
     ):
         return "Witness does not match the fixed demo contracts"
     try:
         actual_digest = evidence_digest(witness)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return "Witness cannot be serialized"
     if actual_digest != witness.get("evidence_sha256"):
         return "Evidence digest differs from the exported record"
-
-    observed = witness.get("observed_steps")
-    expected = SCHEDULES[witness["schedule"]]
-    if not isinstance(observed, list) or len(observed) > len(expected):
-        return "Invalid observed checkpoint sequence"
-    if not all(
-        isinstance(step, dict)
-        and step.get("sequence") == i + 1
-        and step.get("client") == expected[i].split(".")[0]
-        and step.get("checkpoint") == expected[i].split(".")[1]
-        for i, step in enumerate(observed)
-    ):
-        return "Checkpoint observations disagree with the declared schedule"
-    if witness.get("requested_gates") != list(expected):
-        return "Requested gate order was changed"
-    if witness.get("complete") is True and len(observed) != len(expected):
-        return "Completed witness is missing checkpoints"
-
-    state = witness.get("final_state")
-    if not isinstance(state, dict):
-        return "Missing authoritative fixture state"
-    computed = check_invariant(state, complete=witness.get("complete") is True)
-    if computed != witness.get("verdict"):
-        return "Recorded verdict disagrees with the independent oracle"
-    return None
+    return _history_error(witness)
 
 
 async def verify(witness: dict) -> dict:

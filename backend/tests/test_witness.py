@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 from clashbolt.experiment import execute
-from clashbolt.witness import verify
+from clashbolt.witness import evidence_digest, verify
 
 
 def test_clean_process_reproduces_controlled_witness(tmp_path):
@@ -39,3 +39,41 @@ def test_changed_payload_and_scope_fail_closed():
     missing = json.loads(json.dumps(evidence))
     missing.pop("oracle")
     assert asyncio.run(verify(missing))["status"] == "INVALID"
+
+
+def test_self_consistent_hash_does_not_make_forged_history_valid():
+    original = asyncio.run(execute("racy", "overlap"))
+    for field, replacement in (
+        ("observed_stock", 0),
+        ("sequence", 99),
+        ("client", "z"),
+    ):
+        forged = json.loads(json.dumps(original))
+        forged["observed_steps"][0][field] = replacement
+        forged["evidence_sha256"] = evidence_digest(forged)
+        assert asyncio.run(verify(forged))["status"] == "INVALID"
+
+
+def test_forged_commit_or_state_is_rejected_even_with_new_digest():
+    original = asyncio.run(execute("racy", "overlap"))
+    forged = json.loads(json.dumps(original))
+    forged["observed_steps"][2]["accepted"] = False
+    forged["evidence_sha256"] = evidence_digest(forged)
+    assert asyncio.run(verify(forged))["status"] == "INVALID"
+
+    forged = json.loads(json.dumps(original))
+    forged["final_state"]["remaining_stock"] = 99
+    forged["evidence_sha256"] = evidence_digest(forged)
+    assert asyncio.run(verify(forged))["status"] == "INVALID"
+
+
+def test_malformed_types_fail_closed():
+    original = asyncio.run(execute("racy", "overlap"))
+    malformed = json.loads(json.dumps(original))
+    malformed["schedule"] = ["overlap"]
+    assert asyncio.run(verify(malformed))["status"] == "INVALID"
+
+    malformed = json.loads(json.dumps(original))
+    malformed["observed_steps"][0]["sequence"] = True
+    malformed["evidence_sha256"] = evidence_digest(malformed)
+    assert asyncio.run(verify(malformed))["status"] == "INVALID"
