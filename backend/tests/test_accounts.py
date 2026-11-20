@@ -34,7 +34,9 @@ def test_named_accounts_use_password_hashes_and_expiring_sessions(accounts):
     assert verify_session(
         signed, "different-session-signing-key-123456789", accounts
     )["username"] == "alice.operator"
-    assert verify_session(signed + "bad", "different-session-signing-key-123456789", accounts) is None
+    assert verify_session(
+        signed + "bad", "different-session-signing-key-123456789", accounts
+    ) is None
     assert accounts.disable_account("alice.operator")
     assert accounts.authenticate("alice.operator", "correct-horse-battery-test") is None
     assert verify_session(signed, "different-session-signing-key-123456789", accounts) is None
