@@ -35,7 +35,6 @@ def test_custom_archive_roundtrip_read_and_manifest(tmp_path):
 
 def test_disposable_restore_drill_does_not_change_control_database(tmp_path):
     import psycopg
-
     from clashbolt.policy import Policy
 
     dsn = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
