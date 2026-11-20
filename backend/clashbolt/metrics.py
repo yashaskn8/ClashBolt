@@ -30,5 +30,11 @@ def operational_metrics(snapshot: dict) -> str:
         "# HELP clashbolt_worker_records Known workers in the last day",
         "# TYPE clashbolt_worker_records gauge",
         f'clashbolt_worker_records {len(snapshot["workers"])}',
+        "# HELP clashbolt_native_slots_occupied Active native target claims",
+        "# TYPE clashbolt_native_slots_occupied gauge",
+        f'clashbolt_native_slots_occupied {int(snapshot.get("native_slots_occupied", 0))}',
+        "# HELP clashbolt_native_slots_limit Configured active native target claim limit",
+        "# TYPE clashbolt_native_slots_limit gauge",
+        f'clashbolt_native_slots_limit {int(snapshot.get("native_slots_limit", 2))}',
     ))
     return "\n".join(lines) + "\n"

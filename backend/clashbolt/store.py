@@ -18,7 +18,7 @@ from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
-BASE_SCHEMA_VERSION = 4
+BASE_SCHEMA_VERSION = 5
 
 _SCHEMA = (
     """
@@ -27,6 +27,9 @@ _SCHEMA = (
         max_open INTEGER NOT NULL DEFAULT 20 CHECK (max_open BETWEEN 1 AND 1000)
     )
     """,
+    "ALTER TABLE project_quota ADD COLUMN IF NOT EXISTS "
+    "max_native_active INTEGER NOT NULL DEFAULT 2 "
+    "CHECK (max_native_active BETWEEN 1 AND 16)",
     """
     CREATE TABLE IF NOT EXISTS experiment_draft (
         project_id TEXT PRIMARY KEY REFERENCES project_quota(project_id),
@@ -403,6 +406,18 @@ class Ledger:
             verifications = conn.execute(
                 "SELECT status, count(*) AS count FROM verification_job GROUP BY status"
             ).fetchall()
+            native_slots = conn.execute(
+                """
+                SELECT count(*) AS occupied FROM experiment_run
+                WHERE project_id = 'local'
+                  AND execution_backend = 'native-postgresql'
+                  AND status IN ('RUNNING', 'CANCELLING')
+                  AND lease_until > now()
+                """
+            ).fetchone()["occupied"]
+            quota = conn.execute(
+                "SELECT max_native_active FROM project_quota WHERE project_id = 'local'"
+            ).fetchone()
             workers = conn.execute(
                 """
                 SELECT owner, last_seen, last_seen > now() - interval '15 seconds'
@@ -425,6 +440,8 @@ class Ledger:
                     for row in workers
                 ],
                 "responsive_workers": sum(row["responsive"] for row in workers),
+                "native_slots_occupied": native_slots,
+                "native_slots_limit": quota["max_native_active"] if quota else 2,
             }
 
     def recent(self, limit: int = 20) -> list[dict]:
@@ -482,6 +499,16 @@ class Ledger:
         if not owner or len(owner) > 100 or not 5 <= lease_seconds <= 300:
             raise ValueError("Invalid worker or lease duration")
         with self.connect() as conn:
+            # Serialize native-slot decisions between concurrent workers.
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
+            )
+            quota = conn.execute(
+                """
+                SELECT max_native_active FROM project_quota
+                WHERE project_id = 'local' FOR UPDATE
+                """
+            ).fetchone()
             row = conn.execute(
                 """
                 SELECT * FROM experiment_run
@@ -491,9 +518,20 @@ class Ledger:
                     OR (status = 'RUNNING' AND lease_until < now()
                         AND cancel_requested = FALSE)
                   )
+                  AND (
+                    execution_backend = 'memory'
+                    OR (
+                        SELECT count(*) FROM experiment_run AS active
+                        WHERE active.project_id = 'local'
+                          AND active.execution_backend = 'native-postgresql'
+                          AND active.status IN ('RUNNING', 'CANCELLING')
+                          AND active.lease_until > now()
+                    ) < %s
+                  )
                 ORDER BY created_at, id
                 LIMIT 1 FOR UPDATE SKIP LOCKED
-                """
+                """,
+                (quota["max_native_active"],),
             ).fetchone()
             if not row:
                 return None
