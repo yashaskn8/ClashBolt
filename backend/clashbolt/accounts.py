@@ -54,9 +54,10 @@ def _valid_password(password: str) -> bool:
 
 class AccountStore(Policy):
     def migrate(self) -> None:
-        super().migrate()
+        """Apply control, approval and account revisions in one transaction."""
         with self.connect() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
+            self._apply_policy_schema(conn)
             for statement in _ACCOUNT_SCHEMA:
                 conn.execute(statement)
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)

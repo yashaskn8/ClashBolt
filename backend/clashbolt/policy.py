@@ -211,14 +211,18 @@ POLICY_SCHEMA_VERSION = 6
 
 
 class Policy(Ledger):
+    @classmethod
+    def _apply_policy_schema(cls, conn) -> None:
+        cls._apply_base_schema(conn)
+        for statement in _POLICY_SCHEMA:
+            conn.execute(statement)
+        _record_schema_revision(conn, "policy", POLICY_SCHEMA_VERSION)
+
     def migrate(self) -> None:
         """Control and policy schema changes commit atomically as one version."""
         with self.connect() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
-            self._apply_base_schema(conn)
-            for statement in _POLICY_SCHEMA:
-                conn.execute(statement)
-            _record_schema_revision(conn, "policy", POLICY_SCHEMA_VERSION)
+            self._apply_policy_schema(conn)
 
     def reserve_model_call(self) -> UUID:
         """Atomically reserve a worst-case 256-token local request before HTTP."""

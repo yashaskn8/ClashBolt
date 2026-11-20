@@ -56,3 +56,29 @@ def test_local_identity_lockout_and_password_reset(accounts):
         accounts.create_account("claire", "viewer", "too-short")
     with pytest.raises(ValueError, match="username or role"):
         accounts.create_account("claire", "superadmin", "long-enough-password-000")
+
+
+
+def test_account_migration_fails_atomically_on_invalid_new_schema(accounts, monkeypatch):
+    import clashbolt.accounts as module
+
+    original = module._ACCOUNT_SCHEMA
+    with accounts.connect() as conn:
+        before = {
+            row["component"]: row["version"] for row in conn.execute(
+                "SELECT component, version FROM schema_revision"
+            ).fetchall()
+        }
+    monkeypatch.setattr(module, "_ACCOUNT_SCHEMA", (
+        *original,
+        "CREATE TABLE this_is_invalid (",
+    ))
+    with pytest.raises(Exception):
+        accounts.migrate()
+    with accounts.connect() as conn:
+        after = {
+            row["component"]: row["version"] for row in conn.execute(
+                "SELECT component, version FROM schema_revision"
+            ).fetchall()
+        }
+    assert after == before
