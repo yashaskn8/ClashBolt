@@ -120,9 +120,12 @@ def create_app() -> FastAPI:
         account_store is None or len(session_secret) < 32
     ):
         raise ValueError("Account mode needs database and a 32-character session secret")
+    # The bundled UI is same-origin: never trust a separate dev-server origin
+    # when the hardened static deployment is enabled.
+    dev_origins = ("http://localhost:5173", "http://127.0.0.1:5173")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=[] if frontend_dir else list(dev_origins),
         allow_methods=["GET", "POST"],
         allow_headers=[
             "Content-Type", "Authorization", "Last-Event-ID",
@@ -137,7 +140,19 @@ def create_app() -> FastAPI:
         peer = request.client.host if request.client else None
         raw_host = request.headers.get("host", "")
         try:
-            requested_host = urlsplit("//" + raw_host).hostname
+            parsed_host = urlsplit("//" + raw_host)
+            # URL parsing alone accepts invalid Host forms such as
+            # "user@localhost", "localhost/path", or a nonnumeric port.
+            _ = parsed_host.port
+            requested_host = (
+                parsed_host.hostname
+                if not (
+                    parsed_host.username is not None
+                    or parsed_host.password is not None
+                    or parsed_host.path or parsed_host.query or parsed_host.fragment
+                )
+                else None
+            )
         except ValueError:
             requested_host = None
         if (
@@ -149,13 +164,17 @@ def create_app() -> FastAPI:
                 content={"detail": "ClashBolt is restricted to local connections"},
             )
         origin = request.headers.get("origin")
+        trusted_origin = (
+            origin == f"{request.url.scheme}://{raw_host}"
+            if frontend_dir
+            else origin in (
+                *dev_origins, "http://127.0.0.1:8000", "http://localhost:8000",
+            )
+        )
         if (
             request.method not in ("GET", "HEAD", "OPTIONS")
             and origin is not None
-            and origin not in (
-                "http://127.0.0.1:5173", "http://localhost:5173",
-                "http://127.0.0.1:8000", "http://localhost:8000",
-            )
+            and not trusted_origin
         ):
             return JSONResponse(
                 status_code=403, content={"detail": "Cross-origin write was denied"},
