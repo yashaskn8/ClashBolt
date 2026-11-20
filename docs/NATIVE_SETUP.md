@@ -422,3 +422,18 @@ or authenticated operator session, or the review-console button.
 A `VERIFIED` history confirms internal event-chain consistency, **not**
 external application behavior or resistance to the PostgreSQL administrator.
 Older pre-migration plans without full history report `UNCONFIRMED`.
+
+
+## Named-account draft boundaries
+
+When `CLASHBOLT_ACCESS_MODE=accounts`, each authenticated account has its
+own version-checked experiment draft. Switching or signing out of an account
+clears the previous form and restores only the next account's saved settings.
+The account-specific records have a foreign key to the provisioned account
+and disappear when that account is deleted by a trusted database
+administrator. Existing local/private single-operator modes continue using
+the local shared draft.
+
+Drafts never grant oracle approval, tool capability, target access, or
+ownership of completed experiments. This feature is account-specific draft
+storage **within the single 'local' project**, not full multi-project tenancy.
