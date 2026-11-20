@@ -84,3 +84,9 @@ The tool requires a complete paired five-strategy matrix, split separation,
 manifest hash matching, and bounded reported resource use. It does not
 execute arbitrary target code, authenticate adjudicators or independently
 verify externally supplied finding claims.
+
+
+For local worker, queue, verification and model-uncertainty operational checks,
+see [docs/OPERATOR_RUNBOOK.md](docs/OPERATOR_RUNBOOK.md). The operator dashboard
+shows fixed diagnostic hints, not automated notifications or proof of a
+production-level service.
