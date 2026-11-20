@@ -181,3 +181,23 @@ footer span { padding: 0 8px; color: #c1ec6b; }
 .transition-list code { color: #bce56b; }
 .transition-list strong { min-width: 90px; color: #e0eafa; }
 .transition-list span { color: #91a7bf; }
+
+.policy-console { margin-bottom: 35px; }
+.policy-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.policy-actions button {
+  background: #1d3027; border: 1px solid #4e6940; color: #d5edbb;
+  padding: 11px 14px; border-radius: 6px; font-size: 12px;
+}
+.policy-actions button:hover:not(:disabled) { background: #2d4730; }
+.policy-actions button:disabled { opacity: .45; }
+.policy-reference {
+  display: flex; gap: 14px; flex-wrap: wrap; padding: 12px;
+  background: #182839; border-radius: 6px; font: 11px ui-monospace, monospace;
+}
+.policy-reference span { color: #b8e27b; }
+.policy-reference code { color: #91a5c1; }
+.policy-output {
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px;
+  overflow: auto; padding: 15px; color: #b7d4c8; font-size: 11px;
+  background: #0b1521; border: 1px solid #2b4051; border-radius: 8px;
+}

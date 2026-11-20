@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import DurableMonitor, { type DurableRun } from './DurableMonitor'
+import PolicyConsole from './PolicyConsole'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
@@ -182,6 +183,7 @@ export default function App() {
           </section>
         </div>
         {durable && <DurableMonitor initial={durable} onUpdate={setDurable} />}
+        {catalog?.storage === 'postgresql' && <PolicyConsole variant={variant} schedule={schedule} />}
         <footer>CLASHBOLT LAB <span>·</span> Synthetic targets only. PostgreSQL mode keeps durable control state, not external effects.</footer>
       </main>
     </div>
