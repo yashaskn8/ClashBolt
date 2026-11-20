@@ -5,7 +5,7 @@ import os
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import execute
@@ -64,8 +64,17 @@ class EvaluationInput(StrictModel):
     trials: int = Field(default=8, ge=1, le=20)
 
 
-def require_operator(x_operator_token: str | None) -> None:
-    """Local write protection. Not a replacement for authenticated project roles."""
+def require_operator(
+    x_operator_token: str | None, http_request: Request | None = None
+) -> None:
+    """Require an operator identity in account mode, else the legacy local token."""
+    if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts":
+        account = (
+            getattr(http_request.state, "account", None) if http_request else None
+        )
+        if not account or account["role"] != "operator":
+            raise HTTPException(403, "Authenticated operator account required")
+        return
     configured = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
     if not configured or not x_operator_token:
         raise HTTPException(403, "Operator token is required")
@@ -74,9 +83,17 @@ def require_operator(x_operator_token: str | None) -> None:
 
 
 def require_reviewer(
-    reviewer_token: str | None, operator_token: str | None
+    reviewer_token: str | None, operator_token: str | None,
+    http_request: Request | None = None,
 ) -> None:
-    """Enforce a distinct human review secret when private mode is enabled."""
+    """Named reviewer in account mode; distinct secret in legacy local mode."""
+    if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts":
+        account = (
+            getattr(http_request.state, "account", None) if http_request else None
+        )
+        if not account or account["role"] != "reviewer":
+            raise HTTPException(403, "Authenticated reviewer account required")
+        return
     configured = os.getenv("CLASHBOLT_REVIEWER_TOKEN")
     if not configured:
         if os.getenv("CLASHBOLT_ACCESS_MODE") == "private":
@@ -101,8 +118,13 @@ def policy_router(dsn: str | None) -> APIRouter:
 
 
     @router.post("/oracle/proposals", status_code=201)
-    def propose_rule(request: ProposalInput):
-        return require_policy().propose(request.proposed_by, request.candidate)
+    def propose_rule(request: ProposalInput, http_request: Request):
+        actor = (
+            http_request.state.account["username"]
+            if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
+            else request.proposed_by
+        )
+        return require_policy().propose(actor, request.candidate)
 
     @router.get("/oracle/proposals")
     def list_rules():
@@ -110,33 +132,40 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/oracle/proposals/{proposal_id}/approve")
     def approve_rule(
-        proposal_id: UUID, request: ReviewInput,
+        proposal_id: UUID, request: ReviewInput, http_request: Request,
         x_operator_token: str | None = Header(default=None),
         x_reviewer_token: str | None = Header(default=None),
     ):
-        require_reviewer(x_reviewer_token, x_operator_token)
+        require_reviewer(x_reviewer_token, x_operator_token, http_request)
+        reviewer = (
+            http_request.state.account["username"]
+            if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
+            else request.reviewer
+        )
         try:
             return require_policy().approve(
-                proposal_id, request.expected_hash, request.reviewer
+                proposal_id, request.expected_hash, reviewer
             )
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
     @router.post("/oracle/proposals/{proposal_id}/revoke")
     def revoke_rule(
-        proposal_id: UUID, x_operator_token: str | None = Header(default=None),
+        proposal_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
         x_reviewer_token: str | None = Header(default=None),
     ):
-        require_reviewer(x_reviewer_token, x_operator_token)
+        require_reviewer(x_reviewer_token, x_operator_token, http_request)
         if not require_policy().revoke_rule(proposal_id):
             raise HTTPException(409, "Oracle version is not currently approved")
         return {"proposal_id": str(proposal_id), "state": "REVOKED"}
 
     @router.post("/tool-capabilities", status_code=201)
     def issue_capability(
-        request: CapabilityInput, x_operator_token: str | None = Header(default=None),
+        request: CapabilityInput, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         try:
             return require_policy().issue(
                 request.proposal_id, request.variant, request.schedule,
@@ -147,16 +176,19 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/tool-capabilities/{capability_id}/revoke")
     def revoke_capability(
-        capability_id: UUID, x_operator_token: str | None = Header(default=None),
+        capability_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         if not require_policy().revoke_capability(capability_id):
             raise HTTPException(404, "No active capability with this ID")
         return {"capability_id": str(capability_id), "revoked": True}
 
     @router.get("/tool-audit")
-    def tool_audit(x_operator_token: str | None = Header(default=None)):
-        require_operator(x_operator_token)
+    def tool_audit(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
         return {"events": require_policy().audit()}
 
     @router.post("/agent/plans", status_code=201)
@@ -180,10 +212,10 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/agent/frontier/{proposal_id}/plans", status_code=201)
     def create_frontier_plan(
-        proposal_id: UUID, request: LocalModelPlanInput,
+        proposal_id: UUID, request: LocalModelPlanInput, http_request: Request,
         x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         if proposal_id != request.proposal_id:
             raise HTTPException(409, "Frontier and oracle proposal IDs differ")
         try:
@@ -193,10 +225,10 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/agent/plans/model", status_code=201)
     async def propose_local_model_plan(
-        request: LocalModelPlanInput,
+        request: LocalModelPlanInput, http_request: Request,
         x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         store = require_policy()
         try:
             store.frontier(request.proposal_id, request.variant)
@@ -265,31 +297,35 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/agent/plans/{plan_id}/feedback", status_code=201)
     def record_feedback(
-        plan_id: UUID, request: FeedbackInput,
+        plan_id: UUID, request: FeedbackInput, http_request: Request,
         x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         try:
             return require_policy().record_feedback(plan_id, request.remaining_budget)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
     @router.post("/agent/plans/reconcile")
-    def reconcile_plans(x_operator_token: str | None = Header(default=None)):
-        require_operator(x_operator_token)
+    def reconcile_plans(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
         return {"reconciled": require_policy().reconcile_stalled_plans()}
 
     @router.get("/agent/model-budget")
-    def model_budget(x_operator_token: str | None = Header(default=None)):
-        require_operator(x_operator_token)
+    def model_budget(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
         return require_policy().local_model_budget()
 
     @router.post("/agent/evaluate")
     async def evaluate(
-        request: EvaluationInput,
+        request: EvaluationInput, http_request: Request,
         x_operator_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         require_policy()
         return await compare_strategies(request.trials)
 
