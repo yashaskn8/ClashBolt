@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 
 export type DurableRun = {
   run_id: string
@@ -46,7 +46,7 @@ type Event = {
 
 type Props = {
   initial: DurableRun
-  onUpdate: (run: DurableRun) => void
+  onUpdate: Dispatch<SetStateAction<DurableRun | null>>
   operatorToken: string
   canOperate: boolean
   accountMode: boolean
@@ -61,6 +61,7 @@ export default function DurableMonitor({
 
   useEffect(() => {
     let mounted = true
+    setEvents([])
 
     async function refresh() {
       try {
@@ -86,8 +87,18 @@ export default function DurableMonitor({
           more = page.has_more
         }
         if (mounted) {
-          onUpdate(run)
-          setEvents(history)
+          // Overlapping SSE and polling responses can arrive out of order.
+          // Never rewind a run or replace the active selection with an old one.
+          onUpdate((current) => (
+            current?.run_id === runId && run.version > current.version
+              ? run : current
+          ))
+          // Also keep the longest authoritative event prefix.
+          setEvents((current) => {
+            const prior = current.at(-1)?.version ?? 0
+            const next = history.at(-1)?.version ?? 0
+            return next >= prior ? history : current
+          })
           setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
         }
       } catch {
@@ -114,7 +125,11 @@ export default function DurableMonitor({
         headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
       })
       if (!response.ok) throw new Error('Cancellation request failed')
-      onUpdate((await response.json()) as DurableRun)
+      const updated = (await response.json()) as DurableRun
+      onUpdate((current) => (
+        current?.run_id === runId && updated.version > current.version
+          ? updated : current
+      ))
     } catch {
       setError('Cancellation request could not be confirmed.')
     }
