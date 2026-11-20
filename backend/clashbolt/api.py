@@ -1,11 +1,15 @@
-"""Local-only demo API. This is intentionally not an authenticated production service."""
+"""ClashBolt API: local scratch lab and optional PostgreSQL durable run control."""
 
+import asyncio
+import json
+import os
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import (
     FIXTURE,
@@ -19,30 +23,45 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
+from clashbolt.store import Ledger
 
 
 class ExperimentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     target_id: Literal["synthetic-inventory"] = "synthetic-inventory"
     variant: Literal["racy", "locked"]
     schedule: Literal["overlap", "serial"]
 
 
+class RunRequest(ExperimentRequest):
+    client_key: str = Field(min_length=1, max_length=100)
+    step_budget: int = Field(default=4, ge=4, le=32)
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="ClashBolt Synthetic Lab", version="0.1.0")
+    app = FastAPI(title="ClashBolt Synthetic Lab", version="0.2.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
-    # Deliberately ephemeral: stage 2 adds PostgreSQL durable experiment state.
     runs: dict[str, dict] = {}
+    dsn = os.getenv("CLASHBOLT_DATABASE_URL")
+    ledger = Ledger(dsn) if dsn else None
+
+    def require_ledger() -> Ledger:
+        if ledger is None:
+            raise HTTPException(503, "Set CLASHBOLT_DATABASE_URL for durable runs")
+        return ledger
 
     @app.get("/api/health")
     def health() -> dict:
-        return {"status": "ok", "mode": "synthetic-local"}
+        return {
+            "status": "ok",
+            "mode": "synthetic-local",
+            "storage": "postgresql" if ledger else "memory-only",
+        }
 
     @app.get("/api/catalog")
     def catalog() -> dict:
@@ -52,7 +71,9 @@ def create_app() -> FastAPI:
             "fixture": FIXTURE,
             "fixture_hash": FIXTURE_HASH,
             "variants": ["racy", "locked"],
-            "schedules": [{"id": name, "gates": list(gates)} for name, gates in SCHEDULES.items()],
+            "schedules": [
+                {"id": name, "gates": list(gates)} for name, gates in SCHEDULES.items()
+            ],
             "oracle": {
                 "id": ORACLE_ID,
                 "version": ORACLE_VERSION,
@@ -60,15 +81,16 @@ def create_app() -> FastAPI:
                 "rule": ORACLE_RULE,
                 "authority": "fixed-demo-rule",
             },
+            "storage": "postgresql" if ledger else "memory-only",
             "limitations": (
-                "Local synthetic fixture only; no real target, "
-                "database isolation, or human approval"
+                "Local synthetic fixture only; no external targets, "
+                "network isolation, or human-approved policy"
             ),
         }
 
     @app.post("/api/experiments", status_code=201)
     async def create_experiment(request: ExperimentRequest) -> dict:
-        # This strict typed boundary rejects arbitrary target URLs, scripts and plans.
+        # Scratch-mode compatibility endpoint; not a durable queue or production API.
         witness = await execute(request.variant, request.schedule)
         run_id = str(uuid4())
         result = {"run_id": run_id, "witness": witness, "replay_status": "NOT_RUN"}
@@ -97,6 +119,100 @@ def create_app() -> FastAPI:
         return {
             "run_id": run_id,
             "replay_status": original["replay_status"],
+            "original_sha256": witness["evidence_sha256"],
+            "replay_sha256": replayed["evidence_sha256"],
+            "replay_verdict": replayed["verdict"],
+            "scope": "SYNTHETIC_ONLY",
+        }
+
+    @app.post("/api/runs", status_code=201)
+    def submit_run(request: RunRequest) -> dict:
+        store = require_ledger()
+        try:
+            return store.admit(
+                client_key=request.client_key,
+                variant=request.variant,
+                schedule=request.schedule,
+                step_budget=request.step_budget,
+            )
+        except ValueError as error:
+            status = 429 if "quota" in str(error).lower() else 409
+            raise HTTPException(status, str(error)) from error
+
+    @app.get("/api/runs/{run_id}")
+    def get_run(run_id: UUID) -> dict:
+        run = require_ledger().get(run_id)
+        if not run:
+            raise HTTPException(404, "Run not found")
+        return run
+
+    @app.get("/api/runs/{run_id}/events")
+    def get_events(run_id: UUID, after: int = 0) -> dict:
+        if after < 0:
+            raise HTTPException(422, "Cursor cannot be negative")
+        store = require_ledger()
+        if not store.get(run_id):
+            raise HTTPException(404, "Run not found")
+        return {"run_id": str(run_id), "events": store.transitions(run_id, after)}
+
+    @app.get("/api/runs/{run_id}/stream")
+    async def stream_events(request: Request, run_id: UUID, after: int = 0):
+        store = require_ledger()
+        if not store.get(run_id):
+            raise HTTPException(404, "Run not found")
+        if after < 0:
+            raise HTTPException(422, "Cursor cannot be negative")
+
+        async def messages():
+            cursor = after
+            # Streaming is advisory. Reconnect and GET the canonical snapshot.
+            for _ in range(30):
+                if await request.is_disconnected():
+                    break
+                for event in store.transitions(run_id, cursor):
+                    cursor = event["version"]
+                    payload = json.dumps(event, separators=(",", ":"))
+                    yield f"id: {cursor}\nevent: transition\ndata: {payload}\n\n"
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            messages(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def cancel_run(run_id: UUID) -> dict:
+        result = require_ledger().cancel(run_id)
+        if result is None:
+            raise HTTPException(404, "Run not found")
+        return result
+
+    @app.get("/api/runs/{run_id}/witness")
+    def download_witness(run_id: UUID) -> dict:
+        result = require_ledger().get(run_id)
+        if result is None:
+            raise HTTPException(404, "Run not found")
+        if result["witness"] is None:
+            raise HTTPException(409, "No complete witness exists yet")
+        return result["witness"]
+
+    @app.post("/api/runs/{run_id}/replay")
+    async def replay_durable_run(run_id: UUID) -> dict:
+        original = require_ledger().get(run_id)
+        if original is None:
+            raise HTTPException(404, "Run not found")
+        witness = original["witness"]
+        if witness is None:
+            raise HTTPException(409, "Run has no replayable witness")
+        replayed = await execute(witness["variant"], witness["schedule"])
+        same = (
+            witness["complete"]
+            and replayed["complete"]
+            and witness["evidence_sha256"] == replayed["evidence_sha256"]
+        )
+        return {
+            "run_id": str(run_id),
+            "replay_status": "REPRODUCED" if same else "UNCONFIRMED",
             "original_sha256": witness["evidence_sha256"],
             "replay_sha256": replayed["evidence_sha256"],
             "replay_verdict": replayed["verdict"],

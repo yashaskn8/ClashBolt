@@ -213,7 +213,7 @@ class Ledger:
                         AND cancel_requested = FALSE)
                   )
                 ORDER BY created_at, id
-                FOR UPDATE SKIP LOCKED LIMIT 1
+                LIMIT 1 FOR UPDATE SKIP LOCKED
                 """
             ).fetchone()
             if not row:
@@ -322,3 +322,12 @@ class Ledger:
                 ).fetchone()
                 _event(conn, updated, "cancelled claim expired; effect ambiguous")
             return len(rows)
+
+if __name__ == "__main__":
+    import os
+
+    dsn = os.getenv("CLASHBOLT_DATABASE_URL")
+    if not dsn:
+        raise SystemExit("Set CLASHBOLT_DATABASE_URL to a local PostgreSQL database")
+    Ledger(dsn).migrate()
+    print("ClashBolt PostgreSQL schema ready")
