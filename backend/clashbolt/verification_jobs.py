@@ -135,15 +135,25 @@ class VerificationJobs:
                 and run["witness"]
                 and (job["kind"] != "REDUCE" or run["verdict"] == "FAIL")
             )
-            credible = (
-                (job["kind"] == "REPLAY" and report.get("status") == "REPRODUCED")
-                or (
-                    job["kind"] == "REDUCE"
-                    and report.get("status") in ("MINIMAL", "BOUNDED")
-                    and report.get("original_evidence_sha256")
-                        == run["witness"]["evidence_sha256"] if current else False
-                )
-            )
+            credible = False
+            if current:
+                evidence_hash = run["witness"]["evidence_sha256"]
+                if job["kind"] == "REPLAY":
+                    credible = (
+                        report.get("status") == "REPRODUCED"
+                        and report.get("scope") == "SYNTHETIC_ONLY"
+                        and report.get("original_sha256") == evidence_hash
+                        and report.get("replay_sha256") == evidence_hash
+                        and report.get("verdict") == run["verdict"]
+                    )
+                elif job["kind"] == "REDUCE":
+                    credible = (
+                        report.get("status") in ("MINIMAL", "BOUNDED")
+                        and report.get("scope") == "SYNTHETIC_ONLY"
+                        and report.get("original_evidence_sha256") == evidence_hash
+                        and isinstance(report.get("minimal_gate_count"), int)
+                        and 1 <= report["minimal_gate_count"] <= 4
+                    )
             final = report if current else {
                 "status": "UNCONFIRMED",
                 "reason": "Certified run changed while verification was in flight",

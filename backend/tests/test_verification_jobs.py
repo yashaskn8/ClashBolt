@@ -49,13 +49,19 @@ def test_verification_jobs_claim_once_and_invalidate_after_revocation(completed_
     accepted = [claim for claim in claims if claim]
     assert len(accepted) == 1
     job = accepted[0]
+    witness = ledger.get(run_id)["witness"]
+    result = {
+        "status": "REPRODUCED",
+        "scope": "SYNTHETIC_ONLY",
+        "original_sha256": witness["evidence_sha256"],
+        "replay_sha256": witness["evidence_sha256"],
+        "verdict": "FAIL",
+    }
     assert queue.finish(
-        UUID(job["job_id"]), "verifier", job["lease_generation"],
-        {"status": "REPRODUCED"},
+        UUID(job["job_id"]), "verifier", job["lease_generation"], result,
     )
     assert not queue.finish(
-        UUID(job["job_id"]), "verifier", job["lease_generation"],
-        {"status": "REPRODUCED"},
+        UUID(job["job_id"]), "verifier", job["lease_generation"], result,
     )
     assert queue.get(UUID(job["job_id"]))["status"] == "COMPLETE"
     assert ledger.revoke_rule(approval_id)
@@ -107,3 +113,17 @@ def test_verification_route_and_separate_worker(completed_run, monkeypatch):
         assert client.post(
             path, json={"kind": "UNSAFE"}, headers={"X-Operator-Token": "verify-token"}
         ).status_code == 422
+
+
+def test_forged_verification_status_without_evidence_does_not_certify(completed_run):
+    ledger, run_id, _ = completed_run
+    queue = VerificationJobs(ledger.dsn)
+    queue.submit(run_id, "REPLAY")
+    claim = queue.claim("forged-worker")
+    assert claim is not None
+    assert queue.finish(
+        UUID(claim["job_id"]), "forged-worker", claim["lease_generation"],
+        {"status": "REPRODUCED"},
+    )
+    current = queue.get(UUID(claim["job_id"]))
+    assert current["status"] == "UNKNOWN"
