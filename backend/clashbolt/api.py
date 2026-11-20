@@ -12,11 +12,17 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from psycopg import Error as DatabaseError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from clashbolt.accounts import AccountStore, sign_session, verify_session
+from clashbolt.accounts import (
+    ACCOUNT_SCHEMA_VERSION,
+    AccountStore,
+    sign_session,
+    verify_session,
+)
 from clashbolt.experiment import (
     FIXTURE,
     FIXTURE_HASH,
@@ -29,9 +35,10 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
+from clashbolt.policy import POLICY_SCHEMA_VERSION
 from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
-from clashbolt.store import Ledger
+from clashbolt.store import BASE_SCHEMA_VERSION, Ledger
 from clashbolt.witness import verify
 from clashbolt.witness_bundle import create_bundle
 
@@ -122,7 +129,7 @@ def create_app() -> FastAPI:
         if (
             os.getenv("CLASHBOLT_ACCESS_MODE") != "private"
             or not request.url.path.startswith("/api/")
-            or request.url.path in ("/api/health", "/api/catalog", "/api/session")
+            or request.url.path in ("/api/health", "/api/ready", "/api/catalog", "/api/session")
         ):
             return await call_next(request)
         # Review authority is independent: a reviewer must not need an
@@ -167,7 +174,7 @@ def create_app() -> FastAPI:
         if access_mode != "accounts" or not request.url.path.startswith("/api/"):
             return await call_next(request)
         path = request.url.path
-        if path in ("/api/health", "/api/catalog", "/api/auth/login"):
+        if path in ("/api/health", "/api/ready", "/api/catalog", "/api/auth/login"):
             return await call_next(request)
         if path == "/api/session":
             return JSONResponse(status_code=404, content={"detail": "Not found"})
@@ -272,6 +279,37 @@ def create_app() -> FastAPI:
             "mode": "synthetic-local",
             "storage": "postgresql" if ledger else "memory-only",
         }
+
+    @app.get("/api/ready")
+    def ready() -> dict:
+        """Readiness does not create schema or hide failed dependencies."""
+        if ledger is None:
+            return {"status": "ready", "storage": "volatile-scratch-only"}
+        try:
+            with ledger.connect() as connection:
+                revisions = connection.execute(
+                    "SELECT component, version FROM schema_revision"
+                ).fetchall()
+                installed = {r["component"]: r["version"] for r in revisions}
+                required = {
+                    "control": BASE_SCHEMA_VERSION,
+                    "policy": POLICY_SCHEMA_VERSION,
+                }
+                if access_mode == "accounts":
+                    required["accounts"] = ACCOUNT_SCHEMA_VERSION
+                if any(installed.get(key) != expected for key, expected in required.items()):
+                    raise HTTPException(
+                        503, "Database schema is missing or incompatible"
+                    )
+                if access_mode == "accounts":
+                    active = connection.execute(
+                        "SELECT count(*) AS n FROM local_account WHERE active = TRUE"
+                    ).fetchone()["n"]
+                    if active == 0:
+                        raise HTTPException(503, "No active named accounts are configured")
+        except DatabaseError as error:
+            raise HTTPException(503, "Control database is unavailable") from error
+        return {"status": "ready", "storage": "postgresql", "access_mode": access_mode}
 
     @app.get("/api/catalog")
     def catalog() -> dict:
