@@ -338,6 +338,9 @@ export default function PolicyConsole({
           Review verified decision history
         </button>
         <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !canOperate}>Revoke tool capability</button>
+        <button type="button" onClick={() => void action(() =>
+          request('/api/agent/model-budget', undefined, operator)
+        )} disabled={busy || !canOperate}>Inspect model obligations</button>
         <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !canOperate}>Review tool audit</button>
         <button type="button" onClick={() => void action(() => request('/api/agent/evaluate', { trials: 8 }, operator))} disabled={busy || !operator}>Compare deterministic baselines</button>
       </div>

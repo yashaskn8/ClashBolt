@@ -16,6 +16,8 @@ test('independent reviewer approval permits a durable synthetic run', async ({
   await page.goto('/')
   await expect(page.getByLabel('Account name')).toBeVisible()
   await signIn(page, 'operator')
+  await page.getByRole('button', { name: /Inspect model obligations/ }).click()
+  await expect(page.getByLabel('Last operation result')).toContainText('"calls_unknown":')
   await expect(page.getByRole('button', {
     name: /Validate candidate rule/,
   })).toBeEnabled()
@@ -23,6 +25,9 @@ test('independent reviewer approval permits a durable synthetic run', async ({
   await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
 
   await signIn(page, 'reviewer')
+  await expect(page.getByRole('button', {
+    name: /Inspect model obligations/,
+  })).toBeDisabled()
   await expect(page.getByRole('button', { name: /Validate candidate rule/ })).toBeDisabled()
   await page.getByRole('button', { name: /Approve exact hash/ }).click()
   await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
