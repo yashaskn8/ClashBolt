@@ -2,7 +2,6 @@ import os
 from uuid import uuid4
 
 import pytest
-
 from clashbolt.experiment import ORACLE_HASH
 from clashbolt.planner import choose_plan, propose_follow_up
 from clashbolt.policy import Policy

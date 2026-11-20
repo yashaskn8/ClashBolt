@@ -1,12 +1,10 @@
 import os
-from uuid import UUID
 
 import pytest
-from fastapi.testclient import TestClient
-
 from clashbolt.api import create_app
 from clashbolt.experiment import ORACLE_HASH
 from clashbolt.policy import Policy
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
