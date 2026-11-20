@@ -286,3 +286,24 @@ def test_durable_mutations_require_operator_token(ledger, monkeypatch):
         run_id = response.json()["run_id"]
         assert client.post(f"/api/runs/{run_id}/cancel").status_code == 403
         assert client.post(f"/api/runs/{run_id}/cancel", headers=headers).status_code == 200
+
+
+def test_revocation_race_never_leaves_certified_verdict(ledger):
+    run = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claim = ledger.claim("race-worker")
+    assert claim and claim["run_id"] == run["run_id"]
+    witness = asyncio.run(execute("racy", "overlap"))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        finishing = pool.submit(
+            ledger.finish, UUID(run["run_id"]), "race-worker",
+            claim["lease_generation"], witness,
+        )
+        revoking = pool.submit(ledger.revoke_rule, ledger.approval_id)
+        assert finishing.result(timeout=15)
+        assert revoking.result(timeout=15)
+
+    current = ledger.get(UUID(run["run_id"]))
+    assert current["status"] == "UNKNOWN"
+    assert current["verdict"] == "UNKNOWN"
+    assert current["witness"] is not None
