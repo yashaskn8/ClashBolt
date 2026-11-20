@@ -233,6 +233,22 @@ export default function PolicyConsole({
     })
   }
 
+  async function reviewDecisionHistory() {
+    if (!plan) return
+    await action(async () => {
+      const record = await request<{
+        plan_id: string
+        current_state: string
+        integrity: { status: string; head_sha256?: string; entries?: number }
+        entries: { sequence: number; event: string; entry_sha256: string }[]
+      }>(`/api/agent/plans/${plan.id}/history`, undefined, operator)
+      return {
+        ...record,
+        note: 'Digest-chain verification does not prove independent external execution.',
+      }
+    })
+  }
+
   async function revoke() {
     if (!capability) return
     await action(async () => {
@@ -316,6 +332,10 @@ export default function PolicyConsole({
         <button type="button" onClick={() => void reviewFeedback()}
           disabled={busy || !plan || !toolFinished || !canOperate}>
           6. Persist evidence feedback / bounded replan
+        </button>
+        <button type="button" onClick={() => void reviewDecisionHistory()}
+          disabled={busy || !plan || !canOperate}>
+          Review verified decision history
         </button>
         <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !canOperate}>Revoke tool capability</button>
         <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !canOperate}>Review tool audit</button>

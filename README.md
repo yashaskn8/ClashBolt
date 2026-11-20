@@ -67,3 +67,9 @@ For a **native Linux loopback service** using separate API/worker identities,
 private built React assets and no Vite runtime, see
 [docs/NATIVE_SERVICE.md](docs/NATIVE_SERVICE.md). This is a hardened
 single-host option, not proof of secure production isolation or tenancy.
+
+
+The operator review desk also displays an append-only, hash-linked agent
+decision history for newly proposed plans. This records dispatch and receipt
+obligations with deterministic integrity checks, but does not claim to be a
+trusted third-party audit or to prove that an external target was affected.

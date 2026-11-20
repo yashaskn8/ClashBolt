@@ -67,14 +67,19 @@ def verify_history(plan_id: UUID, entries: list[dict]) -> dict:
         return {"status": "UNCONFIRMED", "reason": "No recorded agent history"}
     previous = GENESIS
     for sequence, entry in enumerate(entries, 1):
-        if (
-            entry.get("sequence") != sequence
-            or entry.get("event") not in EVENT_TYPES
-            or entry.get("previous_sha256") != previous
-            or entry.get("entry_sha256") != _digest(
-                plan_id, sequence, entry["event"], entry["payload"], previous
+        try:
+            intact = (
+                entry.get("sequence") == sequence
+                and entry.get("event") in EVENT_TYPES
+                and isinstance(entry.get("payload"), dict)
+                and entry.get("previous_sha256") == previous
+                and entry.get("entry_sha256") == _digest(
+                    plan_id, sequence, entry["event"], entry["payload"], previous
+                )
             )
-        ):
+        except (ValueError, TypeError, KeyError):
+            intact = False
+        if not intact:
             return {"status": "INVALID", "reason": "Decision history integrity failure"}
         previous = entry["entry_sha256"]
     if entries[0]["event"] != "PROPOSED":

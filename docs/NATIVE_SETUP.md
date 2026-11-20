@@ -407,3 +407,18 @@ account mode, it requires an authenticated operator session.
 
 The metrics are gauges/snapshots only, not billing, alerting or a hosted
 monitoring service. Do not expose this development API through a public proxy.
+
+
+## Versioned agent decision history
+
+New agent plans record append-only, SHA-256 linked decisions in PostgreSQL
+when proposed, authorized for dispatch, and finalized with a verified
+receipt or UNKNOWN/timeout classification. Follow-up proposals and oracle
+revocations are recorded in the same transactions as their state changes.
+The operator can inspect a plan's event chain using
+`GET /api/agent/plans/PLAN_UUID/history` with the local operator credential
+or authenticated operator session, or the review-console button.
+
+A `VERIFIED` history confirms internal event-chain consistency, **not**
+external application behavior or resistance to the PostgreSQL administrator.
+Older pre-migration plans without full history report `UNCONFIRMED`.
