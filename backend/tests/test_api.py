@@ -101,3 +101,26 @@ def test_volatile_readiness_reports_explicit_scope(monkeypatch):
         response = client.get("/api/ready")
         assert response.status_code == 200
         assert response.json()["storage"] == "volatile-scratch-only"
+
+
+def test_local_host_origin_and_private_data_cache_boundaries(monkeypatch):
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with TestClient(create_app()) as client:
+        assert client.get(
+            "/api/catalog", headers={"Host": "outside.example"}
+        ).status_code == 403
+        data = {"variant": "racy", "schedule": "serial"}
+        denied = client.post(
+            "/api/experiments", json=data,
+            headers={"Origin": "http://outside.example"},
+        )
+        assert denied.status_code == 403
+        allowed = client.post(
+            "/api/experiments", json=data,
+            headers={"Origin": "http://127.0.0.1:5173"},
+        )
+        assert allowed.status_code == 201
+        assert allowed.headers["cache-control"] == "no-store"
+        assert allowed.headers["x-content-type-options"] == "nosniff"
+        assert allowed.headers["referrer-policy"] == "no-referrer"
