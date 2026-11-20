@@ -302,7 +302,7 @@ export default function App() {
                       </code>
                     </div>
                   </div>
-                )
+                )}
                 <p className="help-text">Replay compares the complete deterministic evidence hash. It does not establish uncontrolled reproduction.</p>
               </div>
             )}
