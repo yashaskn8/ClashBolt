@@ -111,6 +111,13 @@ def test_local_host_origin_and_private_data_cache_boundaries(monkeypatch):
         assert client.get(
             "/api/catalog", headers={"Host": "outside.example"}
         ).status_code == 403
+        for invalid_host in (
+            "person@localhost", "localhost/extra", "localhost:not-a-port",
+            "127.0.0.1?bad=1",
+        ):
+            assert client.get(
+                "/api/catalog", headers={"Host": invalid_host}
+            ).status_code == 403
         data = {"variant": "racy", "schedule": "serial"}
         denied = client.post(
             "/api/experiments", json=data,
@@ -147,6 +154,18 @@ def test_opt_in_same_origin_react_build_is_static_and_api_remains_separate(
         assert page.status_code == 200
         assert "ClashBolt" in page.text
         assert "default-src 'self'" in page.headers["content-security-policy"]
+        payload = {"variant": "locked", "schedule": "serial"}
+        denied = client.post(
+            "/api/experiments", json=payload,
+            headers={"Origin": "http://localhost:5173"},
+        )
+        assert denied.status_code == 403
+        allowed = client.post(
+            "/api/experiments", json=payload,
+            headers={"Origin": "http://testserver"},
+        )
+        assert allowed.status_code == 201
+        assert "access-control-allow-origin" not in allowed.headers
         script = client.get("/assets/test.js")
         assert script.status_code == 200
         assert "ready = true" in script.text
