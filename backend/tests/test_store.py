@@ -1,8 +1,8 @@
-from concurrent.futures import ThreadPoolExecutor
 """Native PostgreSQL integration tests. Set CLASHBOLT_TEST_DATABASE_URL to run."""
 
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
