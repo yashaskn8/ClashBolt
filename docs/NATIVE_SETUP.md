@@ -362,3 +362,22 @@ Browser writes are restricted to the documented local origins; unexpected
 `Cache-Control: no-store`. These defenses do not replace actual host-enforced
 network egress rules, project tenancy, TLS, or a penetration test. Do not
 expose the synthetic lab beyond a trusted local machine.
+
+
+## Native control-plane database archives
+
+Create a new PostgreSQL custom archive from a dedicated loopback control
+database. The backup command never overwrites an existing archive, passes the
+database password through an environment variable rather than process
+arguments, and checks the archive with `pg_restore` before publishing it:
+
+```powershell
+python -m clashbolt.backup .\clashbolt-control-2026-11-20.dump
+```
+
+Keep the `.dump` and matching `.sha256.json` files in encrypted, access-limited
+storage. **They contain sensitive account records and stored evidence.** A
+successful archive integrity check is not a successful restore. Test restoration
+only into a newly created *disposable* PostgreSQL database using native
+administration tools and verify the application readiness endpoint. Never
+automatically restore over a running control database.

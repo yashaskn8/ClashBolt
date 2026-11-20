@@ -55,3 +55,9 @@ Set `CLASHBOLT_TEST_DATABASE_URL` to a **disposable test-only PostgreSQL databas
 Export a JSON witness from the UI and run `python -m clashbolt.witness path/to/witness.json`, or export a ZIP data-only bundle and run `python -m clashbolt.witness_bundle verify path/to/witness.zip`. The verifier independently reconstructs reads, commits, state transitions and the oracle verdict, rejects inconsistent evidence even if its hash was recomputed, and replays controlled checkpoints in a fresh process. This does **not** establish uncontrolled reproduction.
 
 **Security:** In standard local mode, durable mutations require `CLASHBOLT_OPERATOR_TOKEN` and reads are loopback-only. In opt-in `accounts` mode, HTTP-only sessions are bound to named, independently provisioned single-project viewer/operator/reviewer roles and revalidated against PostgreSQL. Optional `private` mode uses a time-limited HTTP-only session for reads and the token for writes. The API rejects direct non-loopback clients but can still be exposed unsafely through a reverse proxy. Project identity, multitenant RBAC, OS-level target isolation and external target support are not yet implemented. Bind the API to `127.0.0.1` only. This token is not production identity. The deterministic planner is **not** a validated LLM agent. No Docker, Temporal, Redis, Kafka or Kubernetes. Keep changes small, explicit and tested; commit directly on `main` with no branches or PRs.
+
+
+For native control-plane archive creation with archive integrity verification,
+run `python -m clashbolt.backup /path/to/new-backup.dump`. The archive contains
+sensitive data, must be stored securely, and **does not establish restore or
+disaster-recovery readiness**. See the native setup guide.
