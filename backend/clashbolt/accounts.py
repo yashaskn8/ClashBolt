@@ -151,6 +151,19 @@ class AccountStore(Policy):
                 "epoch": row["session_epoch"],
             }
 
+    def revoke_sessions(self, account_id: UUID) -> bool:
+        """Logging out revokes all sessions, including any copied cookies."""
+        with self.connect() as conn:
+            result = conn.execute(
+                """
+                UPDATE local_account
+                SET session_epoch = session_epoch + 1
+                WHERE id = %s AND active = TRUE RETURNING id
+                """,
+                (account_id,),
+            ).fetchone()
+            return bool(result)
+
     def disable_account(self, username: str) -> bool:
         with self.connect() as conn:
             result = conn.execute(

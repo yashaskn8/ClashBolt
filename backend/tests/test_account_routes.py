@@ -105,7 +105,11 @@ def test_named_account_logout_and_bad_password(named_accounts):
         assert failed.status_code == 401
         assert client.get("/api/auth/me").status_code == 401
         _login(client, "viewer")
+        copied_cookie = client.cookies.get("clashbolt_identity")
+        assert copied_cookie
         assert client.post("/api/auth/logout").status_code == 200
+        assert client.get("/api/auth/me").status_code == 401
+        client.cookies.set("clashbolt_identity", copied_cookie, path="/api")
         assert client.get("/api/auth/me").status_code == 401
 
 

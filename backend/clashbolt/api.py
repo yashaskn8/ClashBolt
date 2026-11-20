@@ -238,9 +238,10 @@ def create_app() -> FastAPI:
         return {"username": identity["username"], "role": identity["role"]}
 
     @app.post("/api/auth/logout")
-    def account_logout():
+    def account_logout(request: Request):
         if account_store is None:
             raise HTTPException(404, "Named accounts are not enabled")
+        account_store.revoke_sessions(UUID(request.state.account["id"]))
         response = JSONResponse(content={"status": "LOGGED_OUT"})
         response.delete_cookie("clashbolt_identity", path="/api")
         response.headers["Cache-Control"] = "no-store"
