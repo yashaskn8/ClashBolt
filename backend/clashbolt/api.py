@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import (
@@ -48,6 +48,18 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+    @app.middleware("http")
+    async def local_only(request: Request, call_next):
+        # Only the direct peer is considered. Reverse proxies must not expose
+        # this unauthenticated development service to remote users.
+        peer = request.client.host if request.client else None
+        if peer not in ("127.0.0.1", "::1", "testclient"):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "ClashBolt is restricted to local connections"},
+            )
+        return await call_next(request)
+
     runs: dict[str, dict] = {}
     dsn = os.getenv("CLASHBOLT_DATABASE_URL")
     ledger = Ledger(dsn) if dsn else None

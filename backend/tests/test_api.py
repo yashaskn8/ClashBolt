@@ -34,3 +34,11 @@ def test_closed_inputs_and_missing_runs():
         ).status_code == 422
         assert client.get("/api/experiments/missing").status_code == 404
         assert client.post("/api/experiments/missing/replay").status_code == 404
+
+
+def test_remote_direct_client_is_denied():
+    with TestClient(create_app(), client=("198.51.100.23", 43111)) as client:
+        assert client.get("/api/catalog").status_code == 403
+        assert client.post(
+            "/api/experiments", json={"variant": "racy", "schedule": "overlap"}
+        ).status_code == 403
