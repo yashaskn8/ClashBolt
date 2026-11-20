@@ -41,7 +41,7 @@ _POLICY_SCHEMA = (
     "ALTER TABLE oracle_proposal ADD COLUMN IF NOT EXISTS evidence JSONB",
     """
     CREATE OR REPLACE FUNCTION clashbolt_guard_oracle_version()
-    RETURNS TRIGGER LANGUAGE plpgsql AS $
+    RETURNS TRIGGER LANGUAGE plpgsql AS $guard$
     BEGIN
         IF OLD.state = 'REVOKED' THEN
             RAISE EXCEPTION 'Revoked oracle versions are immutable';
@@ -78,7 +78,7 @@ _POLICY_SCHEMA = (
         END IF;
         RETURN NEW;
     END
-    $
+    $guard$
     """,
     "DROP TRIGGER IF EXISTS clashbolt_oracle_immutable ON oracle_proposal",
     """
