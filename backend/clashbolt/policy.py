@@ -564,6 +564,8 @@ class Policy(Ledger):
                     or planned["plan"].get("variant") != variant
                     or planned["plan"].get("schedule") != schedule
                     or max_calls != 1
+                    or self._validated_plan_history(conn, planned)[0]["status"]
+                        != "VERIFIED"
                 ):
                     raise ValueError("Capability must match one pending approved plan")
             cap = conn.execute(
@@ -609,18 +611,30 @@ class Policy(Ledger):
     def authorize(
         self, token: str, variant: str, schedule: str, plan_id: UUID | None = None
     ) -> bool:
-        """Validate+debit token atomically before any tool action is dispatched."""
+        """Serialize oracle approval, capability debit and plan dispatch.
+
+        Lock oracle first: a committed revocation cannot race a tool ALLOW.
+        Then lock the capability and plan to fence concurrent dispatches.
+        """
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as conn:
-            row = conn.execute(
-                """
-                SELECT c.*, p.state AS oracle_state, p.rule_hash
-                FROM tool_capability c
-                JOIN oracle_proposal p ON p.id = c.proposal_id
-                WHERE c.token_hash = %s FOR UPDATE OF c
-                """,
+            candidate = conn.execute(
+                "SELECT proposal_id FROM tool_capability WHERE token_hash = %s",
                 (token_hash,),
             ).fetchone()
+            oracle = None
+            if candidate:
+                oracle = conn.execute(
+                    """
+                    SELECT state, rule_hash FROM oracle_proposal
+                    WHERE id = %s FOR SHARE
+                    """,
+                    (candidate["proposal_id"],),
+                ).fetchone()
+            row = conn.execute(
+                "SELECT * FROM tool_capability WHERE token_hash = %s FOR UPDATE",
+                (token_hash,),
+            ).fetchone() if candidate else None
             plan_ok = plan_id is None
             if row and row["plan_id"] is not None and plan_id == row["plan_id"]:
                 planned = conn.execute(
@@ -640,8 +654,9 @@ class Policy(Ledger):
             allowed = bool(
                 row
                 and plan_ok
-                and row["oracle_state"] == "APPROVED"
-                and row["rule_hash"] == ORACLE_HASH
+                and oracle is not None
+                and oracle["state"] == "APPROVED"
+                and oracle["rule_hash"] == ORACLE_HASH
                 and row["target_revision"] == TARGET_REVISION
                 and not row["revoked"]
                 and row["used_calls"] < row["max_calls"]
