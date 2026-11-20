@@ -50,7 +50,10 @@ untrusted application code.
 ## Release checks
 
 Build/test with `python -m ruff check .`, `python -m pytest -q`,
-`npm run build`, and the CI browser checks. Confirm the production
-`/api/ready` status before and after restart. Verify PostgreSQL backup
-and disposable restore drills using the backup guide. Keep the API private
+`npm run build`, and the CI browser checks. Confirm `/api/ready` before and after restart. For a stronger
+single-host check, `/api/ready?require_worker=true` returns HTTP 503 unless
+the separate worker has reported a fresh database heartbeat. This is a
+liveness signal, not a test of target network policy or crash recovery.
+Verify PostgreSQL backup and disposable restore drills using the backup
+guide. Keep the API private
 to the trusted machine; never expose it directly through a public proxy.
