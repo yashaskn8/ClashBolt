@@ -134,6 +134,13 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
         replay = client.post(f"/api/runs/{run_id}/replay", headers=headers)
         assert replay.status_code == 200
         assert replay.json()["replay_status"] == "REPRODUCED"
+        reduced = client.post(f"/api/runs/{run_id}/reduce", headers=headers)
+        assert reduced.status_code == 200, reduced.text
+        assert reduced.json()["status"] == "MINIMAL"
+        assert reduced.json()["minimal_gate_count"] == 4
+        stored = client.get(f"/api/runs/{run_id}/reduction")
+        assert stored.status_code == 200
+        assert stored.json()["report_sha256"] == reduced.json()["report_sha256"]
     with psycopg.connect(admin, autocommit=True) as connection:
         assert connection.execute(
             "SELECT count(*) FROM pg_database WHERE datname = %s",
