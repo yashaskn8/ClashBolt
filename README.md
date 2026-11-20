@@ -73,3 +73,14 @@ The operator review desk also displays an append-only, hash-linked agent
 decision history for newly proposed plans. This records dispatch and receipt
 obligations with deterministic integrity checks, but does not claim to be a
 trusted third-party audit or to prove that an external target was affected.
+
+
+## Held-out evaluation intake
+
+For a **data-only**, never-promoted external research comparison, see
+[docs/HELDOUT_PROTOCOL.md](docs/HELDOUT_PROTOCOL.md) and run
+`python -m clashbolt.heldout manifest.json observations.json`.
+The tool requires a complete paired five-strategy matrix, split separation,
+manifest hash matching, and bounded reported resource use. It does not
+execute arbitrary target code, authenticate adjudicators or independently
+verify externally supplied finding claims.

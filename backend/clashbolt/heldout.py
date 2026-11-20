@@ -97,6 +97,12 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
             "cpu_seconds", "model_tokens", "evidence_sha256",
         }:
             raise ValueError("Unexpected result record shape")
+        if (
+            not isinstance(row["target_id"], str)
+            or type(row["seed"]) is not int
+            or not isinstance(row["strategy"], str)
+        ):
+            raise ValueError("Untrusted observation identifiers")
         key = (row["target_id"], row["seed"], row["strategy"])
         if key not in allowed or key in observed:
             raise ValueError("Unknown, repeated or non-held-out experiment")

@@ -123,3 +123,34 @@ def test_heldout_rows_cannot_be_replaced_with_training_rows():
     changed["observations"][0]["target_id"] = "known-inventory"
     with pytest.raises(ValueError, match="non-held-out"):
         compare_reported_observations(manifest, changed)
+
+
+
+def test_cli_reads_local_json_and_reports_no_promotion(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+
+    from clashbolt.heldout import main
+
+    manifest, submitted = example()
+    first, second = tmp_path / "manifest.json", tmp_path / "results.json"
+    first.write_text(json.dumps(manifest), encoding="utf-8")
+    second.write_text(json.dumps(submitted), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clashbolt-heldout", str(first), str(second)])
+    main()
+    report = json.loads(capsys.readouterr().out)
+    assert report["promotion_eligible"] is False
+    assert report["manifest_sha256"] == canonical_hash(manifest)
+
+
+def test_observation_identifier_types_are_checked_before_dict_keys():
+    manifest, submitted = example()
+    for field, invalid in (
+        ("target_id", []),
+        ("seed", True),
+        ("strategy", {}),
+    ):
+        changed = deepcopy(submitted)
+        changed["observations"][0][field] = invalid
+        with pytest.raises(ValueError, match="Untrusted observation identifiers"):
+            compare_reported_observations(manifest, changed)
