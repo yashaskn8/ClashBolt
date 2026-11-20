@@ -36,6 +36,13 @@ type Witness = {
 }
 
 type Experiment = { run_id: string; witness: Witness; replay_status: string }
+type Reduction = {
+  status: string
+  original_gate_count: number
+  minimal_gate_count: number
+  report_sha256: string
+  reduction_trials: { removed_gate: string; verdict: Verdict; accepted: boolean }[]
+}
 type Catalog = {
   target_id: string
   target_revision: string
@@ -63,6 +70,8 @@ export default function App() {
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
+  const [reduction, setReduction] = useState<Reduction | null>(null)
+  const [reducing, setReducing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [replaying, setReplaying] = useState(false)
   const [error, setError] = useState('')
@@ -90,6 +99,7 @@ export default function App() {
     setResult(null)
     setDurable(null)
     setReplayStatus('NOT_RUN')
+    setReduction(null)
     try {
       const storage = catalog?.storage === 'postgresql' ? 'runs' : 'experiments'
       const response = await fetch(`/api/${storage}`, {
@@ -136,6 +146,23 @@ export default function App() {
       setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
     } finally {
       setReplaying(false)
+    }
+  }
+
+  async function minimize() {
+    if (!durable || durable.verdict !== 'FAIL') return
+    setReducing(true)
+    setError('')
+    try {
+      const response = await fetch(`/api/runs/${durable.run_id}/reduce`, {
+        method: 'POST',
+        headers: { 'X-Operator-Token': operatorToken },
+      })
+      setReduction(await parseResponse<Reduction>(response))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Witness reduction failed')
+    } finally {
+      setReducing(false)
     }
   }
 
@@ -254,6 +281,28 @@ export default function App() {
                 <ol className="steps">{witness.observed_steps.map((step) => <li key={step.sequence}><span className="step-number">{String(step.sequence).padStart(2, '0')}</span><span className="step-client">Client {step.client.toUpperCase()}</span><span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span></li>)}</ol>
                 <div className="evidence"><div><span>FIXTURE SHA256</span><code title={witness.fixture_hash}>{shortHash(witness.fixture_hash)}</code></div><div><span>ORACLE</span><code>{witness.oracle.id} @ {witness.oracle.version}</code></div><div><span>EVIDENCE SHA256</span><code title={witness.evidence_sha256}>{shortHash(witness.evidence_sha256)}</code></div><div><span>REPLAY</span><strong>{replayStatus !== 'NOT_RUN' ? replayStatus : result?.replay_status ?? 'NOT_RUN'}</strong></div></div>
                 <button className="secondary-button" type="button" onClick={replay} disabled={replaying}>{replaying ? 'Replaying on fresh state…' : 'Replay on a clean fixture'} ↻</button>
+                {durable?.verdict === 'FAIL' && (
+                  <button className="secondary-button" type="button"
+                    onClick={minimize} disabled={reducing || !operatorToken}>
+                    {reducing ? 'Checking candidate deletions…' : 'Minimize witness gates'}
+                  </button>
+                )}
+                {reduction && (
+                  <div className="evidence">
+                    <div><span>REDUCTION</span><strong>{reduction.status}</strong></div>
+                    <div><span>CONTROLLED GATES</span>
+                      <strong>{reduction.original_gate_count} → {reduction.minimal_gate_count}</strong>
+                    </div>
+                    <div><span>VERIFIED TRIALS</span>
+                      <strong>{reduction.reduction_trials.length}</strong>
+                    </div>
+                    <div><span>REPORT SHA256</span>
+                      <code title={reduction.report_sha256}>
+                        {shortHash(reduction.report_sha256)}
+                      </code>
+                    </div>
+                  </div>
+                )
                 <p className="help-text">Replay compares the complete deterministic evidence hash. It does not establish uncontrolled reproduction.</p>
               </div>
             )}
@@ -264,6 +313,7 @@ export default function App() {
             setDurable(run)
             setResult(null)
             setReplayStatus('NOT_RUN')
+            setReduction(null)
           }} />
         )}
         {durable && <DurableMonitor
