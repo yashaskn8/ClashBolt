@@ -1,6 +1,5 @@
-from fastapi.testclient import TestClient
-
 from clashbolt.api import create_app
+from fastapi.testclient import TestClient
 
 
 def test_catalog_and_witness_replay():
@@ -21,8 +20,14 @@ def test_catalog_and_witness_replay():
 
 def test_closed_inputs_and_missing_runs():
     with TestClient(create_app()) as client:
-        assert client.post("/api/experiments", json={"variant": "remote", "schedule": "overlap"}).status_code == 422
-        assert client.post("/api/experiments", json={"variant": "racy", "schedule": "unknown"}).status_code == 422
+        bad_target = client.post(
+            "/api/experiments", json={"variant": "remote", "schedule": "overlap"}
+        )
+        bad_schedule = client.post(
+            "/api/experiments", json={"variant": "racy", "schedule": "unknown"}
+        )
+        assert bad_target.status_code == 422
+        assert bad_schedule.status_code == 422
         assert client.post(
             "/api/experiments",
             json={"variant": "racy", "schedule": "overlap", "url": "https://example.org"},

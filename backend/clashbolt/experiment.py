@@ -18,7 +18,10 @@ TARGET_ID = "synthetic-inventory"
 TARGET_REVISION = "inventory-demo-v1"
 ORACLE_ID = "confirmed-orders-not-above-stock"
 ORACLE_VERSION = "1"
-ORACLE_RULE = "confirmed_count <= initial_stock and remaining_stock == initial_stock - confirmed_count"
+ORACLE_RULE = (
+    "confirmed_count <= initial_stock and "
+    "remaining_stock == initial_stock - confirmed_count"
+)
 ORACLE_HASH = sha256(ORACLE_RULE.encode()).hexdigest()
 FIXTURE = {"initial_stock": 1, "clients": ["a", "b"], "quantity_each": 1}
 FIXTURE_HASH = sha256(json.dumps(FIXTURE, sort_keys=True).encode()).hexdigest()

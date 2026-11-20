@@ -60,7 +60,10 @@ def create_app() -> FastAPI:
                 "rule": ORACLE_RULE,
                 "authority": "fixed-demo-rule",
             },
-            "limitations": "Local synthetic fixture only; no real target, database isolation, or human approval",
+            "limitations": (
+                "Local synthetic fixture only; no real target, "
+                "database isolation, or human approval"
+            ),
         }
 
     @app.post("/api/experiments", status_code=201)

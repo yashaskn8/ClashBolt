@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-
 from clashbolt.experiment import check_invariant, execute
 
 
@@ -35,7 +34,8 @@ def test_isolation_and_stable_replay():
 def test_oracle_abstains_on_missing_evidence():
     assert check_invariant(None, complete=False) == "UNKNOWN"
     assert check_invariant({"initial_stock": 1}, complete=True) == "UNKNOWN"
-    assert check_invariant({"initial_stock": 1, "remaining_stock": 0, "confirmed_count": 2}, complete=False) == "UNKNOWN"
+    incomplete = {"initial_stock": 1, "remaining_stock": 0, "confirmed_count": 2}
+    assert check_invariant(incomplete, complete=False) == "UNKNOWN"
 
 
 def test_unknown_targets_cannot_execute():
