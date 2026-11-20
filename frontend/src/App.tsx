@@ -259,21 +259,58 @@ export default function App() {
     }
   }
 
+  async function verifyOnWorker(kind: 'REPLAY' | 'REDUCE') {
+    if (!durable) throw new Error('No durable witness to verify')
+    const response = await fetch(
+      `/api/runs/${durable.run_id}/verification-jobs`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(catalog?.access_mode === 'accounts'
+            ? {} : { 'X-Operator-Token': operatorToken }),
+        },
+        body: JSON.stringify({ kind }),
+      },
+    )
+    const submitted = await parseResponse<{ job_id: string }>(response)
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const poll = await fetch(`/api/verification-jobs/${submitted.job_id}`)
+      const job = await parseResponse<{
+        status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'UNKNOWN'
+        result: (Reduction & { status: string }) | null
+      }>(poll)
+      if (job.status === 'COMPLETE' && job.result) return job.result
+      if (job.status === 'UNKNOWN') {
+        throw new Error(job.result?.status ?? 'Verification evidence is uncertain')
+      }
+      await new Promise((resolve) => setTimeout(resolve, 750))
+    }
+    throw new Error('Verification is queued. Check the worker and retry later.')
+  }
+
   async function replay() {
     if (!result && !durable?.witness) return
     setReplaying(true)
     setError('')
     try {
-      const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
-      const response = await fetch(`/api/${path}/replay`, {
-        method: 'POST',
-        headers: durable && catalog?.access_mode !== 'accounts'
-          ? { 'X-Operator-Token': operatorToken } : {},
-      })
-      const proof = await parseResponse<{ replay_status: string }>(response)
-      setReplayStatus(proof.replay_status)
-      if (result) setResult({ ...result, replay_status: proof.replay_status })
+      if (durable?.execution_backend === 'native-postgresql') {
+        setReplayStatus('QUEUED')
+        const report = await verifyOnWorker('REPLAY')
+        setReplayStatus(report.status === 'REPRODUCED' ? 'REPRODUCED' : 'UNCONFIRMED')
+      } else {
+        const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
+        const response = await fetch(`/api/${path}/replay`, {
+          method: 'POST',
+          headers: durable && catalog?.access_mode !== 'accounts'
+            ? { 'X-Operator-Token': operatorToken } : {},
+        })
+        const proof = await parseResponse<{ replay_status: string }>(response)
+        setReplayStatus(proof.replay_status)
+        if (result) setResult({ ...result, replay_status: proof.replay_status })
+      }
     } catch (cause) {
+      setReplayStatus('UNCONFIRMED')
       setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
     } finally {
       setReplaying(false)
@@ -285,12 +322,20 @@ export default function App() {
     setReducing(true)
     setError('')
     try {
-      const response = await fetch(`/api/runs/${durable.run_id}/reduce`, {
-        method: 'POST',
-        headers: catalog?.access_mode === 'accounts'
-          ? {} : { 'X-Operator-Token': operatorToken },
-      })
-      setReduction(await parseResponse<Reduction>(response))
+      if (durable.execution_backend === 'native-postgresql') {
+        const report = await verifyOnWorker('REDUCE')
+        if (report.status !== 'MINIMAL' && report.status !== 'BOUNDED') {
+          throw new Error('Worker could not verify the minimized evidence')
+        }
+        setReduction(report)
+      } else {
+        const response = await fetch(`/api/runs/${durable.run_id}/reduce`, {
+          method: 'POST',
+          headers: catalog?.access_mode === 'accounts'
+            ? {} : { 'X-Operator-Token': operatorToken },
+        })
+        setReduction(await parseResponse<Reduction>(response))
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Witness reduction failed')
     } finally {
