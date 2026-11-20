@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 """Native PostgreSQL integration tests. Set CLASHBOLT_TEST_DATABASE_URL to run."""
 
 import asyncio
@@ -122,3 +123,52 @@ def test_recent_runs_are_resumable(ledger):
     assert all("lease_owner" not in item for item in listed)
     with pytest.raises(ValueError, match="limit"):
         ledger.recent(101)
+
+
+def test_concurrent_duplicate_admissions_use_one_run(ledger):
+    key = str(uuid4())
+
+    def admit_once(_):
+        return ledger.admit(client_key=key, variant="racy", schedule="overlap")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        accepted = list(pool.map(admit_once, range(8)))
+    assert len({item["run_id"] for item in accepted}) == 1
+    assert len(ledger.recent()) == 1
+
+
+def test_concurrent_quota_admission_fails_closed(ledger):
+    with ledger.connect() as conn:
+        conn.execute(
+            "INSERT INTO project_quota(project_id, max_open) VALUES ('local', 1) "
+            "ON CONFLICT (project_id) DO UPDATE SET max_open = EXCLUDED.max_open"
+        )
+
+    def attempt(_):
+        try:
+            return ledger.admit(
+                client_key=str(uuid4()), variant="locked", schedule="serial"
+            )["run_id"]
+        except ValueError as error:
+            assert "quota" in str(error)
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        outcomes = list(pool.map(attempt, range(6)))
+    assert len([item for item in outcomes if item is not None]) == 1
+
+
+def test_expired_inflight_cancellation_becomes_unknown(ledger):
+    queued = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claimed = ledger.claim("stall-worker")
+    assert claimed and claimed["run_id"] == queued["run_id"]
+    assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLING"
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE experiment_run SET lease_until = now() - interval '1 second' "
+            "WHERE id = %s", (UUID(queued["run_id"]),),
+        )
+    assert ledger.reconcile_expired_cancelled() == 1
+    current = ledger.get(UUID(queued["run_id"]))
+    assert current["status"] == "UNKNOWN"
+    assert current["verdict"] == "UNKNOWN"

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 
 export type DurableRun = {
   run_id: string
+  variant: 'racy' | 'locked'
+  schedule: 'overlap' | 'serial'
   status: 'PENDING' | 'RUNNING' | 'CANCELLING' | 'CANCELLED' | 'COMPLETE' | 'UNKNOWN'
   version: number
   verdict: 'PASS' | 'FAIL' | 'UNKNOWN' | null
