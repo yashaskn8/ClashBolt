@@ -23,6 +23,7 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
+from clashbolt.routes_policy import policy_router
 from clashbolt.store import Ledger
 
 
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     runs: dict[str, dict] = {}
     dsn = os.getenv("CLASHBOLT_DATABASE_URL")
     ledger = Ledger(dsn) if dsn else None
+    app.include_router(policy_router(dsn))
 
     def require_ledger() -> Ledger:
         if ledger is None:
