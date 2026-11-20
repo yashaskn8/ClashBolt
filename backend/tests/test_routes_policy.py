@@ -266,9 +266,8 @@ def test_private_reviewer_is_independent_of_operator_session(
 def test_private_mode_scoped_tool_dispatch_is_not_operator_privilege(
     policy_client, monkeypatch,
 ):
-    from fastapi.testclient import TestClient
-
     from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
 
     proposal = policy_client.post(
         "/api/oracle/proposals", json={"proposed_by": "planner"}
