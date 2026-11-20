@@ -44,13 +44,13 @@ Configure the connection URL as an environment variable in PowerShell:
 ```powershell
 $env:CLASHBOLT_DATABASE_URL = "postgresql://clashbolt:YOUR_PASSWORD@127.0.0.1:5432/clashbolt"
 $env:CLASHBOLT_OPERATOR_TOKEN = "A_LONG_RANDOM_LOCAL_SECRET"
-python -m clashbolt.store
+python -m clashbolt.policy
 python -m clashbolt.worker
 ```
 
-Run `python -m clashbolt.policy` if you need the optional oracle-review and
-scoped-tool tables. These routes do not auto-create schema; startup will fail
-closed until explicitly migrated.
+`python -m clashbolt.policy` is **required** for durable mode. It applies the
+PostgreSQL run, approved-oracle, capability and receipt migrations. Schema is
+not silently created by API startup or workers.
 
 In a second terminal sharing the environment variables:
 
@@ -58,7 +58,12 @@ In a second terminal sharing the environment variables:
 uvicorn clashbolt.api:app --host 127.0.0.1 --port 8000
 ```
 
-The API accepts experiments into the PostgreSQL queue. The **separate worker**
+Create and approve the shipped demo oracle using the operator console before
+submitting durable experiments; the selected exact approval ID is bound to each
+accepted run. Revoking a rule withdraws certified verdicts while retaining
+historical witness data.
+
+The API accepts approved experiments into the PostgreSQL queue. The **separate worker**
 process claims and executes each accepted synthetic run. API requests do not
 silently spawn durable background work.
 
@@ -95,10 +100,14 @@ This does **not** prove a real-world or uncontrolled concurrency bug.
 
 ## 4. What the operator token protects
 
-`CLASHBOLT_OPERATOR_TOKEN` must be set before approving a candidate oracle,
-issuing/revoking scoped capabilities, inspecting tool audit, or evaluating
-planner baselines. Send it in the `X-Operator-Token` header from a trusted
+`CLASHBOLT_OPERATOR_TOKEN` is required for durable run submission,
+cancellation and replay as well as oracle approval, capability changes, audit
+inspection and planner evaluation. Send it in the `X-Operator-Token` header from a trusted
 local client. Do not commit it or expose it in a URL.
+
+Only POST durable mutations are protected by this token: the read-only run
+index, snapshots and synthetic scratch endpoints have no identity checks.
+Keep the API on loopback and never put secrets in URLs.
 
 The token is a single-machine operator control, not identity verification,
 multitenant RBAC, an independent human review system, or production authorization.

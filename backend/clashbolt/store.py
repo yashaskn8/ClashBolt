@@ -12,7 +12,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from clashbolt.experiment import ORACLE_HASH, SCHEDULES
+from clashbolt.experiment import ORACLE_HASH, SCHEDULES, TARGET_REVISION
 from clashbolt.witness import validate_contract
 
 _SCHEMA = (
@@ -172,7 +172,7 @@ class Ledger:
             if (
                 not approval or approval["state"] != "APPROVED"
                 or approval["rule_hash"] != ORACLE_HASH
-                or approval["target_revision"] != "inventory-demo-v1"
+                or approval["target_revision"] != TARGET_REVISION
                 or not approval["reviewed_by"]
             ):
                 raise ValueError("Durable admission requires a current approved oracle")
@@ -324,7 +324,7 @@ class Ledger:
                 not approval
                 or approval["state"] != "APPROVED"
                 or approval["rule_hash"] != current["oracle_hash"]
-                or approval["target_revision"] != "inventory-demo-v1"
+                or approval["target_revision"] != TARGET_REVISION
             ):
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "oracle approval withdrawn"
             elif (
