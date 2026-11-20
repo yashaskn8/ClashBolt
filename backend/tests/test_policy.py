@@ -172,3 +172,20 @@ def test_incomplete_and_revoked_oracle_cannot_complete_plan(policy):
     stored = policy.get_plan(plan_id)
     assert stored["state"] == "UNKNOWN"
     assert stored["result"]["verdict"] == "UNKNOWN"
+
+
+def test_evaluation_manifest_is_frozen_and_cannot_promote_synthetic_only():
+    import asyncio
+
+    from clashbolt.planner import compare_strategies
+
+    first = asyncio.run(compare_strategies(4))
+    second = asyncio.run(compare_strategies(4))
+    assert first == second
+    assert not first["manifest"]["held_out"]
+    assert not first["promotion_eligible"]
+    assert len(first["manifest_sha256"]) == 64
+    for strategy in first["strategies"].values():
+        assert strategy["gate_budget"] == 16
+        assert strategy["trials"] == 4
+        assert len(strategy["receipts"]) == 4
