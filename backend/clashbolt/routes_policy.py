@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import execute
 from clashbolt.model_planner import propose_model_plan
+from clashbolt.oracle_workshop import RuleCandidate
 from clashbolt.planner import choose_plan, compare_strategies
 from clashbolt.policy import Policy
 
@@ -20,6 +21,7 @@ class StrictModel(BaseModel):
 
 class ProposalInput(StrictModel):
     proposed_by: str = Field(default="deterministic-workshop", min_length=1, max_length=100)
+    candidate: RuleCandidate | None = None
 
 
 class ReviewInput(StrictModel):
@@ -96,7 +98,7 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/oracle/proposals", status_code=201)
     def propose_rule(request: ProposalInput):
-        return require_policy().propose(request.proposed_by)
+        return require_policy().propose(request.proposed_by, request.candidate)
 
     @router.get("/oracle/proposals")
     def list_rules():

@@ -189,3 +189,27 @@ def test_evaluation_manifest_is_frozen_and_cannot_promote_synthetic_only():
         assert strategy["gate_budget"] == 16
         assert strategy["trials"] == 4
         assert len(strategy["receipts"]) == 4
+
+
+
+def test_proposal_includes_validated_candidate_evidence(policy):
+    from uuid import UUID
+
+    from clashbolt.oracle_workshop import RuleCandidate
+
+    created = policy.propose("candidate-lab", RuleCandidate(
+        rationale="A confirmation cannot exceed initial reserved stock."
+    ))
+    evidence = created["evidence"]
+    assert evidence["verified"]
+    assert [case["actual"] for case in evidence["test_vectors"]] == [
+        "PASS", "FAIL", "UNKNOWN"
+    ]
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE oracle_proposal SET evidence = jsonb_set(evidence, "
+            "'{verified}', 'false'::jsonb) WHERE id = %s",
+            (UUID(created["id"]),),
+        )
+    with pytest.raises(ValueError, match="Stale"):
+        policy.approve(UUID(created["id"]), ORACLE_HASH, "independent-reviewer")

@@ -150,3 +150,25 @@ def test_separate_reviewer_credential_is_required(monkeypatch, policy_client):
         f"/api/oracle/proposals/{pid}/revoke",
         headers={"X-Reviewer-Token": "separate-reviewer-secret"}
     ).status_code == 200
+
+
+
+def test_candidate_dsl_rejects_untrusted_predicate(policy_client):
+    rejected = policy_client.post("/api/oracle/proposals", json={
+        "proposed_by": "model",
+        "candidate": {
+            "predicate": "evaluate-python",
+            "source_ref": "arbitrary-website",
+            "rationale": "This text requests a rule outside the fixed template",
+        },
+    })
+    assert rejected.status_code == 422
+    accepted = policy_client.post("/api/oracle/proposals", json={
+        "proposed_by": "model",
+        "candidate": {
+            "rationale": "Initial stock and all confirmations must conserve stock",
+        },
+    })
+    assert accepted.status_code == 201
+    assert accepted.json()["evidence"]["verified"]
+    assert accepted.json()["evidence"]["scope"] == "SHIPPED_SYNTHETIC_FIXTURE_ONLY"

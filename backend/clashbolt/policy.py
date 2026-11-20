@@ -18,6 +18,7 @@ from clashbolt.experiment import (
     TARGET_ID,
     TARGET_REVISION,
 )
+from clashbolt.oracle_workshop import RuleCandidate, evaluate_candidate, valid_evidence
 from clashbolt.store import Ledger
 
 _POLICY_SCHEMA = (
@@ -35,6 +36,7 @@ _POLICY_SCHEMA = (
         reviewed_at TIMESTAMPTZ
     )
     """,
+    "ALTER TABLE oracle_proposal ADD COLUMN IF NOT EXISTS evidence JSONB",
     """
     CREATE TABLE IF NOT EXISTS tool_capability (
         id UUID PRIMARY KEY,
@@ -89,21 +91,30 @@ class Policy(Ledger):
             for statement in _POLICY_SCHEMA:
                 conn.execute(statement)
 
-    def propose(self, proposed_by: str = "deterministic-workshop") -> dict:
-        """Create a candidate for the sole shipped, non-executable demo rule."""
+    def propose(
+        self, proposed_by: str = "deterministic-workshop",
+        candidate: RuleCandidate | None = None,
+    ) -> dict:
+        """Store a typed proposal and fixed-checker counterexample evidence."""
         if not proposed_by or len(proposed_by) > 100:
             raise ValueError("Invalid proposal source")
+        evidence = evaluate_candidate(candidate or RuleCandidate())
+        if not valid_evidence(evidence):
+            raise ValueError("Candidate failed deterministic fixture checks")
         with self.connect() as conn:
             row = conn.execute(
                 """
                 INSERT INTO oracle_proposal (
                     id, target_revision, rule_hash, rule_version,
-                    description, state, proposed_by
+                    description, state, proposed_by, evidence
                 )
-                VALUES (%s, %s, %s, %s, %s, 'PROPOSED', %s)
-                RETURNING id, rule_hash, rule_version, state, target_revision
+                VALUES (%s, %s, %s, %s, %s, 'PROPOSED', %s, %s)
+                RETURNING id, rule_hash, rule_version, state, target_revision, evidence
                 """,
-                (uuid4(), TARGET_REVISION, ORACLE_HASH, ORACLE_VERSION, ORACLE_RULE, proposed_by),
+                (
+                    uuid4(), TARGET_REVISION, ORACLE_HASH, ORACLE_VERSION,
+                    ORACLE_RULE, proposed_by, Jsonb(evidence),
+                ),
             ).fetchone()
             return {**row, "id": str(row["id"]), "target_id": TARGET_ID}
 
@@ -112,7 +123,7 @@ class Policy(Ledger):
             rows = conn.execute(
                 """
                 SELECT id, rule_hash, rule_version, target_revision, description,
-                       state, proposed_by, reviewed_by
+                       state, proposed_by, reviewed_by, evidence
                 FROM oracle_proposal ORDER BY created_at DESC LIMIT 100
                 """
             ).fetchall()
@@ -131,6 +142,7 @@ class Policy(Ledger):
                 or row["target_revision"] != TARGET_REVISION
                 or row["rule_hash"] != ORACLE_HASH
                 or expected_hash != row["rule_hash"]
+                or not valid_evidence(row["evidence"])
             ):
                 raise ValueError("Stale, missing, or non-matching oracle version")
             if row["proposed_by"] == reviewer:
