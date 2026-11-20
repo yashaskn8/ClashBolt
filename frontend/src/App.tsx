@@ -47,7 +47,7 @@ type Catalog = {
   target_id: string
   target_revision: string
   storage: 'postgresql' | 'memory-only'
-  access_mode: 'local' | 'private'
+  access_mode: 'local' | 'private' | 'accounts'
   execution_backends: ExecutionBackend[]
   oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
 }
@@ -71,6 +71,12 @@ export default function App() {
   const [draftMessage, setDraftMessage] = useState('')
   const [operatorToken, setOperatorToken] = useState('')
   const [sessionReady, setSessionReady] = useState(false)
+  const [accountName, setAccountName] = useState('')
+  const [accountPassword, setAccountPassword] = useState('')
+  const [account, setAccount] = useState<{
+    username: string
+    role: 'viewer' | 'operator' | 'reviewer'
+  } | null>(null)
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
@@ -88,7 +94,19 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (catalog?.access_mode !== 'accounts') return
+    fetch('/api/auth/me')
+      .then((response) => parseResponse<{
+        username: string
+        role: 'viewer' | 'operator' | 'reviewer'
+      }>(response))
+      .then(setAccount)
+      .catch(() => setAccount(null))
+  }, [catalog?.access_mode])
+
+  useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
+    if (catalog.access_mode === 'accounts' && !account) return
     if (catalog.access_mode === 'private' && !sessionReady) return
     fetch('/api/oracle/proposals')
       .then((response) => parseResponse<{ proposals: { id: string; state: string }[] }>(response))
@@ -96,11 +114,12 @@ export default function App() {
         setApprovedOracleId(data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null)
       })
       .catch(() => setApprovedOracleId(null))
-  }, [catalog?.storage, catalog?.access_mode, sessionReady])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username])
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
     if (catalog.access_mode === 'private' && !sessionReady) return
+    if (catalog.access_mode === 'accounts' && !account) return
     let cancelled = false
     fetch('/api/experiment-draft')
       .then((response) => parseResponse<{
@@ -125,7 +144,7 @@ export default function App() {
       })
       .catch(() => setDraftMessage('Saved draft unavailable; current form is unchanged.'))
     return () => { cancelled = true }
-  }, [catalog?.storage, catalog?.access_mode, sessionReady])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username])
 
   async function saveDraft() {
     setDraftMessage('')
@@ -134,7 +153,8 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Operator-Token': operatorToken,
+          ...(catalog?.access_mode === 'accounts'
+            ? {} : { 'X-Operator-Token': operatorToken }),
         },
         body: JSON.stringify({
           target_id: 'synthetic-inventory',
@@ -147,6 +167,42 @@ export default function App() {
       setDraftMessage('Draft saved to PostgreSQL. Rule approval is not saved as authority.')
     } catch {
       setDraftMessage('Draft update was rejected; refresh before overwriting changes.')
+    }
+  }
+
+  async function loginAccount() {
+    setError('')
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: accountName,
+          password: accountPassword,
+        }),
+      })
+      const identity = await parseResponse<{
+        username: string
+        role: 'viewer' | 'operator' | 'reviewer'
+      }>(response)
+      setAccount({ username: identity.username, role: identity.role })
+      setAccountPassword('')
+      setApprovedOracleId(null)
+      setDurable(null)
+      setResult(null)
+    } catch {
+      setError('Account login was rejected. Check credentials or account lockout.')
+    }
+  }
+
+  async function logoutAccount() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } finally {
+      setAccount(null)
+      setApprovedOracleId(null)
+      setDurable(null)
+      setResult(null)
     }
   }
 
@@ -178,8 +234,9 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(storage === 'runs' || catalog?.access_mode === 'private'
-            ? { 'X-Operator-Token': operatorToken } : {}),
+          ...(catalog?.access_mode !== 'accounts' &&
+            (storage === 'runs' || catalog?.access_mode === 'private')
+              ? { 'X-Operator-Token': operatorToken } : {}),
         },
         body: JSON.stringify({
           target_id: 'synthetic-inventory', variant, schedule,
@@ -210,7 +267,8 @@ export default function App() {
       const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
       const response = await fetch(`/api/${path}/replay`, {
         method: 'POST',
-        headers: durable ? { 'X-Operator-Token': operatorToken } : {},
+        headers: durable && catalog?.access_mode !== 'accounts'
+          ? { 'X-Operator-Token': operatorToken } : {},
       })
       const proof = await parseResponse<{ replay_status: string }>(response)
       setReplayStatus(proof.replay_status)
@@ -229,7 +287,8 @@ export default function App() {
     try {
       const response = await fetch(`/api/runs/${durable.run_id}/reduce`, {
         method: 'POST',
-        headers: { 'X-Operator-Token': operatorToken },
+        headers: catalog?.access_mode === 'accounts'
+          ? {} : { 'X-Operator-Token': operatorToken },
       })
       setReduction(await parseResponse<Reduction>(response))
     } catch (cause) {
@@ -239,6 +298,10 @@ export default function App() {
     }
   }
 
+  const operatorReady = catalog?.access_mode === 'accounts'
+    ? account?.role === 'operator'
+    : !!operatorToken
+  const accountUnlocked = catalog?.access_mode !== 'accounts' || account !== null
   const witness = durable?.witness ?? result?.witness
   const adjudicatedVerdict = durable ? durable.verdict ?? 'UNKNOWN' : witness?.verdict
 
@@ -311,7 +374,8 @@ export default function App() {
             )}
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
-            {(catalog?.storage === 'postgresql' || catalog?.access_mode === 'private') && (
+            {(catalog?.storage === 'postgresql' || catalog?.access_mode === 'private') &&
+             catalog?.access_mode !== 'accounts' && (
               <>
               <label className="field-label" htmlFor="operator-token">Local operator token</label>
               <input
@@ -338,11 +402,42 @@ export default function App() {
               )}
               </>
             )}
+            {catalog?.access_mode === 'accounts' && (
+              <section aria-label="Named account access">
+                <p className="help-text">
+                  {account ? `Signed in: ${account.username} (${account.role})`
+                    : 'Sign in with a locally provisioned account.'}
+                </p>
+                <label className="field-label" htmlFor="account-name">Account name</label>
+                <input
+                  id="account-name" autoComplete="username"
+                  value={accountName}
+                  onChange={(event) => setAccountName(event.target.value)}
+                />
+                <label className="field-label" htmlFor="account-password">
+                  Account password
+                </label>
+                <input
+                  id="account-password" type="password" autoComplete="current-password"
+                  value={accountPassword}
+                  onChange={(event) => setAccountPassword(event.target.value)}
+                />
+                <button className="secondary-button" type="button"
+                  onClick={() => void loginAccount()}
+                  disabled={!accountName || !accountPassword}>
+                  {account ? 'Switch named account' : 'Sign in'}
+                </button>
+                {account && (
+                  <button className="secondary-button" type="button"
+                    onClick={() => void logoutAccount()}>Sign out</button>
+                )}
+              </section>
+            )}
             {catalog?.storage === 'postgresql' && (
               <>
                 <button
                   className="secondary-button" type="button" onClick={saveDraft}
-                  disabled={!operatorToken || (catalog.access_mode === 'private' && !sessionReady)}
+                  disabled={!operatorReady || (catalog.access_mode === 'private' && !sessionReady)}
                 >
                   Save experiment draft
                 </button>
@@ -354,7 +449,9 @@ export default function App() {
               disabled={
                 busy || !catalog ||
                 (catalog.access_mode === 'private' && !sessionReady) ||
-                (catalog.storage === 'postgresql' && (!approvedOracleId || !operatorToken))
+                !accountUnlocked ||
+                (catalog.access_mode === 'accounts' && !operatorReady) ||
+                (catalog.storage === 'postgresql' && (!approvedOracleId || !operatorReady))
               }
             >{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
             {error && <p className="error" role="alert">{error}</p>}
@@ -381,7 +478,7 @@ export default function App() {
                 <button className="secondary-button" type="button" onClick={replay} disabled={replaying}>{replaying ? 'Replaying on fresh state…' : 'Replay on a clean fixture'} ↻</button>
                 {durable?.verdict === 'FAIL' && (
                   <button className="secondary-button" type="button"
-                    onClick={minimize} disabled={reducing || !operatorToken}>
+                    onClick={minimize} disabled={reducing || !operatorReady}>
                     {reducing ? 'Checking candidate deletions…' : 'Minimize witness gates'}
                   </button>
                 )}
@@ -407,7 +504,9 @@ export default function App() {
           </section>
         </div>
         {catalog?.storage === 'postgresql' &&
-        (catalog.access_mode !== 'private' || sessionReady) && (
+        (catalog.access_mode === 'local' ||
+          (catalog.access_mode === 'private' && sessionReady) ||
+          (catalog.access_mode === 'accounts' && account !== null)) && (
           <RecentRuns onSelect={(run) => {
             setDurable(run)
             setResult(null)
@@ -417,12 +516,16 @@ export default function App() {
         )}
         {durable && <DurableMonitor
           initial={durable} onUpdate={setDurable} operatorToken={operatorToken}
+          canOperate={operatorReady} accountMode={catalog?.access_mode === 'accounts'}
         />}
         {catalog?.storage === 'postgresql' &&
-        (catalog.access_mode !== 'private' || sessionReady) && <PolicyConsole
+        (catalog.access_mode === 'local' ||
+          (catalog.access_mode === 'private' && sessionReady) ||
+          (catalog.access_mode === 'accounts' && account !== null)) && <PolicyConsole
           variant={variant} schedule={schedule}
           onApproved={(id) => setApprovedOracleId(id)}
           operator={operatorToken}
+          accountRole={catalog.access_mode === 'accounts' ? account?.role : undefined}
         />}
         <footer>CLASHBOLT LAB <span>·</span> Synthetic targets only. PostgreSQL mode keeps durable control state, not external effects.</footer>
       </main>

@@ -48,9 +48,13 @@ type Props = {
   initial: DurableRun
   onUpdate: (run: DurableRun) => void
   operatorToken: string
+  canOperate: boolean
+  accountMode: boolean
 }
 
-export default function DurableMonitor({ initial, onUpdate, operatorToken }: Props) {
+export default function DurableMonitor({
+  initial, onUpdate, operatorToken, canOperate, accountMode,
+}: Props) {
   const [events, setEvents] = useState<Event[]>([])
   const [error, setError] = useState('')
   const runId = initial.run_id
@@ -106,7 +110,8 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
   async function cancel() {
     try {
       const response = await fetch(`/api/runs/${runId}/cancel`, {
-        method: 'POST', headers: { 'X-Operator-Token': operatorToken },
+        method: 'POST',
+        headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
       })
       if (!response.ok) throw new Error('Cancellation request failed')
       onUpdate((await response.json()) as DurableRun)
@@ -170,7 +175,8 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
       <div className="operation-buttons">
         <button
           type="button" className="secondary-button"
-          onClick={() => void cancel()} disabled={finished || initial.cancel_requested}
+          onClick={() => void cancel()}
+          disabled={!canOperate || finished || initial.cancel_requested}
         >
           Request cancellation
         </button>

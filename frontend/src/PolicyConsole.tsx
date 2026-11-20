@@ -28,6 +28,7 @@ type Props = {
   schedule: Schedule
   onApproved: (id: string) => void
   operator: string
+  accountRole?: 'viewer' | 'operator' | 'reviewer'
 }
 
 async function request<T>(
@@ -49,7 +50,9 @@ async function request<T>(
   return (await response.json()) as T
 }
 
-export default function PolicyConsole({ variant, schedule, onApproved, operator }: Props) {
+export default function PolicyConsole({
+  variant, schedule, onApproved, operator, accountRole,
+}: Props) {
   const [rule, setRule] = useState<Rule | null>(null)
   const [capability, setCapability] = useState<Capability | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -61,6 +64,8 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
   const [error, setError] = useState('')
   const [reviewerToken, setReviewerToken] = useState('')
   const [busy, setBusy] = useState(false)
+  const canOperate = accountRole ? accountRole === 'operator' : !!operator
+  const canReview = accountRole ? accountRole === 'reviewer' : !!operator
 
   async function action(callback: () => Promise<unknown>) {
     setBusy(true)
@@ -251,29 +256,29 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         Rationale is descriptive only. The fixed rule and checker cannot be changed here.
       </p>
       <div className="policy-actions">
-        <button type="button" onClick={() => void propose()} disabled={busy || rationale.length < 12}>
+        <button type="button" onClick={() => void propose()} disabled={busy || rationale.length < 12 || !canOperate}>
           1. Validate candidate rule
         </button>
-        <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>
-        <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED'}>3. Propose typed plan</button>
+        <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !canReview}>2. Approve exact hash</button>
+        <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED' || !canOperate}>3. Propose typed plan</button>
         <button type="button" onClick={() => void frontierPlan()}
-          disabled={busy || rule?.state !== 'APPROVED' || !operator}>
+          disabled={busy || rule?.state !== 'APPROVED' || !canOperate}>
           3a. Rank semantic conflict frontier
         </button>
         <button type="button" onClick={() => void modelPlan()}
           disabled={busy || rule?.state !== 'APPROVED' || !operator}>
           3b. Suggest local model plan
         </button>
-        <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !plan || !operator}>4. Issue one-call capability</button>
-        <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan || toolFinished}>
+        <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !plan || !canOperate}>4. Issue one-call capability</button>
+        <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan || toolFinished || !canOperate}>
           5. Execute approved synthetic tool
         </button>
         <button type="button" onClick={() => void reviewFeedback()}
-          disabled={busy || !plan || !toolFinished || !operator}>
+          disabled={busy || !plan || !toolFinished || !canOperate}>
           6. Persist evidence feedback / bounded replan
         </button>
-        <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !operator}>Revoke tool capability</button>
-        <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !operator}>Review tool audit</button>
+        <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !canOperate}>Revoke tool capability</button>
+        <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !canOperate}>Review tool audit</button>
         <button type="button" onClick={() => void action(() => request('/api/agent/evaluate', { trials: 8 }, operator))} disabled={busy || !operator}>Compare deterministic baselines</button>
       </div>
       <p className="help-text">
