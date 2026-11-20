@@ -111,3 +111,14 @@ def test_forged_witness_is_never_accepted_as_failure(ledger):
     result = ledger.get(UUID(run["run_id"]))
     assert result["status"] == "UNKNOWN"
     assert result["verdict"] == "UNKNOWN"
+
+
+def test_recent_runs_are_resumable(ledger):
+    first = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="serial")
+    second = ledger.admit(client_key=str(uuid4()), variant="locked", schedule="overlap")
+    listed = ledger.recent(10)
+    ids = {item["run_id"] for item in listed}
+    assert {first["run_id"], second["run_id"]}.issubset(ids)
+    assert all("lease_owner" not in item for item in listed)
+    with pytest.raises(ValueError, match="limit"):
+        ledger.recent(101)

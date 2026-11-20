@@ -65,7 +65,7 @@ def test_approval_and_tool_authority(policy_client):
     assert saved["state"] == "COMPLETE"
     assert saved["result"]["verdict"] == "FAIL"
     assert policy_client.post(
-        tool, json={"variant": "racy", "schedule": "overlap"},
+        tool, json={"variant": "racy", "schedule": "overlap", "plan_id": plan_id},
         headers={"Authorization": f"Bearer {token}"},
     ).status_code == 403
     assert policy_client.get("/api/tool-audit", headers=header).json()["events"]

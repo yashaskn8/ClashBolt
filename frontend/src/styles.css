@@ -201,3 +201,14 @@ footer span { padding: 0 8px; color: #c1ec6b; }
   overflow: auto; padding: 15px; color: #b7d4c8; font-size: 11px;
   background: #0b1521; border: 1px solid #2b4051; border-radius: 8px;
 }
+
+.recent-runs { margin-bottom: 32px; }
+.recent-list { display: grid; gap: 8px; margin-top: 15px; }
+.recent-list button {
+  display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between;
+  text-align: left; background: #192637; border: 1px solid #34495e;
+  color: #e0eaf4; border-radius: 7px; padding: 13px 15px;
+}
+.recent-list button:hover { border-color: #b5df6d; }
+.recent-list code { color: #92a5c2; }
+.recent-list small { color: #bad780; font: 11px ui-monospace, monospace; }

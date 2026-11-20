@@ -127,6 +127,13 @@ def create_app() -> FastAPI:
             "scope": "SYNTHETIC_ONLY",
         }
 
+    @app.get("/api/runs")
+    def list_runs(limit: int = 20) -> dict:
+        try:
+            return {"runs": require_ledger().recent(limit)}
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
     @app.post("/api/runs", status_code=201)
     def submit_run(request: RunRequest) -> dict:
         store = require_ledger()

@@ -177,6 +177,20 @@ class Ledger:
             _event(conn, row, "admitted")
             return _public(row)
 
+    def recent(self, limit: int = 20) -> list[dict]:
+        """Read-only recent-run index for recovery after UI/browser restarts."""
+        if not 1 <= limit <= 100:
+            raise ValueError("Recent-run limit must be 1-100")
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM experiment_run WHERE project_id = 'local'
+                ORDER BY created_at DESC, id DESC LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+            return [_public(row) for row in rows]
+
     def get(self, run_id: UUID) -> dict | None:
         with self.connect() as conn:
             row = conn.execute(
