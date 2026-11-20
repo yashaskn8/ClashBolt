@@ -132,3 +132,15 @@ def test_account_readiness_requires_an_active_identity(named_accounts):
         response = client.get("/api/ready")
         assert response.status_code == 503
         assert "account" in response.json()["detail"]
+
+
+def test_named_account_operations_restricted_to_operator(named_accounts):
+    with TestClient(create_app()) as client:
+        _login(client, "viewer")
+        assert client.get("/api/operations").status_code == 403
+        _login(client, "reviewer")
+        assert client.get("/api/operations").status_code == 403
+        _login(client, "operator")
+        response = client.get("/api/operations")
+        assert response.status_code == 200
+        assert "responsive_workers" in response.json()
