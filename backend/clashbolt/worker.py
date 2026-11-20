@@ -41,16 +41,29 @@ async def isolated_synthetic_run(
             cwd=workspace,
             start_new_session=os.name == "posix",
         )
+        async def bounded_output() -> bytes:
+            output = bytearray()
+            while chunk := await process.stdout.read(8192):
+                output.extend(chunk)
+                if len(output) > 100_000:
+                    raise ValueError("Fixed fixture subprocess output exceeded 100 KB")
+            await process.wait()
+            return bytes(output)
+
         try:
-            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
-        except TimeoutError:
-            if os.name == "posix":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
+            stdout = await asyncio.wait_for(bounded_output(), timeout=5)
+        except (TimeoutError, ValueError):
+            if process.returncode is None:
+                try:
+                    if os.name == "posix":
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                except ProcessLookupError:
+                    pass
             await process.wait()
             raise
-    if process.returncode != 0 or len(stdout) > 100_000:
+    if process.returncode != 0:
         raise RuntimeError("Fixed fixture subprocess failed")
     return json.loads(stdout)
 
