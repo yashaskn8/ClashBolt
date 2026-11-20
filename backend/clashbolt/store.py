@@ -18,7 +18,7 @@ from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
-BASE_SCHEMA_VERSION = 2
+BASE_SCHEMA_VERSION = 3
 
 _SCHEMA = (
     """
@@ -101,6 +101,27 @@ _SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (run_id, run_version)
     )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS verification_job (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES experiment_run(id),
+        run_version BIGINT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('REPLAY', 'REDUCE')),
+        status TEXT NOT NULL DEFAULT 'PENDING'
+            CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETE', 'UNKNOWN')),
+        lease_owner TEXT,
+        lease_generation BIGINT NOT NULL DEFAULT 0,
+        lease_until TIMESTAMPTZ,
+        result JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (run_id, run_version, kind)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS verification_job_claim_idx
+    ON verification_job(status, created_at)
     """,
 )
 
