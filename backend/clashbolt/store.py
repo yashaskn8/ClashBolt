@@ -284,18 +284,26 @@ class Ledger:
             conn.execute(
                 "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
             )
-            row = conn.execute(
-                """
-                INSERT INTO experiment_draft(project_id, version, draft)
-                SELECT 'local', 1, %s WHERE %s = 0
-                ON CONFLICT (project_id)
-                DO UPDATE SET version = experiment_draft.version + 1,
-                    draft = EXCLUDED.draft, updated_at = now()
-                WHERE experiment_draft.version = %s
-                RETURNING version, draft, updated_at
-                """,
-                (Jsonb(draft), expected_version, expected_version),
-            ).fetchone()
+            if expected_version == 0:
+                row = conn.execute(
+                    """
+                    INSERT INTO experiment_draft(project_id, version, draft)
+                    VALUES ('local', 1, %s)
+                    ON CONFLICT (project_id) DO NOTHING
+                    RETURNING version, draft, updated_at
+                    """,
+                    (Jsonb(draft),),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    UPDATE experiment_draft
+                    SET version = version + 1, draft = %s, updated_at = now()
+                    WHERE project_id = 'local' AND version = %s
+                    RETURNING version, draft, updated_at
+                    """,
+                    (Jsonb(draft), expected_version),
+                ).fetchone()
             if not row:
                 raise ValueError("Stale experiment draft version")
             return {**row, "updated_at": row["updated_at"].isoformat()}
