@@ -632,6 +632,8 @@ class Policy(Ledger):
                     and planned["proposal_id"] == row["proposal_id"]
                     and planned["plan"].get("variant") == variant
                     and planned["plan"].get("schedule") == schedule
+                    and self._validated_plan_history(conn, planned)[0]["status"]
+                        == "VERIFIED"
                 )
             elif row and row["plan_id"] is not None:
                 plan_ok = False
@@ -767,23 +769,40 @@ class Policy(Ledger):
             })
             return {**row, "id": str(row["id"]), "plan": plan}
 
+    @staticmethod
+    def _validated_plan_history(conn, planned: dict) -> tuple[dict, list[dict]]:
+        """Recheck the immutable proposal against the mutable plan before use."""
+        rows = conn.execute(
+            """
+            SELECT sequence, event, payload, previous_sha256, entry_sha256,
+                created_at
+            FROM agent_history WHERE plan_id = %s ORDER BY sequence
+            """,
+            (planned["id"],),
+        ).fetchall()
+        integrity = verify_history(planned["id"], rows)
+        if integrity["status"] == "VERIFIED":
+            initial = rows[0]["payload"]
+            if (
+                initial.get("plan") != planned["plan"]
+                or initial.get("proposal_id") != str(planned["proposal_id"])
+                or initial.get("rule_sha256") != ORACLE_HASH
+            ):
+                integrity = {
+                    "status": "INVALID",
+                    "reason": "Stored agent plan differs from approved decision",
+                }
+        return integrity, rows
+
     def plan_history(self, plan_id: UUID) -> dict | None:
         with self.connect() as conn:
             plan = conn.execute(
-                "SELECT id, state FROM agent_plan WHERE id = %s",
+                "SELECT id, proposal_id, plan, state FROM agent_plan WHERE id = %s",
                 (plan_id,),
             ).fetchone()
             if not plan:
                 return None
-            entries = conn.execute(
-                """
-                SELECT sequence, event, payload, previous_sha256, entry_sha256,
-                    created_at
-                FROM agent_history WHERE plan_id = %s ORDER BY sequence
-                """,
-                (plan_id,),
-            ).fetchall()
-            status = verify_history(plan_id, entries)
+            status, entries = self._validated_plan_history(conn, plan)
             return {
                 "plan_id": str(plan_id),
                 "current_state": plan["state"],
@@ -955,6 +974,8 @@ class Policy(Ledger):
             ):
                 return False
 
+            if self._validated_plan_history(conn, plan)[0]["status"] != "VERIFIED":
+                invalid = invalid or "Agent plan history is missing or corrupted"
             if (
                 plan["deadline_at"] is None
                 or plan["deadline_at"]
