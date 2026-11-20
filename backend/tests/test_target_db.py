@@ -96,7 +96,7 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
     from clashbolt.api import create_app
     from clashbolt.experiment import ORACLE_HASH
     from clashbolt.policy import Policy
-    from clashbolt.worker import process_one
+    from clashbolt.worker import process_one, process_verification_one
     from fastapi.testclient import TestClient
 
     admin, control = cluster
@@ -144,6 +144,41 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
         stored = client.get(f"/api/runs/{run_id}/reduction")
         assert stored.status_code == 200
         assert stored.json()["report_sha256"] == reduced.json()["report_sha256"]
+
+        # API has only a safe cluster locator; admin secret stays with worker.
+        monkeypatch.setenv(
+            "CLASHBOLT_TARGET_CLUSTER_URL",
+            "postgresql://127.0.0.1:5433/postgres",
+        )
+        monkeypatch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+        replay_job = client.post(
+            f"/api/runs/{run_id}/verification-jobs",
+            json={"kind": "REPLAY"}, headers=headers,
+        )
+        assert replay_job.status_code == 202, replay_job.text
+        reduction_job = client.post(
+            f"/api/runs/{run_id}/verification-jobs",
+            json={"kind": "REDUCE"}, headers=headers,
+        )
+        assert reduction_job.status_code == 202, reduction_job.text
+
+        # Simulate the separately configured native worker environment.
+        monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
+        assert asyncio.run(process_verification_one(ledger, "verifier-worker"))
+        assert asyncio.run(process_verification_one(ledger, "verifier-worker"))
+        monkeypatch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+
+        verified = client.get(
+            f"/api/verification-jobs/{replay_job.json()['job_id']}"
+        ).json()
+        assert verified["status"] == "COMPLETE", verified
+        assert verified["result"]["status"] == "REPRODUCED"
+        minimized = client.get(
+            f"/api/verification-jobs/{reduction_job.json()['job_id']}"
+        ).json()
+        assert minimized["status"] == "COMPLETE", minimized
+        assert minimized["result"]["status"] == "MINIMAL"
+        assert minimized["result"]["minimal_gate_count"] == 4
     with psycopg.connect(admin, autocommit=True) as connection:
         assert connection.execute(
             "SELECT count(*) FROM pg_database WHERE datname = %s",
