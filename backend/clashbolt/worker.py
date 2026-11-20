@@ -2,11 +2,30 @@
 
 import argparse
 import asyncio
+import json
 import os
+import sys
 from uuid import UUID, uuid4
 
-from clashbolt.experiment import execute
+from clashbolt.experiment import ORACLE_HASH
 from clashbolt.store import Ledger
+
+
+async def isolated_synthetic_run(variant: str, schedule: str) -> dict:
+    """Launch only the installed fixture runner with allowlisted typed arguments."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "clashbolt.fixture_runner", variant, schedule,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+    if process.returncode != 0 or len(stdout) > 100_000:
+        raise RuntimeError("Fixed fixture subprocess failed")
+    return json.loads(stdout)
 
 
 async def process_one(ledger: Ledger, owner: str) -> bool:
@@ -17,7 +36,18 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
 
     # If cancel raced with claim, the authoritative final transition is UNKNOWN.
     # The fixture is entirely synthetic, newly initialized for every execution.
-    witness = await execute(claim["variant"], claim["schedule"])
+    try:
+        witness = await isolated_synthetic_run(claim["variant"], claim["schedule"])
+    except (TimeoutError, RuntimeError, OSError, ValueError):
+        # An ambiguous child outcome is never promoted into a proved finding.
+        witness = {
+            "variant": claim["variant"],
+            "schedule": claim["schedule"],
+            "oracle": {"sha256": ORACLE_HASH},
+            "complete": False,
+            "verdict": "UNKNOWN",
+            "failure_reason": "fixture child process did not return valid evidence",
+        }
     accepted = ledger.finish(
         UUID(claim["run_id"]), owner, claim["lease_generation"], witness
     )

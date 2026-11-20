@@ -13,10 +13,12 @@ from clashbolt.experiment import (
     FIXTURE,
     FIXTURE_HASH,
     ORACLE_HASH,
+    ORACLE_ID,
     ORACLE_VERSION,
     SCHEDULES,
     TARGET_ID,
     TARGET_REVISION,
+    check_invariant,
     execute,
 )
 
@@ -27,31 +29,64 @@ def evidence_digest(witness: dict) -> str:
     return sha256(serialized).hexdigest()
 
 
-async def verify(witness: dict) -> dict:
-    """Three states: INVALID, REPRODUCED, or UNCONFIRMED."""
+def validate_contract(witness: dict) -> str | None:
+    """Return a reason for rejection; a valid digest alone is not a valid verdict."""
     if not isinstance(witness, dict):
-        return {"status": "INVALID", "reason": "Expected a JSON object"}
+        return "Expected a JSON object"
     oracle = witness.get("oracle")
     if not isinstance(oracle, dict):
-        return {"status": "INVALID", "reason": "Missing immutable oracle binding"}
+        return "Missing immutable oracle binding"
     if (
         witness.get("scope") != "SYNTHETIC_ONLY"
         or witness.get("target_id") != TARGET_ID
         or witness.get("target_revision") != TARGET_REVISION
         or witness.get("fixture") != FIXTURE
         or witness.get("fixture_hash") != FIXTURE_HASH
+        or oracle.get("id") != ORACLE_ID
         or oracle.get("sha256") != ORACLE_HASH
         or oracle.get("version") != ORACLE_VERSION
         or witness.get("variant") not in ("racy", "locked")
         or witness.get("schedule") not in SCHEDULES
     ):
-        return {"status": "INVALID", "reason": "Witness does not match the fixed demo contracts"}
+        return "Witness does not match the fixed demo contracts"
     try:
         actual_digest = evidence_digest(witness)
     except (TypeError, ValueError):
-        return {"status": "INVALID", "reason": "Witness cannot be serialized"}
+        return "Witness cannot be serialized"
     if actual_digest != witness.get("evidence_sha256"):
-        return {"status": "INVALID", "reason": "Evidence digest differs from the exported record"}
+        return "Evidence digest differs from the exported record"
+
+    observed = witness.get("observed_steps")
+    expected = SCHEDULES[witness["schedule"]]
+    if not isinstance(observed, list) or len(observed) > len(expected):
+        return "Invalid observed checkpoint sequence"
+    if not all(
+        isinstance(step, dict)
+        and step.get("sequence") == i + 1
+        and step.get("client") == expected[i].split(".")[0]
+        and step.get("checkpoint") == expected[i].split(".")[1]
+        for i, step in enumerate(observed)
+    ):
+        return "Checkpoint observations disagree with the declared schedule"
+    if witness.get("requested_gates") != list(expected):
+        return "Requested gate order was changed"
+    if witness.get("complete") is True and len(observed) != len(expected):
+        return "Completed witness is missing checkpoints"
+
+    state = witness.get("final_state")
+    if not isinstance(state, dict):
+        return "Missing authoritative fixture state"
+    computed = check_invariant(state, complete=witness.get("complete") is True)
+    if computed != witness.get("verdict"):
+        return "Recorded verdict disagrees with the independent oracle"
+    return None
+
+
+async def verify(witness: dict) -> dict:
+    """Three states: INVALID, REPRODUCED, or UNCONFIRMED."""
+    rejected = validate_contract(witness)
+    if rejected:
+        return {"status": "INVALID", "reason": rejected}
     if not witness.get("complete"):
         return {"status": "UNCONFIRMED", "reason": "Original controlled run was incomplete"}
 

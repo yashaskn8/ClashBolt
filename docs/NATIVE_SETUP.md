@@ -106,3 +106,17 @@ The planner only proposes deterministic plans; it cannot mint tokens or change
 the checker. Tool execution accepts solely the built-in fixture and approved
 variant/schedule pair. Revocation prevents future calls but cannot undo work
 already started.
+
+## 5. Target-process boundary
+
+In PostgreSQL mode, the worker launches only the packaged
+`clashbolt.fixture_runner` module as a short-lived child process with a timeout.
+No arbitrary target URL, script or command is accepted. The parent validates the
+returned contract, evidence hash, checkpoint order and oracle verdict before
+accepting control-plane results. This prevents a malformed fixture response from
+silently certifying a finding.
+
+**Important:** Process separation is not an OS sandbox or network-egress
+firewall. Do not substitute untrusted application code for the shipped fixture
+until proper process/account/network isolation and disposable target databases
+have been implemented and independently tested.

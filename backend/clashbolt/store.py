@@ -13,6 +13,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from clashbolt.experiment import ORACLE_HASH, SCHEDULES
+from clashbolt.witness import validate_contract
 
 _SCHEMA = (
     """
@@ -258,8 +259,9 @@ class Ledger:
                 witness.get("oracle", {}).get("sha256") != current["oracle_hash"]
                 or witness.get("variant") != current["variant"]
                 or witness.get("schedule") != current["schedule"]
+                or validate_contract(witness) is not None
             ):
-                status, verdict, note = "UNKNOWN", "UNKNOWN", "evidence binding mismatch"
+                status, verdict, note = "UNKNOWN", "UNKNOWN", "invalid or mismatched witness"
             else:
                 verdict = witness.get("verdict")
                 if verdict not in ("PASS", "FAIL") or not witness.get("complete"):

@@ -99,3 +99,15 @@ def test_quota_uses_single_serialized_row(ledger):
     finally:
         with ledger.connect() as conn:
             conn.execute("UPDATE project_quota SET max_open = 20 WHERE project_id = 'local'")
+
+
+def test_forged_witness_is_never_accepted_as_failure(ledger):
+    run = ledger.admit(client_key=str(uuid4()), variant="locked", schedule="serial")
+    claim = ledger.claim("checker-test")
+    assert claim and claim["run_id"] == run["run_id"]
+    forged = asyncio.run(execute("locked", "serial"))
+    forged["verdict"] = "FAIL"
+    assert ledger.finish(UUID(run["run_id"]), "checker-test", claim["lease_generation"], forged)
+    result = ledger.get(UUID(run["run_id"]))
+    assert result["status"] == "UNKNOWN"
+    assert result["verdict"] == "UNKNOWN"
