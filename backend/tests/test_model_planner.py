@@ -2,7 +2,6 @@ import asyncio
 import json
 
 import httpx
-
 from clashbolt.model_planner import MODEL_URL, propose_model_plan
 
 
