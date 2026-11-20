@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 from collections import OrderedDict
+from urllib.parse import urlsplit
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -123,12 +124,37 @@ def create_app() -> FastAPI:
         # Only the direct peer is considered. Reverse proxies must not expose
         # this unauthenticated development service to remote users.
         peer = request.client.host if request.client else None
-        if peer not in ("127.0.0.1", "::1", "testclient"):
+        raw_host = request.headers.get("host", "")
+        try:
+            requested_host = urlsplit("//" + raw_host).hostname
+        except ValueError:
+            requested_host = None
+        if (
+            peer not in ("127.0.0.1", "::1", "testclient")
+            or requested_host not in ("127.0.0.1", "::1", "localhost", "testserver")
+        ):
             return JSONResponse(
                 status_code=403,
                 content={"detail": "ClashBolt is restricted to local connections"},
             )
-        return await call_next(request)
+        origin = request.headers.get("origin")
+        if (
+            request.method not in ("GET", "HEAD", "OPTIONS")
+            and origin is not None
+            and origin not in (
+                "http://127.0.0.1:5173", "http://localhost:5173",
+                "http://127.0.0.1:8000", "http://localhost:8000",
+            )
+        ):
+            return JSONResponse(
+                status_code=403, content={"detail": "Cross-origin write was denied"},
+            )
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        if not request.url.path.endswith("/stream"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.middleware("http")
     async def private_access(request: Request, call_next):
