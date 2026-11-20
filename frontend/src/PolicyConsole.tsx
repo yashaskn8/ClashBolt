@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
@@ -54,6 +54,7 @@ export default function PolicyConsole({
   variant, schedule, onApproved, operator, accountRole,
 }: Props) {
   const [rule, setRule] = useState<Rule | null>(null)
+  const [proposals, setProposals] = useState<Rule[]>([])
   const [capability, setCapability] = useState<Capability | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [rationale, setRationale] = useState(
@@ -66,6 +67,22 @@ export default function PolicyConsole({
   const [busy, setBusy] = useState(false)
   const canOperate = accountRole ? accountRole === 'operator' : !!operator
   const canReview = accountRole ? accountRole === 'reviewer' : !!operator
+
+  useEffect(() => {
+    let mounted = true
+    request<{ proposals: Rule[] }>('/api/oracle/proposals')
+      .then((response) => {
+        if (!mounted) return
+        setProposals(response.proposals)
+        setRule((current) => current ?? (
+          response.proposals.find((item) => item.state === 'PROPOSED') ?? null
+        ))
+      })
+      .catch(() => {
+        if (mounted) setProposals([])
+      })
+    return () => { mounted = false }
+  }, [accountRole])
 
   async function action(callback: () => Promise<unknown>) {
     setBusy(true)
@@ -87,6 +104,7 @@ export default function PolicyConsole({
         candidate: { rationale },
       }, operator)
       setRule(result)
+      setProposals((current) => [result, ...current])
       setCapability(null)
       setPlan(null)
       setToolFinished(false)
@@ -103,6 +121,9 @@ export default function PolicyConsole({
         operator, undefined, reviewerToken,
       )
       setRule({ ...rule, state: result.state })
+      setProposals((current) => current.map((item) =>
+        item.id === rule.id ? { ...item, state: result.state } : item
+      ))
       onApproved(rule.id)
       return result
     })
@@ -255,6 +276,25 @@ export default function PolicyConsole({
       <p className="help-text">
         Rationale is descriptive only. The fixed rule and checker cannot be changed here.
       </p>
+      <label className="field-label" htmlFor="rule-selection">
+        Existing rule proposals
+      </label>
+      <select
+        id="rule-selection" value={rule?.id ?? ''}
+        onChange={(event) => {
+          setRule(proposals.find((item) => item.id === event.target.value) ?? null)
+          setPlan(null)
+          setCapability(null)
+          setToolFinished(false)
+        }}
+      >
+        <option value="">Select an existing proposal</option>
+        {proposals.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.state} · {item.id.slice(0, 12)} · {item.rule_hash.slice(0, 8)}
+          </option>
+        ))}
+      </select>
       <div className="policy-actions">
         <button type="button" onClick={() => void propose()} disabled={busy || rationale.length < 12 || !canOperate}>
           1. Validate candidate rule
