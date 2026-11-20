@@ -239,9 +239,8 @@ def test_step_budget_excess_never_certifies_oversized_trace(ledger):
 
 
 def test_revoked_witness_replay_cannot_regain_certification(ledger, monkeypatch):
-    from fastapi.testclient import TestClient
-
     from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
 
     queued = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
     claim = ledger.claim("replay-worker")
