@@ -418,6 +418,31 @@ class Ledger:
             quota = conn.execute(
                 "SELECT max_native_active FROM project_quota WHERE project_id = 'local'"
             ).fetchone()
+            pending_age = conn.execute(
+                """
+                SELECT EXTRACT(EPOCH FROM (now() - min(created_at)))
+                    AS oldest_pending_seconds
+                FROM experiment_run
+                WHERE project_id = 'local' AND status = 'PENDING'
+                """
+            ).fetchone()["oldest_pending_seconds"]
+            latency = conn.execute(
+                """
+                SELECT percentile_cont(0.95) WITHIN GROUP (
+                    ORDER BY EXTRACT(EPOCH FROM (
+                        t.first_started - r.created_at
+                    ))::double precision
+                ) AS start_p95_seconds
+                FROM experiment_run r
+                JOIN LATERAL (
+                    SELECT min(created_at) AS first_started
+                    FROM run_transition
+                    WHERE run_id = r.id AND status = 'RUNNING'
+                ) t ON t.first_started IS NOT NULL
+                WHERE r.project_id = 'local'
+                  AND r.created_at >= now() - interval '7 days'
+                """
+            ).fetchone()["start_p95_seconds"]
             workers = conn.execute(
                 """
                 SELECT owner, last_seen, last_seen > now() - interval '15 seconds'
@@ -442,6 +467,8 @@ class Ledger:
                 "responsive_workers": sum(row["responsive"] for row in workers),
                 "native_slots_occupied": native_slots,
                 "native_slots_limit": quota["max_native_active"] if quota else 2,
+                "oldest_pending_seconds": max(0.0, float(pending_age or 0)),
+                "start_p95_seconds": max(0.0, float(latency or 0)),
             }
 
     def recent(self, limit: int = 20) -> list[dict]:

@@ -36,5 +36,13 @@ def operational_metrics(snapshot: dict) -> str:
         "# HELP clashbolt_native_slots_limit Configured active native target claim limit",
         "# TYPE clashbolt_native_slots_limit gauge",
         f'clashbolt_native_slots_limit {int(snapshot.get("native_slots_limit", 2))}',
+        "# HELP clashbolt_oldest_pending_seconds Oldest pending run age in seconds",
+        "# TYPE clashbolt_oldest_pending_seconds gauge",
+        f'clashbolt_oldest_pending_seconds '
+        f'{max(0.0, float(snapshot.get("oldest_pending_seconds", 0))):.3f}',
+        "# HELP clashbolt_run_start_p95_seconds P95 first claim latency over 7 days",
+        "# TYPE clashbolt_run_start_p95_seconds gauge",
+        f'clashbolt_run_start_p95_seconds '
+        f'{max(0.0, float(snapshot.get("start_p95_seconds", 0))):.3f}',
     ))
     return "\n".join(lines) + "\n"
