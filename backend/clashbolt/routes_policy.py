@@ -67,6 +67,23 @@ def require_operator(x_operator_token: str | None) -> None:
         raise HTTPException(403, "Invalid operator token")
 
 
+def require_reviewer(
+    reviewer_token: str | None, operator_token: str | None
+) -> None:
+    """Enforce a distinct human review secret when private mode is enabled."""
+    configured = os.getenv("CLASHBOLT_REVIEWER_TOKEN")
+    if not configured:
+        if os.getenv("CLASHBOLT_ACCESS_MODE") == "private":
+            raise HTTPException(403, "Private mode requires a separate reviewer token")
+        # Compatibility with single-operator local development mode.
+        require_operator(operator_token)
+        return
+    if not reviewer_token or configured == os.getenv("CLASHBOLT_OPERATOR_TOKEN"):
+        raise HTTPException(403, "Independent reviewer credential required")
+    if not hmac.compare_digest(configured, reviewer_token):
+        raise HTTPException(403, "Invalid reviewer token")
+
+
 def policy_router(dsn: str | None) -> APIRouter:
     router = APIRouter(prefix="/api")
     policy = Policy(dsn) if dsn else None
@@ -89,8 +106,9 @@ def policy_router(dsn: str | None) -> APIRouter:
     def approve_rule(
         proposal_id: UUID, request: ReviewInput,
         x_operator_token: str | None = Header(default=None),
+        x_reviewer_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_reviewer(x_reviewer_token, x_operator_token)
         try:
             return require_policy().approve(
                 proposal_id, request.expected_hash, request.reviewer
@@ -101,8 +119,9 @@ def policy_router(dsn: str | None) -> APIRouter:
     @router.post("/oracle/proposals/{proposal_id}/revoke")
     def revoke_rule(
         proposal_id: UUID, x_operator_token: str | None = Header(default=None),
+        x_reviewer_token: str | None = Header(default=None),
     ):
-        require_operator(x_operator_token)
+        require_reviewer(x_reviewer_token, x_operator_token)
         if not require_policy().revoke_rule(proposal_id):
             raise HTTPException(409, "Oracle version is not currently approved")
         return {"proposal_id": str(proposal_id), "state": "REVOKED"}

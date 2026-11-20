@@ -12,10 +12,13 @@ type Props = {
   operator: string
 }
 
-async function request<T>(url: string, body?: unknown, token?: string, bearer?: string): Promise<T> {
+async function request<T>(
+  url: string, body?: unknown, token?: string, bearer?: string, reviewer?: string,
+): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['X-Operator-Token'] = token
   if (bearer) headers.Authorization = `Bearer ${bearer}`
+  if (reviewer) headers['X-Reviewer-Token'] = reviewer
   const response = await fetch(url, {
     method: body === undefined ? 'GET' : 'POST',
     headers,
@@ -34,6 +37,7 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
   const [plan, setPlan] = useState<Plan | null>(null)
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
+  const [reviewerToken, setReviewerToken] = useState('')
   const [busy, setBusy] = useState(false)
 
   async function action(callback: () => Promise<unknown>) {
@@ -67,7 +71,7 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
       const result = await request<Rule>(
         `/api/oracle/proposals/${rule.id}/approve`,
         { expected_hash: rule.rule_hash, reviewer: 'local-operator' },
-        operator,
+        operator, undefined, reviewerToken,
       )
       setRule({ ...rule, state: result.state })
       onApproved(rule.id)
@@ -146,8 +150,18 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         exact hash and issue a variant/schedule-bound token. This is not a deployed AI agent.
       </p>
       <p className="help-text">
-        Use the operator token entered above. It stays in memory, not browser storage.
+        The operator token above controls execution. A separate reviewer secret can
+        be required for approving immutable rules.
       </p>
+      <label className="field-label" htmlFor="reviewer-token">
+        Independent reviewer token
+      </label>
+      <input
+        id="reviewer-token" type="password" autoComplete="off"
+        value={reviewerToken}
+        onChange={(event) => setReviewerToken(event.target.value)}
+        placeholder="CLASHBOLT_REVIEWER_TOKEN (when configured)"
+      />
       <div className="policy-actions">
         <button type="button" onClick={() => void propose()} disabled={busy}>1. Propose fixed rule</button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>

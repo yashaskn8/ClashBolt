@@ -123,3 +123,30 @@ def test_deterministic_plan_and_local_evaluation(policy_client):
     )
     assert comparison.status_code == 200
     assert comparison.json()["strategies"]["semantic"]["controlled_failures"] == 3
+
+
+def test_separate_reviewer_credential_is_required(monkeypatch, policy_client):
+    monkeypatch.setenv("CLASHBOLT_REVIEWER_TOKEN", "separate-reviewer-secret")
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "planner"}
+    ).json()
+    pid = proposal["id"]
+    request = {"expected_hash": ORACLE_HASH, "reviewer": "separate-reviewer"}
+    url = f"/api/oracle/proposals/{pid}/approve"
+    assert policy_client.post(
+        url, json=request, headers={"X-Operator-Token": "ci-local-only-secret"}
+    ).status_code == 403
+    assert policy_client.post(
+        url, json=request, headers={"X-Reviewer-Token": "ci-local-only-secret"}
+    ).status_code == 403
+    assert policy_client.post(
+        url, json=request, headers={"X-Reviewer-Token": "separate-reviewer-secret"}
+    ).status_code == 200
+    assert policy_client.post(
+        f"/api/oracle/proposals/{pid}/revoke",
+        headers={"X-Operator-Token": "ci-local-only-secret"}
+    ).status_code == 403
+    assert policy_client.post(
+        f"/api/oracle/proposals/{pid}/revoke",
+        headers={"X-Reviewer-Token": "separate-reviewer-secret"}
+    ).status_code == 200
