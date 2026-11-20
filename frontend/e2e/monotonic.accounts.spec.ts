@@ -1,4 +1,4 @@
-"""This fixture is exercised against a real browser and native PostgreSQL API."""
+// This test exercises the native PostgreSQL API through a real browser.
 import { expect, test, type Page } from '@playwright/test'
 
 async function signIn(page: Page, role: 'operator' | 'reviewer') {
