@@ -5,7 +5,6 @@ import os
 from uuid import UUID, uuid4
 
 import pytest
-
 from clashbolt.experiment import execute
 from clashbolt.store import Ledger
 from clashbolt.worker import process_one
@@ -18,6 +17,9 @@ def ledger():
         pytest.skip("Set CLASHBOLT_TEST_DATABASE_URL for native PostgreSQL integration")
     result = Ledger(dsn)
     result.migrate()
+    # Only this dedicated test database is touched; each test begins isolated.
+    with result.connect() as conn:
+        conn.execute("TRUNCATE run_transition, experiment_run, project_quota CASCADE")
     return result
 
 
@@ -71,7 +73,9 @@ def test_cancel_pending_and_inflight_unknown(ledger):
     assert claim and claim["run_id"] == active["run_id"]
     assert ledger.cancel(UUID(active["run_id"]))["status"] == "CANCELLING"
     witness = asyncio.run(execute("racy", "overlap"))
-    assert ledger.finish(UUID(active["run_id"]), "cancel-worker", claim["lease_generation"], witness)
+    assert ledger.finish(
+        UUID(active["run_id"]), "cancel-worker", claim["lease_generation"], witness
+    )
     result = ledger.get(UUID(active["run_id"]))
     assert result["status"] == "UNKNOWN"
     assert result["verdict"] == "UNKNOWN"
