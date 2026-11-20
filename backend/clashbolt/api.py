@@ -6,7 +6,7 @@ import os
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,7 +23,7 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
-from clashbolt.routes_policy import policy_router
+from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import Ledger
 
 
@@ -136,7 +136,10 @@ def create_app() -> FastAPI:
             raise HTTPException(422, str(error)) from error
 
     @app.post("/api/runs", status_code=201)
-    def submit_run(request: RunRequest) -> dict:
+    def submit_run(
+        request: RunRequest, x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token)
         store = require_ledger()
         try:
             return store.admit(
@@ -192,7 +195,10 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/api/runs/{run_id}/cancel")
-    def cancel_run(run_id: UUID) -> dict:
+    def cancel_run(
+        run_id: UUID, x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token)
         result = require_ledger().cancel(run_id)
         if result is None:
             raise HTTPException(404, "Run not found")
@@ -208,7 +214,10 @@ def create_app() -> FastAPI:
         return result["witness"]
 
     @app.post("/api/runs/{run_id}/replay")
-    async def replay_durable_run(run_id: UUID) -> dict:
+    async def replay_durable_run(
+        run_id: UUID, x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token)
         original = require_ledger().get(run_id)
         if original is None:
             raise HTTPException(404, "Run not found")

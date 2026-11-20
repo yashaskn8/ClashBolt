@@ -52,6 +52,15 @@ class EvaluationInput(StrictModel):
     trials: int = Field(default=8, ge=1, le=20)
 
 
+def require_operator(x_operator_token: str | None) -> None:
+    """Local write protection. Not a replacement for authenticated project roles."""
+    configured = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
+    if not configured or not x_operator_token:
+        raise HTTPException(403, "Operator token is required")
+    if not hmac.compare_digest(configured, x_operator_token):
+        raise HTTPException(403, "Invalid operator token")
+
+
 def policy_router(dsn: str | None) -> APIRouter:
     router = APIRouter(prefix="/api")
     policy = Policy(dsn) if dsn else None
@@ -61,12 +70,6 @@ def policy_router(dsn: str | None) -> APIRouter:
             raise HTTPException(503, "Set CLASHBOLT_DATABASE_URL to enable rule review")
         return policy
 
-    def require_operator(x_operator_token: str | None) -> None:
-        configured = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
-        if not configured or not x_operator_token:
-            raise HTTPException(403, "Operator token is required")
-        if not hmac.compare_digest(configured, x_operator_token):
-            raise HTTPException(403, "Invalid operator token")
 
     @router.post("/oracle/proposals", status_code=201)
     def propose_rule(request: ProposalInput):

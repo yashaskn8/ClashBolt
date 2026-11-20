@@ -56,6 +56,7 @@ export default function App() {
   const [schedule, setSchedule] = useState<Schedule>('overlap')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
+  const [operatorToken, setOperatorToken] = useState('')
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
@@ -90,7 +91,10 @@ export default function App() {
       const storage = catalog?.storage === 'postgresql' ? 'runs' : 'experiments'
       const response = await fetch(`/api/${storage}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(storage === 'runs' ? { 'X-Operator-Token': operatorToken } : {}),
+        },
         body: JSON.stringify({
           target_id: 'synthetic-inventory', variant, schedule,
           ...(storage === 'runs'
@@ -117,7 +121,10 @@ export default function App() {
     setError('')
     try {
       const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
-      const response = await fetch(`/api/${path}/replay`, { method: 'POST' })
+      const response = await fetch(`/api/${path}/replay`, {
+        method: 'POST',
+        headers: durable ? { 'X-Operator-Token': operatorToken } : {},
+      })
       const proof = await parseResponse<{ replay_status: string }>(response)
       setReplayStatus(proof.replay_status)
       if (result) setResult({ ...result, replay_status: proof.replay_status })
@@ -178,15 +185,25 @@ export default function App() {
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
             {catalog?.storage === 'postgresql' && (
+              <>
+              <label className="field-label" htmlFor="operator-token">Local operator token</label>
+              <input
+                id="operator-token" type="password" autoComplete="off"
+                value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)}
+              />
               <p className="schedule-tip">
                 Approved oracle: {approvedOracleId
                   ? approvedOracleId.slice(0, 13) + '…'
                   : 'none — approve the fixed rule in the console below before submitting'}
               </p>
+              </>
             )}
             <button
               className="primary-button" type="button" onClick={run}
-              disabled={busy || !catalog || (catalog.storage === 'postgresql' && !approvedOracleId)}
+              disabled={
+                busy || !catalog ||
+                (catalog.storage === 'postgresql' && (!approvedOracleId || !operatorToken))
+              }
             >{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
             {error && <p className="error" role="alert">{error}</p>}
             <p className="help-text">Storage: {catalog?.storage ?? 'connecting'} · Durable runs require a separate worker.</p>
@@ -222,10 +239,13 @@ export default function App() {
             setReplayStatus('NOT_RUN')
           }} />
         )}
-        {durable && <DurableMonitor initial={durable} onUpdate={setDurable} />}
+        {durable && <DurableMonitor
+          initial={durable} onUpdate={setDurable} operatorToken={operatorToken}
+        />}
         {catalog?.storage === 'postgresql' && <PolicyConsole
           variant={variant} schedule={schedule}
           onApproved={(id) => setApprovedOracleId(id)}
+          operator={operatorToken}
         />}
         <footer>CLASHBOLT LAB <span>·</span> Synthetic targets only. PostgreSQL mode keeps durable control state, not external effects.</footer>
       </main>

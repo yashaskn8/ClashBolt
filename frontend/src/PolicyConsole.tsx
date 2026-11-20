@@ -5,7 +5,12 @@ type Schedule = 'overlap' | 'serial'
 type Rule = { id: string; rule_hash: string; state: string }
 type Capability = { capability_id: string; token: string; max_calls: number }
 type Plan = { id: string; plan: { variant: Variant; schedule: Schedule } }
-type Props = { variant: Variant; schedule: Schedule; onApproved: (id: string) => void }
+type Props = {
+  variant: Variant
+  schedule: Schedule
+  onApproved: (id: string) => void
+  operator: string
+}
 
 async function request<T>(url: string, body?: unknown, token?: string, bearer?: string): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -23,8 +28,7 @@ async function request<T>(url: string, body?: unknown, token?: string, bearer?: 
   return (await response.json()) as T
 }
 
-export default function PolicyConsole({ variant, schedule, onApproved }: Props) {
-  const [operator, setOperator] = useState('')
+export default function PolicyConsole({ variant, schedule, onApproved, operator }: Props) {
   const [rule, setRule] = useState<Rule | null>(null)
   const [capability, setCapability] = useState<Capability | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -129,12 +133,9 @@ export default function PolicyConsole({ variant, schedule, onApproved }: Props) 
         A proposed rule cannot authorize execution. The local operator must approve its
         exact hash and issue a variant/schedule-bound token. This is not a deployed AI agent.
       </p>
-      <label className="field-label" htmlFor="operator-token">Local operator token</label>
-      <input
-        id="operator-token" type="password" autoComplete="off" placeholder="CLASHBOLT_OPERATOR_TOKEN"
-        value={operator} onChange={(event) => setOperator(event.target.value)}
-      />
-      <p className="help-text">Kept in memory only. No token is saved to browser storage.</p>
+      <p className="help-text">
+        Use the operator token entered above. It stays in memory, not browser storage.
+      </p>
       <div className="policy-actions">
         <button type="button" onClick={() => void propose()} disabled={busy}>1. Propose fixed rule</button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>

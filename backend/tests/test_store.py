@@ -250,12 +250,39 @@ def test_revoked_witness_replay_cannot_regain_certification(ledger, monkeypatch)
         UUID(queued["run_id"]), "replay-worker", claim["lease_generation"], witness
     )
     monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "test-operator-secret")
+    headers = {"X-Operator-Token": "test-operator-secret"}
     with TestClient(create_app()) as client:
-        accepted = client.post(f"/api/runs/{queued['run_id']}/replay")
+        accepted = client.post(f"/api/runs/{queued['run_id']}/replay", headers=headers)
         assert accepted.status_code == 200
         assert accepted.json()["replay_status"] == "REPRODUCED"
         assert ledger.revoke_rule(ledger.approval_id)
-        withdrawn = client.post(f"/api/runs/{queued['run_id']}/replay")
+        withdrawn = client.post(f"/api/runs/{queued['run_id']}/replay", headers=headers)
         assert withdrawn.status_code == 200
         assert withdrawn.json()["replay_status"] == "UNCONFIRMED"
         assert withdrawn.json()["adjudicated_verdict"] == "UNKNOWN"
+
+
+def test_durable_mutations_require_operator_token(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "test-operator-secret")
+    payload = {
+        "client_key": str(uuid4()),
+        "variant": "racy",
+        "schedule": "overlap",
+        "approved_oracle_id": str(ledger.approval_id),
+    }
+    with TestClient(create_app()) as client:
+        assert client.post("/api/runs", json=payload).status_code == 403
+        assert client.post(
+            "/api/runs", json=payload, headers={"X-Operator-Token": "incorrect"}
+        ).status_code == 403
+        headers = {"X-Operator-Token": "test-operator-secret"}
+        response = client.post("/api/runs", json=payload, headers=headers)
+        assert response.status_code == 201
+        run_id = response.json()["run_id"]
+        assert client.post(f"/api/runs/{run_id}/cancel").status_code == 403
+        assert client.post(f"/api/runs/{run_id}/cancel", headers=headers).status_code == 200
