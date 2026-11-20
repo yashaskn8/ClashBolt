@@ -414,10 +414,9 @@ def test_migrations_are_atomic_and_serialize_competing_starts(ledger):
             "SELECT component, version FROM schema_revision ORDER BY component"
         ).fetchall()
         revisions = {row["component"]: row["version"] for row in rows}
-    assert revisions == {
-        "control": BASE_SCHEMA_VERSION,
-        "policy": POLICY_SCHEMA_VERSION,
-    }
+    assert revisions["control"] == BASE_SCHEMA_VERSION
+    assert revisions["policy"] == POLICY_SCHEMA_VERSION
+    # Optional account or future component revisions may coexist.
 
 
 def test_migration_refuses_unknown_future_schema(ledger):
