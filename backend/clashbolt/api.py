@@ -1,6 +1,7 @@
 """ClashBolt API: local scratch lab and optional PostgreSQL durable run control."""
 
 import asyncio
+from collections import OrderedDict
 import hashlib
 import hmac
 import json
@@ -103,6 +104,29 @@ def create_app() -> FastAPI:
             or request.url.path in ("/api/health", "/api/catalog", "/api/session")
         ):
             return await call_next(request)
+        # Review authority is independent: a reviewer must not need an
+        # operator cookie or execution secret to approve or revoke a rule.
+        path = request.url.path
+        reviewing = (
+            request.method == "POST"
+            and path.startswith("/api/oracle/proposals/")
+            and (path.endswith("/approve") or path.endswith("/revoke"))
+        )
+        if reviewing:
+            reviewer_secret = os.getenv("CLASHBOLT_REVIEWER_TOKEN")
+            operator_secret = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
+            presented = request.headers.get("X-Reviewer-Token")
+            if (
+                not reviewer_secret
+                or reviewer_secret == operator_secret
+                or not presented
+                or not hmac.compare_digest(reviewer_secret, presented)
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Independent reviewer credential required"},
+                )
+            return await call_next(request)
         secret = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
         if not _valid_session(request.cookies.get("clashbolt_session"), secret):
             return JSONResponse(
@@ -132,7 +156,9 @@ def create_app() -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    runs: dict[str, dict] = {}
+    # Scratch-only compatibility is intentionally bounded and volatile.
+    runs: OrderedDict[str, dict] = OrderedDict()
+    max_scratch_runs = 50
     dsn = os.getenv("CLASHBOLT_DATABASE_URL")
     ledger = Ledger(dsn) if dsn else None
     app.include_router(policy_router(dsn))
@@ -191,6 +217,8 @@ def create_app() -> FastAPI:
         run_id = str(uuid4())
         result = {"run_id": run_id, "witness": witness, "replay_status": "NOT_RUN"}
         runs[run_id] = result
+        if len(runs) > max_scratch_runs:
+            runs.popitem(last=False)
         return result
 
     @app.get("/api/experiments/{run_id}")

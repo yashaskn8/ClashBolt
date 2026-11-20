@@ -256,3 +256,16 @@ The verifier checks archive bounds, member names, manifest bindings, evidence
 history and the fresh synthetic replay. Native database witnesses require the
 matching native test-cluster environment. A reproduced synthetic fixture is not
 proof of an ungated or independently deployed application vulnerability.
+
+
+### Independent reviewer-only approval
+
+In private mode, a reviewer can approve or revoke an existing immutable
+proposal by presenting only `X-Reviewer-Token` to the corresponding
+`/api/oracle/proposals/{id}/approve` or `/revoke` endpoint. No operator
+session or operator credential is required for those two actions. All other
+private read endpoints still need the operator session, and writes still
+require the operator credential or a scope-limited tool capability.
+
+This separates credentials for review and execution, but is not yet proof
+of different human identities or a project-level RBAC system.

@@ -232,3 +232,32 @@ def test_budget_endpoint_is_operator_only(policy_client):
     )
     assert response.status_code == 200
     assert response.json()["token_limit"] >= 256
+
+
+def test_private_reviewer_is_independent_of_operator_session(
+    policy_client, monkeypatch,
+):
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "different-author"}
+    ).json()
+    pid = proposal["id"]
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "private")
+    monkeypatch.setenv("CLASHBOLT_REVIEWER_TOKEN", "independent-review-only")
+    approval = {"expected_hash": ORACLE_HASH, "reviewer": "separate-human"}
+    url = f"/api/oracle/proposals/{pid}/approve"
+    assert policy_client.post(url, json=approval).status_code == 403
+    assert policy_client.post(
+        url, json=approval, headers={"X-Operator-Token": "ci-local-only-secret"}
+    ).status_code == 403
+    response = policy_client.post(
+        url, json=approval, headers={"X-Reviewer-Token": "independent-review-only"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "APPROVED"
+    assert policy_client.get("/api/oracle/proposals").status_code == 401
+    revoke = policy_client.post(
+        f"/api/oracle/proposals/{pid}/revoke",
+        headers={"X-Reviewer-Token": "independent-review-only"},
+    )
+    assert revoke.status_code == 200
+    assert revoke.json()["state"] == "REVOKED"

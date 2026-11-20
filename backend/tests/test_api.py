@@ -74,3 +74,20 @@ def test_private_mode_requires_operator_session_for_reads_and_writes(monkeypatch
         assert client.get(
             f"/api/experiments/{accepted.json()['run_id']}"
         ).status_code == 200
+
+
+def test_scratch_experiment_history_has_a_strict_bound():
+    with TestClient(create_app()) as client:
+        first = None
+        latest = None
+        for i in range(55):
+            response = client.post(
+                "/api/experiments", json={"variant": "locked", "schedule": "serial"}
+            )
+            assert response.status_code == 201
+            if i == 0:
+                first = response.json()["run_id"]
+            latest = response.json()["run_id"]
+        assert first is not None and latest is not None
+        assert client.get(f"/api/experiments/{first}").status_code == 404
+        assert client.get(f"/api/experiments/{latest}").status_code == 200
