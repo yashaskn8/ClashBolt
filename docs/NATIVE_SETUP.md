@@ -44,6 +44,8 @@ Configure the connection URL as an environment variable in PowerShell:
 ```powershell
 $env:CLASHBOLT_DATABASE_URL = "postgresql://clashbolt:YOUR_PASSWORD@127.0.0.1:5432/clashbolt"
 $env:CLASHBOLT_OPERATOR_TOKEN = "A_LONG_RANDOM_LOCAL_SECRET"
+$env:CLASHBOLT_REVIEWER_TOKEN = "A_DIFFERENT_LONG_RANDOM_REVIEWER_SECRET"
+$env:CLASHBOLT_ACCESS_MODE = "private"
 python -m clashbolt.policy
 python -m clashbolt.worker
 ```
@@ -64,7 +66,8 @@ accepted run. Revoking a rule withdraws certified verdicts while retaining
 historical witness data.
 
 The API accepts approved experiments into the PostgreSQL queue. The **separate worker**
-process claims and executes each accepted synthetic run. API requests do not
+process claims and executes each accepted synthetic run. Its subprocess receives
+a minimized environment, not the control database or operator secrets. API requests do not
 silently spawn durable background work.
 
 If the database variable is absent, the UI uses its in-memory scratch mode
@@ -94,11 +97,12 @@ Export a witness using the UI, then verify it in a different Python process:
 python -m clashbolt.witness .\clashbolt-synthetic-RUN_ID.json
 ```
 
-The verifier accepts only shipped synthetic fixture contracts and compares
-evidence hashes after running the same application gate order on fresh state.
+The verifier accepts only shipped synthetic fixture contracts and checks
+operation history and evidence hashes after replaying the same application gate order
+on fresh state. For native PostgreSQL witnesses, it needs the separate target cluster.
 This does **not** prove a real-world or uncontrolled concurrency bug.
 
-## 4. What the operator token protects
+## 4. What the operator and reviewer tokens protect
 
 `CLASHBOLT_OPERATOR_TOKEN` is required for durable run submission,
 cancellation and replay as well as oracle approval, capability changes, audit
@@ -108,6 +112,10 @@ local client. Do not commit it or expose it in a URL.
 Only POST durable mutations are protected by this token: the read-only run
 index, snapshots and synthetic scratch endpoints have no identity checks.
 Keep the API on loopback and never put secrets in URLs.
+
+A separate `CLASHBOLT_REVIEWER_TOKEN` credential is used for approval and
+revocation when configured. Private mode refuses approval if no distinct
+reviewer credential is configured. Do not put either secret in source control.
 
 The token is a single-machine operator control, not identity verification,
 multitenant RBAC, an independent human review system, or production authorization.
@@ -143,3 +151,57 @@ The JSON report binds seeds, the synthetic fixture and the oracle SHA-256,
 counts controlled failures, and records per-trial evidence hashes under an equal
 gate budget. It explicitly returns `promotion_eligible: false`. These runs
 cannot establish held-out performance, statistical advantage, or AI safety.
+
+
+## 7. Disposable native PostgreSQL targets
+
+The control database and **target databases must use separate native clusters**
+on different loopback ports. Do not point this at a production cluster.
+
+For a native Ubuntu PostgreSQL installation, provision a second PostgreSQL
+cluster on port 5433 using your native PostgreSQL administration tools. The
+dedicated target administrator needs permission to create/drop local databases,
+create/drop restricted roles, and initialize the fixed inventory table. Restrict
+its credentials to the worker machine; the child process receives only a fresh
+per-run role credential.
+
+Set the environment variable in every worker and verifier process:
+
+```powershell
+$env:CLASHBOLT_TARGET_ADMIN_URL = "postgresql://TARGET_ADMIN:TARGET_PASSWORD@127.0.0.1:5433/postgres"
+```
+
+The React composer then enables **Fresh isolated native PostgreSQL database**.
+A fresh restricted database is created for a run; after execution the worker
+drops it. Generation-bound target records allow another worker to reclaim
+leftovers after lease expiry, including simulated unclean worker death.
+There is no OS-account sandbox or deny-egress firewall yet. Do not run untrusted
+target programs.
+
+## 8. Private local operator session
+
+Setting `CLASHBOLT_ACCESS_MODE=private` protects read endpoints and SSE with a
+one-hour HTTP-only, SameSite=Strict operator session. Use **Unlock private API**
+after entering the local operator token. Mutations still require the token
+header, to avoid cookie-only CSRF authority. The reviewer has a distinct secret
+for oracle approval. This is **not multitenant login, RBAC or TLS termination**;
+reverse-proxy exposure remains unsafe.
+
+## 9. Optional local AI schedule suggestions
+
+You may separately install and run an Ollama-compatible local model server
+listening on `http://127.0.0.1:11434`. Configure:
+
+```powershell
+$env:CLASHBOLT_LOCAL_MODEL = "YOUR_INSTALLED_LOCAL_MODEL_NAME"
+```
+
+The **Suggest local model plan** button makes one bounded JSON request. The
+backend validates it against only two shipped synthetic schedules, fixed target,
+fixed conflict edge, and fixed four-gate budget. Model errors or invalid JSON
+produce an explicitly labeled deterministic fallback. No model can approve
+an invariant or mint capabilities.
+
+The local model service is **not configured or quality-tested in CI**. Its
+output is labeled unpromoted; benchmark superiority still requires frozen
+external held-out targets and total-cost paired trials.

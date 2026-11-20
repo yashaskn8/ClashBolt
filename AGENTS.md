@@ -24,3 +24,9 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
 - **Deployment:** native Python, PostgreSQL and Node only. No Docker, Docker
   Compose, Kubernetes, Temporal, Redis or Kafka for this project.
 
+
+- **Claims and isolation:** A native PostgreSQL target is a disposable database
+  on a *different local cluster*, not a sandbox. Every target instance is
+  tied to its worker lease generation and reclaimed after an expired claim.
+- **Approval:** Keep the reviewer secret distinct from the executor token.
+  New model strategies remain unpromoted until held-out equal-budget evidence.
