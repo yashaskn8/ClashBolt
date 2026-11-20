@@ -357,3 +357,44 @@ def test_transition_cursor_paginates_history_without_loss(ledger):
         ledger.transition_page(run_id, after=-1)
     with pytest.raises(ValueError):
         ledger.transition_page(run_id, limit=101)
+
+
+def test_draft_version_cas_rejects_stale_overwrites(ledger):
+    first = ledger.save_draft({
+        "variant": "racy", "schedule": "serial", "execution_backend": "memory",
+    }, expected_version=0)
+    assert first["version"] == 1
+    assert ledger.get_draft()["draft"]["schedule"] == "serial"
+    with pytest.raises(ValueError, match="Stale"):
+        ledger.save_draft({
+            "variant": "locked", "schedule": "overlap",
+            "execution_backend": "native-postgresql",
+        }, expected_version=0)
+    updated = ledger.save_draft({
+        "variant": "locked", "schedule": "overlap",
+        "execution_backend": "native-postgresql",
+    }, expected_version=first["version"])
+    assert updated["version"] == 2
+    assert ledger.get_draft()["draft"]["variant"] == "locked"
+    assert "approved_oracle_id" not in updated["draft"]
+
+
+def test_draft_api_requires_operator_credential(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "draft-secret")
+    payload = {
+        "expected_version": 0, "variant": "racy",
+        "schedule": "overlap", "execution_backend": "memory",
+    }
+    with TestClient(create_app()) as client:
+        assert client.get("/api/experiment-draft").json()["saved"] is None
+        assert client.post("/api/experiment-draft", json=payload).status_code == 403
+        headers = {"X-Operator-Token": "draft-secret"}
+        saved = client.post("/api/experiment-draft", json=payload, headers=headers)
+        assert saved.status_code == 200
+        assert client.post(
+            "/api/experiment-draft", json=payload, headers=headers
+        ).status_code == 409

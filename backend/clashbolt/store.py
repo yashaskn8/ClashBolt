@@ -25,6 +25,14 @@ _SCHEMA = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS experiment_draft (
+        project_id TEXT PRIMARY KEY REFERENCES project_quota(project_id),
+        version BIGINT NOT NULL DEFAULT 1,
+        draft JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS experiment_run (
         id UUID PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES project_quota(project_id),
@@ -247,6 +255,50 @@ class Ledger:
             ).fetchone()
             _event(conn, row, "admitted")
             return _public(row)
+
+    def get_draft(self) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT version, draft, updated_at
+                FROM experiment_draft WHERE project_id = 'local'
+                """
+            ).fetchone()
+            if not row:
+                return None
+            return {**row, "updated_at": row["updated_at"].isoformat()}
+
+    def save_draft(self, draft: dict, expected_version: int) -> dict:
+        """Version-CAS recovery; never infer approval from a saved draft."""
+        if not 0 <= expected_version <= 2**63 - 2:
+            raise ValueError("Invalid draft version")
+        if draft.get("variant") not in ("racy", "locked"):
+            raise ValueError("Unsupported draft variant")
+        if draft.get("schedule") not in SCHEDULES:
+            raise ValueError("Unsupported draft schedule")
+        if draft.get("execution_backend") not in ("memory", "native-postgresql"):
+            raise ValueError("Unsupported draft target backend")
+        if set(draft) != {"variant", "schedule", "execution_backend"}:
+            raise ValueError("Draft has unsupported fields")
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
+            )
+            row = conn.execute(
+                """
+                INSERT INTO experiment_draft(project_id, version, draft)
+                SELECT 'local', 1, %s WHERE %s = 0
+                ON CONFLICT (project_id)
+                DO UPDATE SET version = experiment_draft.version + 1,
+                    draft = EXCLUDED.draft, updated_at = now()
+                WHERE experiment_draft.version = %s
+                RETURNING version, draft, updated_at
+                """,
+                (Jsonb(draft), expected_version, expected_version),
+            ).fetchone()
+            if not row:
+                raise ValueError("Stale experiment draft version")
+            return {**row, "updated_at": row["updated_at"].isoformat()}
 
     def recent(self, limit: int = 20) -> list[dict]:
         """Read-only recent-run index for recovery after UI/browser restarts."""

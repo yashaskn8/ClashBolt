@@ -62,6 +62,11 @@ class ExperimentRequest(BaseModel):
     schedule: Literal["overlap", "serial"]
 
 
+class DraftRequest(ExperimentRequest):
+    expected_version: int = Field(ge=0, le=2**63 - 2)
+    execution_backend: Literal["memory", "native-postgresql"] = "memory"
+
+
 class RunRequest(ExperimentRequest):
     client_key: str = Field(min_length=1, max_length=100)
     step_budget: int = Field(default=4, ge=4, le=32)
@@ -214,6 +219,28 @@ def create_app() -> FastAPI:
             "replay_verdict": replayed["verdict"],
             "scope": "SYNTHETIC_ONLY",
         }
+
+    @app.get("/api/experiment-draft")
+    def get_experiment_draft() -> dict:
+        return {"saved": require_ledger().get_draft()}
+
+    @app.post("/api/experiment-draft")
+    def save_experiment_draft(
+        request: DraftRequest,
+        x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token)
+        try:
+            return require_ledger().save_draft(
+                {
+                    "variant": request.variant,
+                    "schedule": request.schedule,
+                    "execution_backend": request.execution_backend,
+                },
+                request.expected_version,
+            )
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
 
     @app.get("/api/runs")
     def list_runs(limit: int = 20) -> dict:

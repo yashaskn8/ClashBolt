@@ -67,6 +67,8 @@ export default function App() {
   const [executionBackend, setExecutionBackend] = useState<ExecutionBackend>('memory')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
+  const [draftVersion, setDraftVersion] = useState(0)
+  const [draftMessage, setDraftMessage] = useState('')
   const [operatorToken, setOperatorToken] = useState('')
   const [sessionReady, setSessionReady] = useState(false)
   const [result, setResult] = useState<Experiment | null>(null)
@@ -95,6 +97,58 @@ export default function App() {
       })
       .catch(() => setApprovedOracleId(null))
   }, [catalog?.storage, catalog?.access_mode, sessionReady])
+
+  useEffect(() => {
+    if (catalog?.storage !== 'postgresql') return
+    if (catalog.access_mode === 'private' && !sessionReady) return
+    let cancelled = false
+    fetch('/api/experiment-draft')
+      .then((response) => parseResponse<{
+        saved: {
+          version: number
+          draft: {
+            variant: Variant
+            schedule: Schedule
+            execution_backend: ExecutionBackend
+          }
+        } | null
+      }>(response))
+      .then((response) => {
+        if (cancelled || !response.saved) return
+        setDraftVersion(response.saved.version)
+        setVariant(response.saved.draft.variant)
+        setSchedule(response.saved.draft.schedule)
+        if (catalog.execution_backends.includes(response.saved.draft.execution_backend)) {
+          setExecutionBackend(response.saved.draft.execution_backend)
+        }
+        setDraftMessage('Recovered saved experiment draft.')
+      })
+      .catch(() => setDraftMessage('Saved draft unavailable; current form is unchanged.'))
+    return () => { cancelled = true }
+  }, [catalog?.storage, catalog?.access_mode, sessionReady])
+
+  async function saveDraft() {
+    setDraftMessage('')
+    try {
+      const response = await fetch('/api/experiment-draft', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Operator-Token': operatorToken,
+        },
+        body: JSON.stringify({
+          target_id: 'synthetic-inventory',
+          expected_version: draftVersion,
+          variant, schedule, execution_backend: executionBackend,
+        }),
+      })
+      const saved = await parseResponse<{ version: number }>(response)
+      setDraftVersion(saved.version)
+      setDraftMessage('Draft saved to PostgreSQL. Rule approval is not saved as authority.')
+    } catch {
+      setDraftMessage('Draft update was rejected; refresh before overwriting changes.')
+    }
+  }
 
   async function unlock() {
     setError('')
@@ -282,6 +336,17 @@ export default function App() {
                   : 'none — approve the fixed rule in the console below before submitting'}
                 </p>
               )}
+              </>
+            )}
+            {catalog?.storage === 'postgresql' && (
+              <>
+                <button
+                  className="secondary-button" type="button" onClick={saveDraft}
+                  disabled={!operatorToken || (catalog.access_mode === 'private' && !sessionReady)}
+                >
+                  Save experiment draft
+                </button>
+                {draftMessage && <p className="help-text">{draftMessage}</p>}
               </>
             )}
             <button
