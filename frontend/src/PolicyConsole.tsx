@@ -2,7 +2,25 @@ import { useState } from 'react'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
-type Rule = { id: string; rule_hash: string; state: string }
+type Rule = {
+  id: string
+  rule_hash: string
+  state: string
+  evidence?: {
+    sha256: string
+    verified: boolean
+    test_vectors: { id: string; actual: string; expected: string }[]
+  }
+}
+type Feedback = {
+  decision: {
+    action: string
+    reason?: string
+    next_step_cost: number
+    automatically_authorized: boolean
+  }
+  next_plan_id: string | null
+}
 type Capability = { capability_id: string; token: string; max_calls: number }
 type Plan = { id: string; plan: { variant: Variant; schedule: Schedule } }
 type Props = {
@@ -35,6 +53,10 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
   const [rule, setRule] = useState<Rule | null>(null)
   const [capability, setCapability] = useState<Capability | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
+  const [rationale, setRationale] = useState(
+    'Inventory confirmations cannot exceed available initial stock.'
+  )
+  const [toolFinished, setToolFinished] = useState(false)
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
   const [reviewerToken, setReviewerToken] = useState('')
@@ -57,11 +79,13 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
     await action(async () => {
       const result = await request<Rule>('/api/oracle/proposals', {
         proposed_by: 'deterministic-workshop',
+        candidate: { rationale },
       }, operator)
       setRule(result)
       setCapability(null)
       setPlan(null)
-      return { status: result.state, proposal_id: result.id, rule_hash: result.rule_hash }
+      setToolFinished(false)
+      return result
     })
   }
 
@@ -87,6 +111,8 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         { proposal_id: rule.id, strategy: 'semantic', variant, seed: 0 }, operator,
       )
       setPlan(saved)
+      setCapability(null)
+      setToolFinished(false)
       return saved
     })
   }
@@ -99,6 +125,8 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         { proposal_id: rule.id, variant }, operator,
       )
       setPlan(suggested)
+      setCapability(null)
+      setToolFinished(false)
       return suggested
     })
   }
@@ -121,12 +149,38 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
   }
 
   async function useTool() {
-    if (!capability) return
-    await action(() => request(
-      '/api/agent/tools/run', {
-        variant: plan!.plan.variant, schedule: plan!.plan.schedule, plan_id: plan!.id,
-      }, undefined, capability.token,
-    ))
+    if (!capability || !plan) return
+    await action(async () => {
+      const result = await request(
+        '/api/agent/tools/run', {
+          variant: plan.plan.variant, schedule: plan.plan.schedule, plan_id: plan.id,
+        }, undefined, capability.token,
+      )
+      setToolFinished(true)
+      setCapability(null)
+      return result
+    })
+  }
+
+  async function reviewFeedback() {
+    if (!plan) return
+    await action(async () => {
+      const result = await request<Feedback>(
+        `/api/agent/plans/${plan.id}/feedback`, { remaining_budget: 4 }, operator,
+      )
+      const gaps = await request<{ gaps: { classification: string; reason: string }[] }>(
+        `/api/agent/plans/${plan.id}/gaps`,
+      )
+      if (result.next_plan_id) {
+        const next = await request<Plan>(
+          `/api/agent/plans/${result.next_plan_id}`,
+        )
+        setPlan(next)
+        setToolFinished(false)
+        setCapability(null)
+      }
+      return { ...result, evidence_gaps: gaps.gaps }
+    })
   }
 
   async function revoke() {
@@ -162,8 +216,20 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         onChange={(event) => setReviewerToken(event.target.value)}
         placeholder="CLASHBOLT_REVIEWER_TOKEN (when configured)"
       />
+      <label className="field-label" htmlFor="rule-rationale">
+        Candidate rule rationale
+      </label>
+      <input
+        id="rule-rationale" type="text" maxLength={240}
+        value={rationale} onChange={(event) => setRationale(event.target.value)}
+      />
+      <p className="help-text">
+        Rationale is descriptive only. The fixed rule and checker cannot be changed here.
+      </p>
       <div className="policy-actions">
-        <button type="button" onClick={() => void propose()} disabled={busy}>1. Propose fixed rule</button>
+        <button type="button" onClick={() => void propose()} disabled={busy || rationale.length < 12}>
+          1. Validate candidate rule
+        </button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>
         <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED'}>3. Propose typed plan</button>
         <button type="button" onClick={() => void modelPlan()}
@@ -171,7 +237,13 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
           3b. Suggest local model plan
         </button>
         <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !plan || !operator}>4. Issue one-call capability</button>
-        <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan}>5. Execute approved synthetic tool</button>
+        <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan || toolFinished}>
+          5. Execute approved synthetic tool
+        </button>
+        <button type="button" onClick={() => void reviewFeedback()}
+          disabled={busy || !plan || !toolFinished || !operator}>
+          6. Persist evidence feedback / bounded replan
+        </button>
         <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !operator}>Revoke tool capability</button>
         <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !operator}>Review tool audit</button>
         <button type="button" onClick={() => void action(() => request('/api/agent/evaluate', { trials: 8 }, operator))} disabled={busy || !operator}>Compare deterministic baselines</button>
@@ -186,7 +258,15 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         The broker only executes the exact saved plan bound to its capability.
       </p>
       {rule && <div className="policy-reference">
-        <span>RULE STATUS: {rule.state}</span><code title={rule.rule_hash}>{rule.rule_hash.slice(0, 24)}…</code>
+        <span>RULE STATUS: {rule.state}</span>
+        <code title={rule.rule_hash}>{rule.rule_hash.slice(0, 24)}…</code>
+        {rule.evidence && <>
+          <span>VECTOR CHECKS: {rule.evidence.verified ? 'VERIFIED' : 'UNVERIFIED'}</span>
+          <code title={rule.evidence.sha256}>{rule.evidence.sha256.slice(0, 24)}…</code>
+          <span>{rule.evidence.test_vectors.map((caseItem) => (
+            `${caseItem.id}: ${caseItem.actual}`
+          )).join(' · ')}</span>
+        </>}
       </div>}
       {error && <p className="error" role="alert">{error}</p>}
       {output && <pre className="policy-output" aria-label="Last operation result">{output}</pre>}
