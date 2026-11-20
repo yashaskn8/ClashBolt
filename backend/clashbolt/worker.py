@@ -4,7 +4,9 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import tempfile
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import psycopg
@@ -26,17 +28,25 @@ async def isolated_synthetic_run(
     }
     if target_dsn is not None:
         environment["CLASHBOLT_TARGET_DATABASE_URL"] = target_dsn
-    process = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "clashbolt.fixture_runner", variant, schedule,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=environment,
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        raise
+    # Ephemeral working directory; no inherited repository cwd or HOME.
+    with tempfile.TemporaryDirectory(prefix="clashbolt-fixed-child-") as workspace:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "clashbolt.fixture_runner", variant, schedule,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.DEVNULL,
+            env=environment,
+            cwd=workspace,
+            start_new_session=os.name == "posix",
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
+        except TimeoutError:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            await process.wait()
+            raise
     if process.returncode != 0 or len(stdout) > 100_000:
         raise RuntimeError("Fixed fixture subprocess failed")
     return json.loads(stdout)
