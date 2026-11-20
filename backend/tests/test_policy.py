@@ -402,6 +402,8 @@ def test_valid_late_tool_receipt_is_unknown_before_periodic_reconciliation(polic
 
 
 def test_oracle_audit_is_transactional_and_append_only(policy):
+    from uuid import UUID
+
     import psycopg
 
     proposed = policy.propose("audit-proposer")
