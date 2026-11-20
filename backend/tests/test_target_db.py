@@ -1,7 +1,7 @@
 """Native isolated-cluster tests (opt-in via CLASHBOLT_TEST_TARGET_ADMIN_URL)."""
 
 import os
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import psycopg
 import pytest
@@ -131,6 +131,9 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
         assert completed["verdict"] == "FAIL"
         assert completed["execution_backend"] == "native-postgresql"
         assert completed["witness"]["execution_backend"] == "native-postgresql"
+        targets = ledger.target_instances(UUID(run_id))
+        assert len(targets) == 1
+        assert targets[0]["status"] == "CLEANED"
         replay = client.post(f"/api/runs/{run_id}/replay", headers=headers)
         assert replay.status_code == 200
         assert replay.json()["replay_status"] == "REPRODUCED"
@@ -144,5 +147,58 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
     with psycopg.connect(admin, autocommit=True) as connection:
         assert connection.execute(
             "SELECT count(*) FROM pg_database WHERE datname = %s",
-            (f"cb_target_{UUID(run_id).hex}",),
+            (
+                f"cb_target_{uuid5(NAMESPACE_URL, f'clashbolt:{run_id}:1').hex}",
+            ),
         ).fetchone()[0] == 0
+
+
+def test_expired_native_target_is_reclaimed(cluster, monkeypatch):
+    from clashbolt.experiment import ORACLE_HASH
+    from clashbolt.policy import Policy
+    from clashbolt.worker import reconcile_targets
+
+    admin, control = cluster
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
+    ledger = Policy(control)
+    ledger.migrate()
+    with ledger.connect() as conn:
+        conn.execute(
+            "TRUNCATE tool_audit, agent_plan, tool_capability, oracle_proposal, "
+            "run_transition, experiment_run, project_quota CASCADE"
+        )
+    proposal = ledger.propose("orphan-proposer")
+    approved = ledger.approve(UUID(proposal["id"]), ORACLE_HASH, "reviewer")
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", control)
+    run = ledger.admit(
+        client_key=str(uuid4()), variant="racy", schedule="overlap",
+        approved_oracle_id=UUID(approved["id"]),
+        execution_backend="native-postgresql",
+    )
+    claimed = ledger.claim("crashed-worker")
+    assert claimed
+    run_id = UUID(run["run_id"])
+    instance = uuid5(
+        NAMESPACE_URL, f"clashbolt:{run_id}:{claimed['lease_generation']}"
+    )
+    assert ledger.track_target(
+        run_id, claimed["lease_generation"], "crashed-worker", instance
+    )
+    with disposable_target(admin, control, instance) as abandoned:
+        ledger.mark_target(instance, "ACTIVE")
+        with ledger.connect() as conn:
+            conn.execute(
+                "UPDATE experiment_run SET lease_until = now() - interval '1 second' "
+                "WHERE id = %s", (run_id,),
+            )
+            conn.execute(
+                "UPDATE target_instance SET updated_at = now() - interval '10 seconds' "
+                "WHERE id = %s", (instance,),
+            )
+        assert reconcile_targets(ledger) == 1
+        assert ledger.target_instances(run_id)[0]["status"] == "CLEANED"
+        with psycopg.connect(admin, autocommit=True) as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = %s",
+                (abandoned.database,),
+            ).fetchone()[0] == 0
