@@ -284,3 +284,12 @@ class Policy(Ledger):
                 }
                 for row in rows
             ]
+
+if __name__ == "__main__":
+    import os
+
+    dsn = os.getenv("CLASHBOLT_DATABASE_URL")
+    if not dsn:
+        raise SystemExit("Set CLASHBOLT_DATABASE_URL for the local PostgreSQL database")
+    Policy(dsn).migrate()
+    print("ClashBolt rule and capability schema ready")
