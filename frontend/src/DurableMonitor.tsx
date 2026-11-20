@@ -13,7 +13,15 @@ export type DurableRun = {
     verdict: 'PASS' | 'FAIL' | 'UNKNOWN'
     fixture_hash: string
     evidence_sha256: string
-    observed_steps: unknown[]
+    observed_steps: {
+      sequence: number
+      client: string
+      checkpoint: string
+      observed_stock?: number
+      accepted?: boolean
+      stock_after?: number
+      confirmed_after?: number
+    }[]
     final_state: { initial_stock: number; remaining_stock: number; confirmed_count: number }
     oracle: { id: string; version: string; sha256: string; authority: string }
     target_id: string
