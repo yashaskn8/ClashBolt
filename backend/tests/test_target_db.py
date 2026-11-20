@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import psycopg
 import pytest
-
 from clashbolt.target_db import disposable_target, validate_target_cluster
 
 
