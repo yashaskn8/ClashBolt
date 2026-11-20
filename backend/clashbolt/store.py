@@ -224,10 +224,13 @@ class Ledger:
         if execution_backend not in ("memory", "native-postgresql"):
             raise ValueError("Unsupported execution backend")
         if execution_backend == "native-postgresql":
-            target_admin = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
-            if not target_admin:
+            target_location = (
+                os.getenv("CLASHBOLT_TARGET_CLUSTER_URL")
+                or os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+            )
+            if not target_location:
                 raise ValueError("Separate native target cluster is not configured")
-            validate_target_cluster(target_admin, self.dsn)
+            validate_target_cluster(target_location, self.dsn)
         request_hash = _request_hash(
             variant, schedule, step_budget, approved_oracle_id, execution_backend
         )

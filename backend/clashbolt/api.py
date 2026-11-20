@@ -334,7 +334,10 @@ def create_app() -> FastAPI:
             "access_mode": access_mode,
             "execution_backends": (
                 ["memory", "native-postgresql"]
-                if dsn and os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+                if dsn and (
+                    os.getenv("CLASHBOLT_TARGET_CLUSTER_URL")
+                    or os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+                )
                 else ["memory"]
             ),
             "limitations": (

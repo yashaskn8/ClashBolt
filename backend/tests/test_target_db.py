@@ -202,3 +202,30 @@ def test_expired_native_target_is_reclaimed(cluster, monkeypatch):
                 "SELECT count(*) FROM pg_database WHERE datname = %s",
                 (abandoned.database,),
             ).fetchone()[0] == 0
+
+
+def test_native_admission_uses_safe_endpoint_without_admin_secret(
+    cluster, monkeypatch,
+):
+    from clashbolt.experiment import ORACLE_HASH
+    from clashbolt.policy import Policy
+    from psycopg.conninfo import conninfo_to_dict
+
+    admin, control = cluster
+    location = conninfo_to_dict(admin)
+    safe_endpoint = (
+        f"postgresql://127.0.0.1:{location.get('port', 5432)}/postgres"
+    )
+    monkeypatch.setenv("CLASHBOLT_TARGET_CLUSTER_URL", safe_endpoint)
+    monkeypatch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+    ledger = Policy(control)
+    ledger.migrate()
+    proposal = ledger.propose("separate-worker-secret")
+    approved = ledger.approve(UUID(proposal["id"]), ORACLE_HASH, "reviewer")
+    run = ledger.admit(
+        client_key=str(uuid4()), variant="locked", schedule="serial",
+        approved_oracle_id=UUID(approved["id"]),
+        execution_backend="native-postgresql",
+    )
+    assert run["execution_backend"] == "native-postgresql"
+    assert "password" not in safe_endpoint
