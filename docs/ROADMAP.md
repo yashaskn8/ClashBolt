@@ -1,30 +1,38 @@
-# ClashBolt implementation status
+# ClashBolt TITAN-20 implementation status
 
-Source: **INTERLEAVE TITAN-20 Architecture** (3 November 2026), renamed ClashBolt. The 20 features are planned; they are not all implemented.
+Source: **INTERLEAVE TITAN-20 Architecture** (3 November 2026), renamed ClashBolt.
+All observed verdicts are limited to a shipped synthetic fixture. Partial is not complete.
 
-## Stage 1 — synthetic vertical slice
-
-| Area | Current evidence | Remaining boundary |
+| Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
-| B3 Disposable Target Isolation | New in-memory inventory fixture per run/replay; no external endpoints | Isolated process and PostgreSQL target database, deny egress, teardown proof |
-| B5 Independent Invariant Oracle | Immutable SHA256-bound demo rule; PASS/FAIL/UNKNOWN; evidence | Authenticated human review, approval storage, checker isolation and withdrawal |
-| B4 Bounded Schedule Controller | Two asyncio clients, explicit application checkpoints, recorded gate order, watchdog | Controlled target process and independent/uncontrolled reproduction |
-| A3 Capability Tool Broker | Strict allowlist, typed API, no URL/script/tool input; local-only mode | Issued/revocable scoped capabilities, quota ledger and audit persistence |
-| P1 Experiment Composer | React/TypeScript form driven by local catalog; validation enforced by FastAPI | Authenticated project ownership, durable experiment admission |
-| P3 Witness Review Desk | Fixture + oracle digest + ordered evidence + clean replay comparison | Independent witness export, external replay and reviewer sign-off |
+| B1 Durable Experiment Ledger | Atomic PostgreSQL admission, transitions and idempotency | Crash/failover and migration matrix |
+| B2 Fenced Worker Claims | Generation fencing, worker claims, stale-write rejection | Target-effect reconciliation and pause/resume faults |
+| B3 Disposable Target Isolation | Fresh memory fixture in short-lived fixed subprocess | Isolated target database, OS account and deny-egress enforcement |
+| B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
+| B5 Independent Invariant Oracle | Fixed hash-bound checker, operator-approved rule proposal | Approval enforcement for all durable verdicts; custom rule reviews |
+| B6 Minimal Witness Reproducer | JSON evidence, digest, independent clean-process verifier | Automated minimization and external reproducible bundles |
+| B7 Budgeted Admission and Recovery | Active quota, bounded steps, cancellation | Measured cost accounting and fair admission tests |
+| A1 Invariant Workshop | Fixed rule proposal/review | Constrained agent-generated candidate DSL |
+| A2 Test Planner | Typed deterministic schedules | Real model proposals and bound total cost |
+| A3 Capability Tool Broker | Hashed short-lived scope-limited tokens, revoke, audit | Production identity and fault matrix |
+| A4 Evidence-Calibrated Abstention | UNKNOWN and deterministic abstention | Durable evidence gaps and bounded probes |
+| A5 Agent Decision Record | Persistent proposed plans | Durable intent/receipt and obligations |
+| A6 Counterexample Replanner | Deterministic finite follow-up | Persist feedback and test adaptive policy |
+| A7 Agent Evaluation Gate | Equal-budget local baseline comparison | Frozen held-out suites, promotion and rollback |
+| P1 Experiment Composer | React typed form and server validation | Authenticated ownership and draft recovery |
+| P2 Causal Run Timeline | Versioned events, SSE and snapshot reconciliation | Omission/reordering and cross-worker causal tests |
+| P3 Witness Review Desk | Evidence viewer, export, clean-process replay | Minimal witness and independent review decisions |
+| P4 Approval Console | React operator review and capability actions | Identity-backed roles and segregation of duties |
+| P5 Live Run Operations | Cancellation, status, reconnect and transition history | Resource counters and full recovery workflows |
+| S1 Semantic Conflict Frontier | Fixed inventory conflict edge, deterministic comparator | True model-guided search and held-out research evidence |
 
-## Next implementation stages
+## Dependency-ordered next gates
 
-1. **Durable control plane** — PostgreSQL experiment/transition/job records (B1), worker generation fencing (B2), cost admission (B7), witness export (B6), timelines and operations (P2/P5).
-2. **Agent** — immutable approval UI (P4), proposals (A1), broker-issued capabilities (A3), bounded planner (A2), evidence-calibrated abstention (A4), durable decisions (A5).
-3. **Research** — replanning (A6), frozen holdouts and promotion gate (A7), semantic conflict frontier (S1), equal-budget baselines.
-4. **Hardening** — failure injection, multi-run isolation, security/authorization, clean-machine reproduction, native process deployment and load tests.
+1. Target process and database isolation with deny-egress enforcement, then version-bound oracle approvals for durable findings.
+2. Persistence recovery, worker cancellation/lease fault injection, fair-budget accounting and independent witness reduction.
+3. Restricted agent adapter, obligation/receipt persistence, evaluation on frozen held-out targets and human policy promotion.
+4. Project authentication and role separation, audited operations, real end-to-end browser tests and native deployment hardening.
 
-## Claims and limitations
+## Claim boundaries
 
-- `FAIL` proves only that the deliberately faulty **synthetic fixture** violates the shipped demo invariant under its recorded gate order.
-- The fixed demo rule is not a human-approved rule for an outside application.
-- A byte-identical local replay is not independent, ungated, or production reproduction.
-- API state is process-local and disappears on restart; PostgreSQL and durable jobs are intentionally future work.
-- The API has no authentication. Bind to loopback only and **never expose it on a public network**.
-- No Docker, Temporal, Redis, Kafka, Kubernetes, arbitrary network targets, or automatic model authority.
+The synthetic `FAIL` demonstrates only an intentional test-fixture bug under controlled application checkpoints. Repeating its digest in a fresh Python process is not ungated or real-world reproduction. A generation fence covers database **control-plane state**, not arbitrary external effects. Fixed child processes are not secure sandboxes. A local operator token is not proof of independently authenticated reviewer identity. The semantic AI research hypothesis is **unverified**, and there is no exactly-once execution claim.

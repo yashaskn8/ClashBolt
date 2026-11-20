@@ -1,26 +1,34 @@
 # ClashBolt
 
-ClashBolt is an AI Concurrency Intelligence research project for reproducible **application-level business-invariant failures** in concurrent APIs. Its design authority is the 28-page **INTERLEAVE TITAN-20 Architecture** (3 November 2026), created before the project was renamed.
+ClashBolt is a Python/FastAPI + React/TypeScript research lab for **application-level concurrency invariants**. The source specification is the 28-page *INTERLEAVE TITAN-20 Architecture* (3 November 2026), before the project was renamed ClashBolt.
 
-## First runnable slice: a synthetic inventory clash
+**Working scope:** a bounded, locally hosted **synthetic inventory race**. The deliberately faulty variant accepts two orders for one available item under controlled overlap; the corrected variant rechecks stock. The fixed versioned oracle returns `PASS`, `FAIL` or `UNKNOWN`. This is a synthetic demonstration, **not** a finding against a real application.
 
-A **local-only** two-client fixture shows why checking stock before concurrent commits can accept more orders than inventory allows. The `racy` variant demonstrates the problem; the `locked` variant revalidates current stock before accepting an order. Explicit application checkpoints provide two repeatable gate orders. A fixed versioned checker returns `PASS`, `FAIL`, or `UNKNOWN`; the witness includes the fixture hash, oracle version, gate history, final state, and evidence digest. A second run on fresh state can confirm the same synthetic witness.
+## Implemented foundation
 
-This is **not** a general concurrency scanner, real-target finding, independent reproduction, production-ready service, or implementation of all 20 planned features. The demo rule is fixed in code and not a human-approved production oracle.
+- **Python/FastAPI:** typed scratch experiments, PostgreSQL atomic admission, idempotency, event transitions, lease-generation fencing, queue quota, cancellation and SSE.
+- **Worker and evidence:** short-lived fixed synthetic subprocess, fresh fixture on each run, bounded schedules, parent-side oracle and digest verification, exported evidence, separate-process verifier CLI.
+- **Agent boundary:** immutable demo-rule proposals, operator-token approval, scope-limited revocable capabilities, tool audit, persisted typed plans and deterministic semantic/random/coverage comparison.
+- **React/TypeScript:** experiment composer, witness review, PostgreSQL run monitor and cancellation, local approval and capability console.
+- **CI:** native PostgreSQL integration tests, Ruff, TypeScript and Vite build; no Docker.
 
-### Native local setup (Python 3.11+ and Node 20+; no Docker)
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the evidence-based 20-feature status and gaps. This is **not** the completed 20-feature AI discovery platform or a production-ready multi-tenant system.
 
-Backend (in a terminal from repository root):
+## Native setup (no Docker)
+
+See [docs/NATIVE_SETUP.md](docs/NATIVE_SETUP.md) for PostgreSQL setup, PowerShell, the separate worker process, operator secret and CLI verification.
+
+In-memory scratch mode:
 
 ```bash
 python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
+# Windows: .venv\Scripts\Activate.ps1
+# Linux/macOS: source .venv/bin/activate
 python -m pip install -e ".[dev]"
 uvicorn clashbolt.api:app --host 127.0.0.1 --port 8000
 ```
 
-Frontend (another terminal):
+In another terminal:
 
 ```bash
 cd frontend
@@ -28,31 +36,20 @@ npm install
 npm run dev
 ```
 
-Visit `http://127.0.0.1:5173`. Choose **Racy + Overlap** for a synthetic `FAIL`, **Racy + Serial** or **Corrected** for `PASS`. Click **Replay on a clean fixture** to compare deterministic evidence hashes.
+Open `http://127.0.0.1:5173`. Try **Racy / Overlap** for a controlled failure, then **Corrected / Overlap** for a pass.
 
-### API example
+For PostgreSQL durable mode: set `CLASHBOLT_DATABASE_URL`, run `python -m clashbolt.policy` to initialize all tables, start `python -m clashbolt.worker` in its own terminal, then run the API and frontend. A DB-backed run is not executed inside an API background task.
 
-```bash
-curl http://127.0.0.1:8000/api/catalog
-curl -X POST http://127.0.0.1:8000/api/experiments -H "Content-Type: application/json" -d '{"variant":"racy","schedule":"overlap"}'
-```
-
-`POST /api/experiments` returns a `run_id` and evidence. `GET /api/experiments/{run_id}` retrieves it; `POST /api/experiments/{run_id}/replay` runs the fixture again and reports `REPRODUCED` only if complete evidence hashes match. API input rejects custom URLs, scripts, and unsupported targets.
-
-### Tests
+## Tests and limitations
 
 ```bash
-python -m pytest -q
 python -m ruff check .
+python -m pytest -q
 cd frontend && npm run build
 ```
 
-**Safety:** The backend is unauthenticated and has ephemeral in-memory state. Run it on loopback only; never publish it to the internet. It does not execute code from external systems or connect to target services. For feature-by-feature implementation status and limitations, see [docs/ROADMAP.md](docs/ROADMAP.md).
+Set `CLASHBOLT_TEST_DATABASE_URL` to a **disposable test-only PostgreSQL database** to run integration tests; test fixtures truncate their own tables. GitHub Actions prepares its own native PostgreSQL instance.
 
-## Architecture and working rules
+Export a witness from the UI, then run `python -m clashbolt.witness path/to/witness.json`. The verifier rejects changed evidence and replays the declared controlled checkpoints in a fresh Python process; this does **not** establish uncontrolled reproduction.
 
-- Python/FastAPI backend; PostgreSQL is planned for durable control state.
-- React/TypeScript/Vite frontend.
-- No Docker, Temporal, Redis, Kafka, or Kubernetes.
-- Keep code small and readable, verify changes, and commit directly on `main` without branches or PRs.
-- Preserve the distinction between controlled synthetic behavior and independently reproduced real findings.
+**Security:** API authentication, multitenant RBAC, OS-level target isolation and external target support are not yet implemented. Bind the API to `127.0.0.1` only. Operator endpoints require `CLASHBOLT_OPERATOR_TOKEN`, but this is not production identity. The deterministic planner is **not** a validated LLM agent. No Docker, Temporal, Redis, Kafka or Kubernetes. Keep changes small, explicit and tested; commit directly on `main` with no branches or PRs.
