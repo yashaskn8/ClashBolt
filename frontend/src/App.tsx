@@ -552,7 +552,11 @@ export default function App() {
         (catalog.access_mode === 'local' ||
           (catalog.access_mode === 'private' && sessionReady) ||
           (catalog.access_mode === 'accounts' && account !== null)) && (
-          <RecentRuns onSelect={(run) => {
+          <RecentRuns
+            operatorReady={operatorReady}
+            accountMode={catalog.access_mode === 'accounts'}
+            operatorToken={operatorToken}
+            onSelect={(run) => {
             setDurable(run)
             setResult(null)
             setReplayStatus('NOT_RUN')
