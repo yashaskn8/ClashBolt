@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from clashbolt.worker import isolated_synthetic_run
 
 
@@ -47,3 +49,18 @@ def test_posix_fixed_runner_sets_cpu_file_and_descriptor_limits():
     assert cpu <= 3
     assert file_size <= 1024 * 1024
     assert files <= 64
+
+
+def test_oversized_child_stdout_is_stopped_before_full_capture(monkeypatch):
+    original = asyncio.create_subprocess_exec
+
+    async def oversized_spawn(*args, **kwargs):
+        return await original(
+            sys.executable, "-c",
+            "import sys; sys.stdout.buffer.write(b'X' * 262144)",
+            **kwargs,
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", oversized_spawn)
+    with pytest.raises(ValueError, match="output exceeded"):
+        asyncio.run(isolated_synthetic_run("locked", "serial"))
