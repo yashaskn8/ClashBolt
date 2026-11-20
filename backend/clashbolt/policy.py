@@ -71,6 +71,10 @@ _POLICY_SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    "ALTER TABLE tool_capability ADD COLUMN IF NOT EXISTS plan_id UUID "
+    "REFERENCES agent_plan(id)",
+    "ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS plan_id UUID "
+    "REFERENCES agent_plan(id)",
 )
 
 
@@ -156,6 +160,7 @@ class Policy(Ledger):
         schedule: str,
         max_calls: int = 1,
         lifetime_seconds: int = 600,
+        plan_id: UUID | None = None,
     ) -> dict:
         if variant not in ("racy", "locked") or schedule not in SCHEDULES:
             raise ValueError("Unsupported fixture action")
@@ -174,18 +179,34 @@ class Policy(Ledger):
                 or rule["target_revision"] != TARGET_REVISION
             ):
                 raise ValueError("Tool requires a currently approved oracle version")
+            if plan_id is not None:
+                planned = conn.execute(
+                    "SELECT * FROM agent_plan WHERE id = %s AND proposal_id = %s FOR UPDATE",
+                    (plan_id, proposal_id),
+                ).fetchone()
+                if (
+                    not planned
+                    or planned["state"] != "PROPOSED"
+                    or planned["plan"].get("variant") != variant
+                    or planned["plan"].get("schedule") != schedule
+                    or max_calls != 1
+                ):
+                    raise ValueError("Capability must match one pending approved plan")
             cap = conn.execute(
                 """
                 INSERT INTO tool_capability (
                     id, token_hash, proposal_id, target_revision, variant, schedule,
-                    max_calls, expires_at
+                    max_calls, expires_at, plan_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, now() + (%s * interval '1 second'))
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s,
+                    now() + (%s * interval '1 second'), %s
+                )
                 RETURNING id, max_calls, expires_at
                 """,
                 (
                     uuid4(), token_hash, proposal_id, TARGET_REVISION,
-                    variant, schedule, max_calls, lifetime_seconds,
+                    variant, schedule, max_calls, lifetime_seconds, plan_id,
                 ),
             ).fetchone()
             # The secret is returned exactly once, never stored or recorded in audit.
@@ -197,6 +218,7 @@ class Policy(Ledger):
                 "target_revision": TARGET_REVISION,
                 "variant": variant,
                 "schedule": schedule,
+                "plan_id": str(plan_id) if plan_id else None,
             }
 
     def revoke_capability(self, capability_id: UUID) -> bool:
@@ -210,7 +232,9 @@ class Policy(Ledger):
             ).fetchone()
             return changed is not None
 
-    def authorize(self, token: str, variant: str, schedule: str) -> bool:
+    def authorize(
+        self, token: str, variant: str, schedule: str, plan_id: UUID | None = None
+    ) -> bool:
         """Validate+debit token atomically before any tool action is dispatched."""
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as conn:
@@ -223,8 +247,23 @@ class Policy(Ledger):
                 """,
                 (token_hash,),
             ).fetchone()
+            plan_ok = plan_id is None
+            if row and row["plan_id"] is not None and plan_id == row["plan_id"]:
+                planned = conn.execute(
+                    "SELECT * FROM agent_plan WHERE id = %s FOR UPDATE", (plan_id,)
+                ).fetchone()
+                plan_ok = bool(
+                    planned
+                    and planned["state"] == "PROPOSED"
+                    and planned["proposal_id"] == row["proposal_id"]
+                    and planned["plan"].get("variant") == variant
+                    and planned["plan"].get("schedule") == schedule
+                )
+            elif row and row["plan_id"] is not None:
+                plan_ok = False
             allowed = bool(
                 row
+                and plan_ok
                 and row["oracle_state"] == "APPROVED"
                 and row["rule_hash"] == ORACLE_HASH
                 and row["target_revision"] == TARGET_REVISION
@@ -236,16 +275,27 @@ class Policy(Ledger):
             )
             conn.execute(
                 """
-                INSERT INTO tool_audit(capability_id, variant, schedule, decision)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO tool_audit(
+                    capability_id, variant, schedule, decision, plan_id
+                )
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (row["id"] if row else None, variant, schedule, "ALLOW" if allowed else "DENY"),
+                (
+                    row["id"] if row else None,
+                    variant, schedule, "ALLOW" if allowed else "DENY",
+                    plan_id if row and row["plan_id"] == plan_id else None,
+                ),
             )
             if allowed:
                 conn.execute(
                     "UPDATE tool_capability SET used_calls = used_calls + 1 WHERE id = %s",
                     (row["id"],),
                 )
+                if plan_id is not None:
+                    conn.execute(
+                        "UPDATE agent_plan SET state = 'IN_FLIGHT' WHERE id = %s",
+                        (plan_id,),
+                    )
             return allowed
 
     def record_plan(self, proposal_id: UUID, plan: dict) -> dict:
@@ -267,11 +317,46 @@ class Policy(Ledger):
             ).fetchone()
             return {**row, "id": str(row["id"]), "plan": plan}
 
+    def get_plan(self, plan_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT id, proposal_id, plan, state, result FROM agent_plan WHERE id = %s",
+                (plan_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                **row,
+                "id": str(row["id"]),
+                "proposal_id": str(row["proposal_id"]),
+            }
+
+    def record_outcome(self, plan_id: UUID, witness: dict) -> bool:
+        """Write a single plan observation after independent contract validation."""
+        from clashbolt.witness import validate_contract
+
+        invalid = validate_contract(witness)
+        final_state = "UNKNOWN" if invalid else "COMPLETE"
+        receipt = {
+            "verdict": witness.get("verdict") if not invalid else "UNKNOWN",
+            "evidence_sha256": witness.get("evidence_sha256") if not invalid else None,
+            "evidence_gap": invalid,
+        }
+        with self.connect() as conn:
+            updated = conn.execute(
+                """
+                UPDATE agent_plan SET state = %s, result = %s
+                WHERE id = %s AND state = 'IN_FLIGHT' RETURNING id
+                """,
+                (final_state, Jsonb(receipt), plan_id),
+            ).fetchone()
+            return updated is not None
+
     def audit(self, limit: int = 50) -> list[dict]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT capability_id, variant, schedule, decision, created_at
+                SELECT capability_id, plan_id, variant, schedule, decision, created_at
                 FROM tool_audit ORDER BY id DESC LIMIT %s
                 """,
                 (min(max(limit, 1), 100),),
@@ -280,6 +365,7 @@ class Policy(Ledger):
                 {
                     **row,
                     "capability_id": str(row["capability_id"]) if row["capability_id"] else None,
+                    "plan_id": str(row["plan_id"]) if row["plan_id"] else None,
                     "created_at": row["created_at"].isoformat(),
                 }
                 for row in rows

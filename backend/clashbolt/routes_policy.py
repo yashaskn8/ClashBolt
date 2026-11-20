@@ -32,11 +32,13 @@ class CapabilityInput(StrictModel):
     schedule: Literal["overlap", "serial"]
     max_calls: int = Field(default=1, ge=1, le=10)
     lifetime_seconds: int = Field(default=600, ge=60, le=3600)
+    plan_id: UUID | None = None
 
 
 class ToolInput(StrictModel):
     variant: Literal["racy", "locked"]
     schedule: Literal["overlap", "serial"]
+    plan_id: UUID
 
 
 class PlanInput(StrictModel):
@@ -104,7 +106,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         try:
             return require_policy().issue(
                 request.proposal_id, request.variant, request.schedule,
-                request.max_calls, request.lifetime_seconds,
+                request.max_calls, request.lifetime_seconds, request.plan_id,
             )
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
@@ -140,12 +142,23 @@ def policy_router(dsn: str | None) -> APIRouter:
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(403, "A scoped tool capability is required")
         secret = authorization.removeprefix("Bearer ")
-        if len(secret) > 256 or not require_policy().authorize(
-            secret, request.variant, request.schedule
+        policy = require_policy()
+        if len(secret) > 256 or not policy.authorize(
+            secret, request.variant, request.schedule, request.plan_id
         ):
             raise HTTPException(403, "Tool action denied by policy")
-        # The only tool executes the same shipped synthetic fixture.
-        return await execute(request.variant, request.schedule)
+        # This is the only allowed tool and only uses the shipped fixture.
+        witness = await execute(request.variant, request.schedule)
+        if not policy.record_outcome(request.plan_id, witness):
+            raise HTTPException(409, "A validated plan receipt could not be stored")
+        return witness
+
+    @router.get("/agent/plans/{plan_id}")
+    def get_plan(plan_id: UUID):
+        result = require_policy().get_plan(plan_id)
+        if not result:
+            raise HTTPException(404, "Plan not found")
+        return result
 
     @router.post("/agent/evaluate")
     async def evaluate(

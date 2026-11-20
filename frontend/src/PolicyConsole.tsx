@@ -4,6 +4,7 @@ type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
 type Rule = { id: string; rule_hash: string; state: string }
 type Capability = { capability_id: string; token: string; max_calls: number }
+type Plan = { id: string; plan: { variant: Variant; schedule: Schedule } }
 type Props = { variant: Variant; schedule: Schedule }
 
 async function request<T>(url: string, body?: unknown, token?: string, bearer?: string): Promise<T> {
@@ -26,6 +27,7 @@ export default function PolicyConsole({ variant, schedule }: Props) {
   const [operator, setOperator] = useState('')
   const [rule, setRule] = useState<Rule | null>(null)
   const [capability, setCapability] = useState<Capability | null>(null)
+  const [plan, setPlan] = useState<Plan | null>(null)
   const [output, setOutput] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -50,6 +52,7 @@ export default function PolicyConsole({ variant, schedule }: Props) {
       })
       setRule(result)
       setCapability(null)
+      setPlan(null)
       return { status: result.state, proposal_id: result.id, rule_hash: result.rule_hash }
     })
   }
@@ -69,10 +72,14 @@ export default function PolicyConsole({ variant, schedule }: Props) {
 
   async function createPlan() {
     if (!rule) return
-    await action(() => request(
-      '/api/agent/plans',
-      { proposal_id: rule.id, strategy: 'semantic', variant, seed: 0 },
-    ))
+    await action(async () => {
+      const saved = await request<Plan>(
+        '/api/agent/plans',
+        { proposal_id: rule.id, strategy: 'semantic', variant, seed: 0 },
+      )
+      setPlan(saved)
+      return saved
+    })
   }
 
   async function issue() {
@@ -80,7 +87,10 @@ export default function PolicyConsole({ variant, schedule }: Props) {
     await action(async () => {
       const result = await request<Capability>(
         '/api/tool-capabilities',
-        { proposal_id: rule.id, variant, schedule, max_calls: 1 },
+        {
+          proposal_id: rule.id, variant: plan!.plan.variant,
+          schedule: plan!.plan.schedule, max_calls: 1, plan_id: plan!.id,
+        },
         operator,
       )
       setCapability(result)
@@ -92,7 +102,9 @@ export default function PolicyConsole({ variant, schedule }: Props) {
   async function useTool() {
     if (!capability) return
     await action(() => request(
-      '/api/agent/tools/run', { variant, schedule }, undefined, capability.token,
+      '/api/agent/tools/run', {
+        variant: plan!.plan.variant, schedule: plan!.plan.schedule, plan_id: plan!.id,
+      }, undefined, capability.token,
     ))
   }
 
@@ -126,15 +138,16 @@ export default function PolicyConsole({ variant, schedule }: Props) {
         <button type="button" onClick={() => void propose()} disabled={busy}>1. Propose fixed rule</button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>
         <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED'}>3. Propose typed plan</button>
-        <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !operator}>4. Issue one-call capability</button>
-        <button type="button" onClick={() => void useTool()} disabled={busy || !capability}>5. Execute approved synthetic tool</button>
+        <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !plan || !operator}>4. Issue one-call capability</button>
+        <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan}>5. Execute approved synthetic tool</button>
         <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !operator}>Revoke tool capability</button>
         <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !operator}>Review tool audit</button>
         <button type="button" onClick={() => void action(() => request('/api/agent/evaluate', { trials: 8 }, operator))} disabled={busy || !operator}>Compare deterministic baselines</button>
       </div>
       <p className="help-text">
-        Action scope: {variant} / {schedule}. Changing either option after issuing a
-        capability causes the broker to deny the mismatched action.
+        Selected form: {variant} / {schedule}. Approved plan:
+        {plan ? ` ${plan.plan.variant} / ${plan.plan.schedule}` : ' none'}.
+        The broker only executes the exact saved plan bound to its capability.
       </p>
       {rule && <div className="policy-reference">
         <span>RULE STATUS: {rule.state}</span><code title={rule.rule_hash}>{rule.rule_hash.slice(0, 24)}…</code>

@@ -1,4 +1,5 @@
 import os
+from uuid import UUID
 
 import pytest
 from clashbolt.api import create_app
@@ -36,23 +37,33 @@ def test_approval_and_tool_authority(policy_client):
     assert policy_client.post(url, json={**approval, "expected_hash": "0" * 64},
                               headers=header).status_code == 409
     assert policy_client.post(url, json=approval, headers=header).status_code == 200
+    planned = policy_client.post(
+        "/api/agent/plans", json={
+            "proposal_id": pid, "strategy": "semantic", "variant": "racy", "seed": 0
+        },
+    ).json()
+    plan_id = planned["id"]
     capability = policy_client.post(
         "/api/tool-capabilities", json={
-            "proposal_id": pid, "variant": "racy", "schedule": "overlap", "max_calls": 1
+            "proposal_id": pid, "variant": "racy", "schedule": "overlap",
+            "max_calls": 1, "plan_id": plan_id,
         }, headers=header,
     ).json()
     token = capability["token"]
     tool = "/api/agent/tools/run"
     assert policy_client.post(
-        tool, json={"variant": "racy", "schedule": "serial"},
+        tool, json={"variant": "racy", "schedule": "serial", "plan_id": plan_id},
         headers={"Authorization": f"Bearer {token}"},
     ).status_code == 403
     response = policy_client.post(
-        tool, json={"variant": "racy", "schedule": "overlap"},
+        tool, json={"variant": "racy", "schedule": "overlap", "plan_id": plan_id},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     assert response.json()["verdict"] == "FAIL"
+    saved = policy_client.get(f"/api/agent/plans/{plan_id}").json()
+    assert saved["state"] == "COMPLETE"
+    assert saved["result"]["verdict"] == "FAIL"
     assert policy_client.post(
         tool, json={"variant": "racy", "schedule": "overlap"},
         headers={"Authorization": f"Bearer {token}"},
@@ -84,7 +95,7 @@ def test_rule_revocation_denies_existing_capability(policy_client):
     ).status_code == 200
     assert policy_client.post(
         "/api/agent/tools/run",
-        json={"variant": "locked", "schedule": "serial"},
+        json={"variant": "locked", "schedule": "serial", "plan_id": str(UUID(int=0))},
         headers={"Authorization": f"Bearer {secret}"},
     ).status_code == 403
 
