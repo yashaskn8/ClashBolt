@@ -307,3 +307,34 @@ def test_frontier_scopes_to_approved_rule_and_stored_receipts(policy):
     assert policy.revoke_rule(proposal_id)
     with pytest.raises(ValueError, match="approved"):
         policy.propose_frontier_plan(proposal_id, "racy")
+
+
+
+def test_model_token_reservations_are_atomic_and_conservative(policy):
+    with policy.connect() as conn:
+        conn.execute("DELETE FROM model_reservation")
+        conn.execute("DELETE FROM model_budget")
+        conn.execute("INSERT INTO project_quota(project_id) VALUES ('local') "
+                     "ON CONFLICT DO NOTHING")
+        conn.execute(
+            """
+            INSERT INTO model_budget(project_id, window_date, call_limit, token_limit)
+            VALUES ('local', CURRENT_DATE, 1, 256)
+            """
+        )
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        def attempt(_):
+            try:
+                return policy.reserve_model_call()
+            except ValueError:
+                return None
+
+        accepted = list(pool.map(attempt, range(6)))
+    reservations = [x for x in accepted if x is not None]
+    assert len(reservations) == 1
+    budget = policy.local_model_budget()
+    assert budget["calls_reserved"] == 1
+    assert budget["tokens_reserved"] == 256
+    assert policy.settle_model_call(reservations[0], None)
+    assert not policy.settle_model_call(reservations[0], 10)
+    assert policy.local_model_budget()["tokens_observed"] == 0

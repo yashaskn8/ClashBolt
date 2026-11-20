@@ -84,6 +84,31 @@ _POLICY_SCHEMA = (
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
     """
+    CREATE TABLE IF NOT EXISTS model_budget (
+        project_id TEXT NOT NULL REFERENCES project_quota(project_id),
+        window_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        call_limit INTEGER NOT NULL DEFAULT 20 CHECK (call_limit BETWEEN 1 AND 1000),
+        token_limit INTEGER NOT NULL DEFAULT 5120 CHECK (token_limit BETWEEN 256 AND 1000000),
+        calls_reserved INTEGER NOT NULL DEFAULT 0,
+        tokens_reserved INTEGER NOT NULL DEFAULT 0,
+        tokens_observed INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (project_id, window_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS model_reservation (
+        id UUID PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        window_date DATE NOT NULL,
+        reserved_tokens INTEGER NOT NULL CHECK (reserved_tokens BETWEEN 1 AND 256),
+        observed_tokens INTEGER,
+        state TEXT NOT NULL CHECK (state IN ('RESERVED', 'COMPLETE', 'UNKNOWN')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        FOREIGN KEY (project_id, window_date)
+            REFERENCES model_budget(project_id, window_date)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agent_evidence_gap (
         plan_id UUID PRIMARY KEY REFERENCES agent_plan(id),
         classification TEXT NOT NULL CHECK (
@@ -111,7 +136,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 3
+POLICY_SCHEMA_VERSION = 4
 
 
 class Policy(Ledger):
@@ -123,6 +148,100 @@ class Policy(Ledger):
             for statement in _POLICY_SCHEMA:
                 conn.execute(statement)
             _record_schema_revision(conn, "policy", POLICY_SCHEMA_VERSION)
+
+    def reserve_model_call(self) -> UUID:
+        """Atomically reserve a worst-case 256-token local request before HTTP."""
+        reservation_id = uuid4()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
+            )
+            conn.execute(
+                """
+                INSERT INTO model_budget(project_id, window_date)
+                VALUES ('local', CURRENT_DATE) ON CONFLICT DO NOTHING
+                """
+            )
+            budget = conn.execute(
+                """
+                SELECT * FROM model_budget
+                WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                FOR UPDATE
+                """
+            ).fetchone()
+            if (
+                budget["calls_reserved"] >= budget["call_limit"]
+                or budget["tokens_reserved"] + 256 > budget["token_limit"]
+            ):
+                raise ValueError("Local model daily reservation budget exhausted")
+            conn.execute(
+                """
+                UPDATE model_budget SET calls_reserved = calls_reserved + 1,
+                    tokens_reserved = tokens_reserved + 256
+                WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO model_reservation(
+                    id, project_id, window_date, reserved_tokens, state
+                ) VALUES (%s, 'local', CURRENT_DATE, 256, 'RESERVED')
+                """,
+                (reservation_id,),
+            )
+        return reservation_id
+
+    def settle_model_call(
+        self, reservation_id: UUID, observed_tokens: int | None
+    ) -> bool:
+        """Unknown outcomes consume the full reservation; never guess provider cost."""
+        if observed_tokens is not None and (
+            type(observed_tokens) is not int or not 0 <= observed_tokens <= 256
+        ):
+            raise ValueError("Reported model token usage exceeds reserved amount")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                UPDATE model_reservation
+                SET observed_tokens = %s,
+                    state = %s
+                WHERE id = %s AND state = 'RESERVED'
+                RETURNING project_id, window_date
+                """,
+                (
+                    observed_tokens,
+                    "UNKNOWN" if observed_tokens is None else "COMPLETE",
+                    reservation_id,
+                ),
+            ).fetchone()
+            if not row:
+                return False
+            if observed_tokens is not None:
+                conn.execute(
+                    """
+                    UPDATE model_budget SET tokens_observed = tokens_observed + %s
+                    WHERE project_id = %s AND window_date = %s
+                    """,
+                    (observed_tokens, row["project_id"], row["window_date"]),
+                )
+            return True
+
+    def local_model_budget(self) -> dict:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT call_limit, token_limit, calls_reserved, tokens_reserved,
+                    tokens_observed, window_date
+                FROM model_budget
+                WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                """
+            ).fetchone()
+            if not row:
+                return {
+                    "calls_reserved": 0, "tokens_reserved": 0, "tokens_observed": 0,
+                    "call_limit": 20, "token_limit": 5120,
+                }
+            return {**row, "window_date": row["window_date"].isoformat()}
 
     def propose(
         self, proposed_by: str = "deterministic-workshop",

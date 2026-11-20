@@ -429,7 +429,10 @@ def test_migration_refuses_unknown_future_schema(ledger):
         with pytest.raises(ValueError, match="newer"):
             ledger.migrate()
     finally:
+        from clashbolt.policy import POLICY_SCHEMA_VERSION
+
         with ledger.connect() as conn:
             conn.execute(
-                "UPDATE schema_revision SET version = 3 WHERE component = 'policy'"
+                "UPDATE schema_revision SET version = %s WHERE component = 'policy'",
+                (POLICY_SCHEMA_VERSION,),
             )

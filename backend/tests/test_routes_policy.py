@@ -221,3 +221,14 @@ def test_frontier_proposal_is_operator_gated(policy_client):
     planned = policy_client.post(f"{url}/plans", json=body, headers=headers)
     assert planned.status_code == 201
     assert planned.json()["plan"]["max_steps"] == 4
+
+
+
+def test_budget_endpoint_is_operator_only(policy_client):
+    assert policy_client.get("/api/agent/model-budget").status_code == 403
+    response = policy_client.get(
+        "/api/agent/model-budget",
+        headers={"X-Operator-Token": "ci-local-only-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json()["token_limit"] >= 256

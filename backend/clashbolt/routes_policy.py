@@ -197,9 +197,33 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token)
-        plan = await propose_model_plan(request.variant)
+        store = require_policy()
         try:
-            return require_policy().record_plan(request.proposal_id, plan)
+            store.frontier(request.proposal_id, request.variant)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        # No model configuration means zero provider work and zero reservation.
+        reservation = None
+        if os.getenv("CLASHBOLT_LOCAL_MODEL"):
+            try:
+                reservation = store.reserve_model_call()
+            except ValueError as error:
+                raise HTTPException(429, str(error)) from error
+        try:
+            plan = await propose_model_plan(request.variant)
+        except Exception:
+            if reservation is not None:
+                store.settle_model_call(reservation, None)
+            raise
+        if reservation is not None:
+            usage = (
+                plan.get("model_tokens_used")
+                if plan.get("model_status") == "VALIDATED_PROPOSAL"
+                else None
+            )
+            store.settle_model_call(reservation, usage)
+        try:
+            return store.record_plan(request.proposal_id, plan)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
@@ -254,6 +278,11 @@ def policy_router(dsn: str | None) -> APIRouter:
     def reconcile_plans(x_operator_token: str | None = Header(default=None)):
         require_operator(x_operator_token)
         return {"reconciled": require_policy().reconcile_stalled_plans()}
+
+    @router.get("/agent/model-budget")
+    def model_budget(x_operator_token: str | None = Header(default=None)):
+        require_operator(x_operator_token)
+        return require_policy().local_model_budget()
 
     @router.post("/agent/evaluate")
     async def evaluate(
