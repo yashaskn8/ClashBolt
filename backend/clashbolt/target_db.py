@@ -5,6 +5,7 @@ control PostgreSQL cluster and never provision a network-supplied target.
 A database boundary is not a process or network sandbox.
 """
 
+import os
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,20 +26,32 @@ def _local_address(host: str) -> bool:
         return False
 
 
-def validate_target_cluster(target_admin_dsn: str, control_dsn: str) -> None:
-    """Enforce a separate native port and loopback-only target cluster."""
-    admin = conninfo_to_dict(target_admin_dsn)
-    control = conninfo_to_dict(control_dsn)
-    host = admin.get("host", "")
-    target_port = int(admin.get("port") or 5432)
-    control_port = int(control.get("port") or 5432)
+def _local_cluster_port(dsn: str) -> int:
+    """Validate the effective libpq endpoint, including routing overrides."""
+    values = conninfo_to_dict(dsn)
+    host = values.get("host", "")
+    hostaddr = values.get("hostaddr") or os.getenv("PGHOSTADDR", "")
     if (
         not _local_address(host)
-        or not _local_address(control.get("host", ""))
-        or (host in ("localhost", "127.0.0.1", "::1")
-            and control.get("host") in ("localhost", "127.0.0.1", "::1")
-            and target_port == control_port)
+        or (hostaddr and not _local_address(hostaddr))
+        or values.get("service")
+        or os.getenv("PGSERVICE")
     ):
+        raise ValueError("Target requires explicit loopback-only PostgreSQL endpoints")
+    try:
+        port = int(values.get("port") or os.getenv("PGPORT") or "5432")
+    except (TypeError, ValueError) as error:
+        raise ValueError("Target requires a single numeric local PostgreSQL port") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("Target requires a valid local PostgreSQL port")
+    return port
+
+
+def validate_target_cluster(target_admin_dsn: str, control_dsn: str) -> None:
+    """Require distinct native ports, even for loopback aliases/hostaddr."""
+    target_port = _local_cluster_port(target_admin_dsn)
+    control_port = _local_cluster_port(control_dsn)
+    if target_port == control_port:
         raise ValueError(
             "Target requires an independent loopback PostgreSQL cluster and port"
         )
