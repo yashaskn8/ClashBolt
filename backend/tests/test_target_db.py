@@ -21,7 +21,7 @@ def test_same_cluster_and_remote_are_rejected():
     same = "postgresql://user:pwd@127.0.0.1:5432/testing"
     with pytest.raises(ValueError, match="independent"):
         validate_target_cluster(same, same)
-    with pytest.raises(ValueError, match="independent"):
+    with pytest.raises(ValueError, match="loopback"):
         validate_target_cluster(
             "postgresql://user:pwd@198.51.100.1:5433/testing", same
         )
@@ -29,12 +29,18 @@ def test_same_cluster_and_remote_are_rejected():
 
 def test_loopback_alias_cannot_reuse_control_database_port():
     control = "postgresql://user:pwd@127.0.0.1:5432/control"
-    for alias in ("127.0.0.2", "127.1", "::1"):
+    for alias in ("127.0.0.2", "::1"):
         host = f"[{alias}]" if ":" in alias else alias
         with pytest.raises(ValueError, match="independent"):
             validate_target_cluster(
                 f"postgresql://user:pwd@{host}:5432/postgres", control
             )
+    # libpq may accept this abbreviated address, but our validator rejects
+    # noncanonical spelling before attempting a connection.
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(
+            "postgresql://user:pwd@127.1:5432/postgres", control
+        )
 
 
 def test_libpq_hostaddr_and_service_cannot_redirect_target(monkeypatch):
