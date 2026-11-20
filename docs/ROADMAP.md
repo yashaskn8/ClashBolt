@@ -36,3 +36,14 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 ## Claim boundaries
 
 The optional local-model plan adapter is unpromoted; mocked adapter tests do not prove any installed model performs well. The built-in benchmark manifest is a **known training fixture**, not held-out AI evidence. The synthetic `FAIL` demonstrates only an intentional test-fixture bug under controlled application checkpoints. Repeating its digest in a fresh Python process is not ungated or real-world reproduction. A generation fence covers database **control-plane state**, not arbitrary external effects. Fixed child processes are not secure sandboxes. Named local role accounts are not external identity verification or multitenant authorization. A local operator token is not proof of independently authenticated reviewer identity. The semantic AI research hypothesis is **unverified**, and there is no exactly-once execution claim.
+
+
+## Verified milestone notes
+
+GitHub Actions exercises native PostgreSQL concurrency and replay, the built
+React frontend, and Chromium account/transport scenarios. The held-out
+evaluation protocol is a data-only intake, not an independently replicated
+experiment. Model timeout recovery consumes reservation budgets conservatively
+and explicitly reports uncertainty. Host-level isolation, multi-project
+tenancy, real external held-out targets and independent study results remain
+required before claiming complete PDF or production readiness.

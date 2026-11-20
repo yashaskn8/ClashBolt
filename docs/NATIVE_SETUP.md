@@ -437,3 +437,20 @@ the local shared draft.
 Drafts never grant oracle approval, tool capability, target access, or
 ownership of completed experiments. This feature is account-specific draft
 storage **within the single 'local' project**, not full multi-project tenancy.
+
+
+## Durable local-model request obligations
+
+Every reserved local-model request now has a fixed 30-second database
+deadline. The separate worker reconciles expired `RESERVED` entries to
+`UNKNOWN` without retrying the request, implying model success, or returning
+reserved calls/tokens to the daily budget. Observed token usage is retained
+when a late response provides an explicit count, but the request still remains
+`UNKNOWN`.
+
+The operator-only `GET /api/agent/model-budget` response includes
+`calls_inflight` and `calls_unknown` for the current day. A configured model
+that responds after its reservation deadline is replaced by the deterministic
+fallback plan. A process crash may leave an ambiguous external model effect;
+it cannot be treated as a certified result or silently retried. The system
+does **not** reconcile the model provider's actual billing.
