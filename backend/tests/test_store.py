@@ -6,8 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
-from clashbolt.experiment import execute
-from clashbolt.store import Ledger
+from clashbolt.experiment import ORACLE_HASH, execute
+from clashbolt.policy import Policy
 from clashbolt.worker import process_one
 
 
@@ -16,27 +16,33 @@ def ledger():
     dsn = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Set CLASHBOLT_TEST_DATABASE_URL for native PostgreSQL integration")
-    result = Ledger(dsn)
+    result = Policy(dsn)
     result.migrate()
     # Only this dedicated test database is touched; each test begins isolated.
     with result.connect() as conn:
-        conn.execute("TRUNCATE run_transition, experiment_run, project_quota CASCADE")
+        conn.execute(
+            "TRUNCATE tool_audit, agent_plan, tool_capability, oracle_proposal, "
+            "run_transition, experiment_run, project_quota CASCADE"
+        )
+    proposed = result.propose("fixture-proposer")
+    approved = result.approve(UUID(proposed["id"]), ORACLE_HASH, "fixture-reviewer")
+    result.approval_id = UUID(approved["id"])
     return result
 
 
 def test_admission_is_idempotent_and_rejects_conflicting_payloads(ledger):
     key = str(uuid4())
-    first = ledger.admit(client_key=key, variant="racy", schedule="overlap")
-    second = ledger.admit(client_key=key, variant="racy", schedule="overlap")
+    first = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=key, variant="racy", schedule="overlap")
+    second = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=key, variant="racy", schedule="overlap")
     assert first["run_id"] == second["run_id"]
     assert first["status"] == "PENDING"
     with pytest.raises(ValueError, match="Idempotency"):
-        ledger.admit(client_key=key, variant="locked", schedule="overlap")
+        ledger.admit(approved_oracle_id=ledger.approval_id, client_key=key, variant="locked", schedule="overlap")
     assert [e["status"] for e in ledger.transitions(UUID(first["run_id"]))] == ["PENDING"]
 
 
 def test_worker_publishes_one_result_and_transitions(ledger):
-    run = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+    run = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="overlap")
     assert asyncio.run(process_one(ledger, "integration-worker"))
     result = ledger.get(UUID(run["run_id"]))
     assert result["status"] == "COMPLETE"
@@ -47,7 +53,7 @@ def test_worker_publishes_one_result_and_transitions(ledger):
 
 
 def test_expired_generation_is_fenced(ledger):
-    run = ledger.admit(client_key=str(uuid4()), variant="locked", schedule="serial")
+    run = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="locked", schedule="serial")
     first = ledger.claim("worker-one")
     assert first is not None
     with ledger.connect() as conn:
@@ -65,11 +71,11 @@ def test_expired_generation_is_fenced(ledger):
 
 
 def test_cancel_pending_and_inflight_unknown(ledger):
-    queued = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="serial")
+    queued = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="serial")
     assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLED"
     assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLED"
 
-    active = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+    active = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="overlap")
     claim = ledger.claim("cancel-worker")
     assert claim and claim["run_id"] == active["run_id"]
     assert ledger.cancel(UUID(active["run_id"]))["status"] == "CANCELLING"
@@ -93,9 +99,9 @@ def test_quota_uses_single_serialized_row(ledger):
         # Other tests may leave active runs: use a unique local workspace test DB per job.
         with ledger.connect() as conn:
             conn.execute("UPDATE experiment_run SET status = 'CANCELLED' WHERE status = 'PENDING'")
-        first = ledger.admit(client_key=key, variant="racy", schedule="overlap")
+        first = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=key, variant="racy", schedule="overlap")
         with pytest.raises(ValueError, match="quota"):
-            ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+            ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="overlap")
         ledger.cancel(UUID(first["run_id"]))
     finally:
         with ledger.connect() as conn:
@@ -103,7 +109,7 @@ def test_quota_uses_single_serialized_row(ledger):
 
 
 def test_forged_witness_is_never_accepted_as_failure(ledger):
-    run = ledger.admit(client_key=str(uuid4()), variant="locked", schedule="serial")
+    run = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="locked", schedule="serial")
     claim = ledger.claim("checker-test")
     assert claim and claim["run_id"] == run["run_id"]
     forged = asyncio.run(execute("locked", "serial"))
@@ -115,8 +121,8 @@ def test_forged_witness_is_never_accepted_as_failure(ledger):
 
 
 def test_recent_runs_are_resumable(ledger):
-    first = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="serial")
-    second = ledger.admit(client_key=str(uuid4()), variant="locked", schedule="overlap")
+    first = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="serial")
+    second = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="locked", schedule="overlap")
     listed = ledger.recent(10)
     ids = {item["run_id"] for item in listed}
     assert {first["run_id"], second["run_id"]}.issubset(ids)
@@ -129,7 +135,7 @@ def test_concurrent_duplicate_admissions_use_one_run(ledger):
     key = str(uuid4())
 
     def admit_once(_):
-        return ledger.admit(client_key=key, variant="racy", schedule="overlap")
+        return ledger.admit(approved_oracle_id=ledger.approval_id, client_key=key, variant="racy", schedule="overlap")
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         accepted = list(pool.map(admit_once, range(8)))
@@ -146,7 +152,7 @@ def test_concurrent_quota_admission_fails_closed(ledger):
 
     def attempt(_):
         try:
-            return ledger.admit(
+            return ledger.admit(approved_oracle_id=ledger.approval_id, 
                 client_key=str(uuid4()), variant="locked", schedule="serial"
             )["run_id"]
         except ValueError as error:
@@ -159,7 +165,7 @@ def test_concurrent_quota_admission_fails_closed(ledger):
 
 
 def test_expired_inflight_cancellation_becomes_unknown(ledger):
-    queued = ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+    queued = ledger.admit(approved_oracle_id=ledger.approval_id, client_key=str(uuid4()), variant="racy", schedule="overlap")
     claimed = ledger.claim("stall-worker")
     assert claimed and claimed["run_id"] == queued["run_id"]
     assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLING"
@@ -172,3 +178,38 @@ def test_expired_inflight_cancellation_becomes_unknown(ledger):
     current = ledger.get(UUID(queued["run_id"]))
     assert current["status"] == "UNKNOWN"
     assert current["verdict"] == "UNKNOWN"
+
+
+
+def test_admission_rejects_unapproved_rule(ledger):
+    with pytest.raises(ValueError, match="approved"):
+        ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
+    with pytest.raises(ValueError, match="approved"):
+        ledger.admit(
+            client_key=str(uuid4()), variant="racy", schedule="overlap",
+            approved_oracle_id=uuid4(),
+        )
+
+
+def test_oracle_revocation_withdraws_existing_verdict(ledger):
+    run = ledger.admit(
+        approved_oracle_id=ledger.approval_id,
+        client_key=str(uuid4()), variant="racy", schedule="overlap",
+    )
+    claim = ledger.claim("revocation-worker")
+    assert claim and claim["run_id"] == run["run_id"]
+    witness = asyncio.run(execute("racy", "overlap"))
+    assert ledger.finish(UUID(run["run_id"]), "revocation-worker", claim["lease_generation"], witness)
+    assert ledger.get(UUID(run["run_id"]))["verdict"] == "FAIL"
+    assert ledger.revoke_rule(ledger.approval_id)
+    after = ledger.get(UUID(run["run_id"]))
+    assert after["verdict"] == "UNKNOWN"
+    assert after["status"] == "UNKNOWN"
+    assert ledger.transitions(UUID(run["run_id"]))[-1]["note"].startswith(
+        "oracle approval revoked"
+    )
+    with pytest.raises(ValueError, match="approved"):
+        ledger.admit(
+            approved_oracle_id=ledger.approval_id,
+            client_key=str(uuid4()), variant="racy", schedule="overlap",
+        )

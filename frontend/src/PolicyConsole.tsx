@@ -5,7 +5,7 @@ type Schedule = 'overlap' | 'serial'
 type Rule = { id: string; rule_hash: string; state: string }
 type Capability = { capability_id: string; token: string; max_calls: number }
 type Plan = { id: string; plan: { variant: Variant; schedule: Schedule } }
-type Props = { variant: Variant; schedule: Schedule }
+type Props = { variant: Variant; schedule: Schedule; onApproved: (id: string) => void }
 
 async function request<T>(url: string, body?: unknown, token?: string, bearer?: string): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -23,7 +23,7 @@ async function request<T>(url: string, body?: unknown, token?: string, bearer?: 
   return (await response.json()) as T
 }
 
-export default function PolicyConsole({ variant, schedule }: Props) {
+export default function PolicyConsole({ variant, schedule, onApproved }: Props) {
   const [operator, setOperator] = useState('')
   const [rule, setRule] = useState<Rule | null>(null)
   const [capability, setCapability] = useState<Capability | null>(null)
@@ -66,6 +66,7 @@ export default function PolicyConsole({ variant, schedule }: Props) {
         operator,
       )
       setRule({ ...rule, state: result.state })
+      onApproved(rule.id)
       return result
     })
   }

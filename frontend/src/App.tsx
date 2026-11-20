@@ -55,6 +55,7 @@ export default function App() {
   const [variant, setVariant] = useState<Variant>('racy')
   const [schedule, setSchedule] = useState<Schedule>('overlap')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
@@ -69,6 +70,16 @@ export default function App() {
       .catch(() => setError('Cannot connect to the local API. Start uvicorn on 127.0.0.1:8000.'))
   }, [])
 
+  useEffect(() => {
+    if (catalog?.storage !== 'postgresql') return
+    fetch('/api/oracle/proposals')
+      .then((response) => parseResponse<{ proposals: { id: string; state: string }[] }>(response))
+      .then((data) => {
+        setApprovedOracleId(data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null)
+      })
+      .catch(() => setApprovedOracleId(null))
+  }, [catalog?.storage])
+
   async function run() {
     setBusy(true)
     setError('')
@@ -82,7 +93,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_id: 'synthetic-inventory', variant, schedule,
-          ...(storage === 'runs' ? { client_key: crypto.randomUUID(), step_budget: 4 } : {}),
+          ...(storage === 'runs'
+            ? {
+                client_key: crypto.randomUUID(),
+                step_budget: 4,
+                approved_oracle_id: approvedOracleId,
+              }
+            : {}),
         }),
       })
       if (storage === 'runs') setDurable(await parseResponse<DurableRun>(response))
@@ -159,7 +176,17 @@ export default function App() {
             <p className="schedule-tip">Application checkpoints only. The controller does not control operating-system or database internals.</p>
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
-            <button className="primary-button" type="button" onClick={run} disabled={busy || !catalog}>{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
+            {catalog?.storage === 'postgresql' && (
+              <p className="schedule-tip">
+                Approved oracle: {approvedOracleId
+                  ? approvedOracleId.slice(0, 13) + '…'
+                  : 'none — approve the fixed rule in the console below before submitting'}
+              </p>
+            )}
+            <button
+              className="primary-button" type="button" onClick={run}
+              disabled={busy || !catalog || (catalog.storage === 'postgresql' && !approvedOracleId)}
+            >{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
             {error && <p className="error" role="alert">{error}</p>}
             <p className="help-text">Storage: {catalog?.storage ?? 'connecting'} · Durable runs require a separate worker.</p>
           </section>
@@ -191,7 +218,10 @@ export default function App() {
           }} />
         )}
         {durable && <DurableMonitor initial={durable} onUpdate={setDurable} />}
-        {catalog?.storage === 'postgresql' && <PolicyConsole variant={variant} schedule={schedule} />}
+        {catalog?.storage === 'postgresql' && <PolicyConsole
+          variant={variant} schedule={schedule}
+          onApproved={(id) => setApprovedOracleId(id)}
+        />}
         <footer>CLASHBOLT LAB <span>·</span> Synthetic targets only. PostgreSQL mode keeps durable control state, not external effects.</footer>
       </main>
     </div>

@@ -64,12 +64,13 @@ _SCHEMA = (
 )
 
 
-def _request_hash(variant: str, schedule: str, budget: int) -> str:
+def _request_hash(variant: str, schedule: str, budget: int, approval_id: UUID) -> str:
     request = {
         "variant": variant,
         "schedule": schedule,
         "step_budget": budget,
         "oracle_hash": ORACLE_HASH,
+        "approved_oracle_id": str(approval_id),
     }
     return hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
 
@@ -82,6 +83,9 @@ def _public(row: dict) -> dict:
         "variant": row["variant"],
         "schedule": row["schedule"],
         "oracle_hash": row["oracle_hash"],
+        "approved_oracle_id": (
+            str(row["approved_oracle_id"]) if row["approved_oracle_id"] else None
+        ),
         "step_budget": row["step_budget"],
         "status": row["status"],
         "version": row["version"],
@@ -123,6 +127,7 @@ class Ledger:
         variant: str,
         schedule: str,
         step_budget: int = 4,
+        approved_oracle_id: UUID | None = None,
     ) -> dict:
         """A retry with the same key+request returns the same run; conflicts reject."""
         if variant not in ("racy", "locked") or schedule not in SCHEDULES:
@@ -132,7 +137,11 @@ class Ledger:
         if not 1 <= len(client_key) <= 100:
             raise ValueError("Client key must be 1-100 characters")
 
-        request_hash = _request_hash(variant, schedule, step_budget)
+        if not isinstance(approved_oracle_id, UUID):
+            raise ValueError("Durable runs require an approved oracle version")
+        request_hash = _request_hash(
+            variant, schedule, step_budget, approved_oracle_id
+        )
         with self.connect() as conn:
             # The quota row serializes admission for this local workspace.
             conn.execute(
@@ -150,6 +159,20 @@ class Ledger:
                     raise ValueError("Idempotency key reused for a different experiment")
                 return _public(existing)
 
+            approval = conn.execute(
+                """
+                SELECT state, rule_hash, target_revision, reviewed_by
+                FROM oracle_proposal WHERE id = %s FOR SHARE
+                """,
+                (approved_oracle_id,),
+            ).fetchone()
+            if (
+                not approval or approval["state"] != "APPROVED"
+                or approval["rule_hash"] != ORACLE_HASH
+                or approval["target_revision"] != "inventory-demo-v1"
+                or not approval["reviewed_by"]
+            ):
+                raise ValueError("Durable admission requires a current approved oracle")
             count = conn.execute(
                 """
                 SELECT count(*) AS open_count
@@ -167,12 +190,15 @@ class Ledger:
                 """
                 INSERT INTO experiment_run (
                     id, project_id, client_key, request_hash,
-                    variant, schedule, oracle_hash, step_budget
+                    variant, schedule, oracle_hash, step_budget, approved_oracle_id
                 )
-                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
-                (uuid4(), client_key, request_hash, variant, schedule, ORACLE_HASH, step_budget),
+                (
+                    uuid4(), client_key, request_hash, variant, schedule,
+                    ORACLE_HASH, step_budget, approved_oracle_id,
+                ),
             ).fetchone()
             _event(conn, row, "admitted")
             return _public(row)
@@ -253,12 +279,30 @@ class Ledger:
     def finish(self, run_id: UUID, owner: str, generation: int, witness: dict) -> bool:
         """A stale worker cannot publish a result after its lease is lost."""
         with self.connect() as conn:
+            # Consistent lock order: oracle approval first, run row second.
+            # A simultaneous revoke cannot race with accepted certification.
+            binding = conn.execute(
+                "SELECT approved_oracle_id FROM experiment_run WHERE id = %s",
+                (run_id,),
+            ).fetchone()
+            approval = None
+            if binding and binding["approved_oracle_id"]:
+                approval = conn.execute(
+                    """
+                    SELECT state, rule_hash, target_revision
+                    FROM oracle_proposal WHERE id = %s FOR SHARE
+                    """,
+                    (binding["approved_oracle_id"],),
+                ).fetchone()
             current = conn.execute(
                 "SELECT * FROM experiment_run WHERE id = %s FOR UPDATE",
                 (run_id,),
             ).fetchone()
             if (
                 not current
+                or current["approved_oracle_id"] != (
+                    binding["approved_oracle_id"] if binding else None
+                )
                 or current["lease_owner"] != owner
                 or current["lease_generation"] != generation
                 or current["lease_until"] is None
@@ -269,6 +313,13 @@ class Ledger:
 
             if current["cancel_requested"]:
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "cancelled during execution"
+            elif (
+                not approval
+                or approval["state"] != "APPROVED"
+                or approval["rule_hash"] != current["oracle_hash"]
+                or approval["target_revision"] != "inventory-demo-v1"
+            ):
+                status, verdict, note = "UNKNOWN", "UNKNOWN", "oracle approval withdrawn"
             elif (
                 witness.get("oracle", {}).get("sha256") != current["oracle_hash"]
                 or witness.get("variant") != current["variant"]

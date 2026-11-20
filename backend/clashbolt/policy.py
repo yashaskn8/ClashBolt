@@ -71,6 +71,8 @@ _POLICY_SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS approved_oracle_id "
+    "UUID REFERENCES oracle_proposal(id)",
     "ALTER TABLE tool_capability ADD COLUMN IF NOT EXISTS plan_id UUID "
     "REFERENCES agent_plan(id)",
     "ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS plan_id UUID "
@@ -144,14 +146,45 @@ class Policy(Ledger):
 
     def revoke_rule(self, proposal_id: UUID) -> bool:
         with self.connect() as conn:
-            changed = conn.execute(
-                """
-                UPDATE oracle_proposal SET state = 'REVOKED'
-                WHERE id = %s AND state = 'APPROVED' RETURNING id
-                """,
+            rule = conn.execute(
+                "SELECT state FROM oracle_proposal WHERE id = %s FOR UPDATE",
                 (proposal_id,),
             ).fetchone()
-            return changed is not None
+            if not rule or rule["state"] != "APPROVED":
+                return False
+            conn.execute(
+                "UPDATE oracle_proposal SET state = 'REVOKED' WHERE id = %s",
+                (proposal_id,),
+            )
+            accepted = conn.execute(
+                """
+                SELECT id FROM experiment_run
+                WHERE approved_oracle_id = %s AND status = 'COMPLETE'
+                ORDER BY id FOR UPDATE
+                """,
+                (proposal_id,),
+            ).fetchall()
+            for item in accepted:
+                row = conn.execute(
+                    """
+                    UPDATE experiment_run SET
+                        status = 'UNKNOWN', verdict = 'UNKNOWN',
+                        version = version + 1, updated_at = now()
+                    WHERE id = %s RETURNING id, version, status
+                    """,
+                    (item["id"],),
+                ).fetchone()
+                conn.execute(
+                    """
+                    INSERT INTO run_transition(run_id, version, status, note)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        row["id"], row["version"], row["status"],
+                        "oracle approval revoked; prior verdict withdrawn",
+                    ),
+                )
+            return True
 
     def issue(
         self,

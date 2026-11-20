@@ -37,6 +37,7 @@ class ExperimentRequest(BaseModel):
 class RunRequest(ExperimentRequest):
     client_key: str = Field(min_length=1, max_length=100)
     step_budget: int = Field(default=4, ge=4, le=32)
+    approved_oracle_id: UUID
 
 
 def create_app() -> FastAPI:
@@ -143,6 +144,7 @@ def create_app() -> FastAPI:
                 variant=request.variant,
                 schedule=request.schedule,
                 step_budget=request.step_budget,
+                approved_oracle_id=request.approved_oracle_id,
             )
         except ValueError as error:
             status = 429 if "quota" in str(error).lower() else 409
