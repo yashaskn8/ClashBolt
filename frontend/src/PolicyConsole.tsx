@@ -117,6 +117,30 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
     })
   }
 
+  async function frontierPlan() {
+    if (!rule) return
+    await action(async () => {
+      const frontier = await request<{
+        policy_version: string
+        promotion_eligible: boolean
+        candidates: {
+          schedule: Schedule
+          priority: number
+          attempts: number
+          confirmed_failures: number
+        }[]
+      }>(`/api/agent/frontier/${rule.id}?variant=${variant}`)
+      const saved = await request<Plan>(
+        `/api/agent/frontier/${rule.id}/plans`,
+        { proposal_id: rule.id, variant }, operator,
+      )
+      setPlan(saved)
+      setCapability(null)
+      setToolFinished(false)
+      return { frontier, next_plan: saved }
+    })
+  }
+
   async function modelPlan() {
     if (!rule) return
     await action(async () => {
@@ -232,6 +256,10 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         </button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>
         <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED'}>3. Propose typed plan</button>
+        <button type="button" onClick={() => void frontierPlan()}
+          disabled={busy || rule?.state !== 'APPROVED' || !operator}>
+          3a. Rank semantic conflict frontier
+        </button>
         <button type="button" onClick={() => void modelPlan()}
           disabled={busy || rule?.state !== 'APPROVED' || !operator}>
           3b. Suggest local model plan
@@ -251,6 +279,8 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
       <p className="help-text">
         Local model mode is optional and unpromoted. Invalid or unavailable model
         responses fall back to the deterministic planner; no model can issue authority.
+        The frontier ranks only the two shipped schedules using prior verified receipts;
+        its scores are not held-out research evidence.
       </p>
       <p className="help-text">
         Selected form: {variant} / {schedule}. Approved plan:
