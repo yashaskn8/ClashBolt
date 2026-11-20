@@ -30,3 +30,32 @@ def test_custom_archive_roundtrip_read_and_manifest(tmp_path):
     assert "secret" not in str(sidecar).lower()
     with pytest.raises(FileExistsError):
         backup_control(destination, dsn)
+
+
+
+def test_disposable_restore_drill_does_not_change_control_database(tmp_path):
+    import psycopg
+
+    from clashbolt.policy import Policy
+
+    dsn = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
+    target = os.getenv("CLASHBOLT_TEST_TARGET_ADMIN_URL")
+    if not dsn or not target or not shutil.which("pg_restore"):
+        pytest.skip("Separate native PostgreSQL clusters are required")
+    Policy(dsn).migrate()
+    archive = tmp_path / "control.dump"
+    backup_control(archive, dsn)
+    from clashbolt.backup import verify_disposable_restore
+
+    result = verify_disposable_restore(archive, dsn, target)
+    assert result["status"] == "RESTORE_VERIFIED"
+    assert result["restored_schema_revisions"]["control"] >= 1
+    with psycopg.connect(target, autocommit=True) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s",
+            (result["scratch_database"],),
+        ).fetchone()
+        assert exists is None
+    archive.write_bytes(b"not the original archive")
+    with pytest.raises(ValueError, match="manifest"):
+        verify_disposable_restore(archive, dsn, target)

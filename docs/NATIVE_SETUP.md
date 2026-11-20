@@ -381,3 +381,17 @@ successful archive integrity check is not a successful restore. Test restoration
 only into a newly created *disposable* PostgreSQL database using native
 administration tools and verify the application readiness endpoint. Never
 automatically restore over a running control database.
+
+
+### Disposable restore drill
+
+A full restore test requires an independently administered, local target
+PostgreSQL cluster (not the control cluster). The function
+`clashbolt.backup.verify_disposable_restore(archive, control_dsn, target_admin_dsn)`
+accepts only a hash-verified archive and **always generates a fresh database
+name**. It restores there, verifies the schema revisions, and drops the
+scratch database. There is deliberately no restore-to-existing-database API.
+
+GitHub Actions exercises the restore drill against the two ephemeral native
+PostgreSQL clusters. Passing this test does not replace off-site encrypted
+backups, recovery-time objectives or a full disaster-recovery rehearsal.

@@ -13,8 +13,13 @@ import tempfile
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
+from uuid import uuid4
 
-from psycopg.conninfo import conninfo_to_dict
+import psycopg
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+from clashbolt.target_db import validate_target_cluster
 
 
 def _loopback(value: str) -> bool:
@@ -117,6 +122,86 @@ def backup_control(destination: Path, dsn: str) -> dict:
         return manifest
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def verify_disposable_restore(
+    archive: Path, control_dsn: str, target_admin_dsn: str
+) -> dict:
+    """Restore only into a generated *new* local database, then force-remove it.
+
+    No restore into any caller-selected existing database is supported.
+    The administrator credential remains confined to this trusted CLI/test.
+    """
+    validate_target_cluster(target_admin_dsn, control_dsn)
+    archive = archive.expanduser().resolve()
+    manifest_path = archive.with_suffix(".sha256.json")
+    if not archive.is_file() or not manifest_path.is_file():
+        raise ValueError("Archive and SHA-256 manifest are both required")
+    if archive.stat().st_size > 100_000_000:
+        raise ValueError("Restore drills are limited to 100 MB archives")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("format") != "clashbolt-control-backup-v1"
+        or manifest.get("archive_bytes") != archive.stat().st_size
+        or manifest.get("archive_sha256")
+            != hashlib.sha256(archive.read_bytes()).hexdigest()
+    ):
+        raise ValueError("Archive does not match the expected backup manifest")
+
+    config = conninfo_to_dict(target_admin_dsn)
+    if not config.get("user") or not config.get("password"):
+        raise ValueError("A dedicated native target administrator is required")
+    scratch = f"cb_restore_{uuid4().hex}"
+    environment = os.environ.copy()
+    for key in (
+        "PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGUSER",
+        "PGSERVICE", "PGPASSFILE", "PGOPTIONS", "PGPASSWORD",
+    ):
+        environment.pop(key, None)
+    environment["PGPASSWORD"] = config["password"]
+
+    with psycopg.connect(
+        target_admin_dsn, autocommit=True, connect_timeout=5
+    ) as admin:
+        admin.execute(
+            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(scratch))
+        )
+        try:
+            try:
+                subprocess.run(
+                    [
+                        "pg_restore", "--exit-on-error", "--no-owner", "--no-acl",
+                        "--no-password", "--host", config["host"],
+                        "--port", str(config.get("port", "5432")),
+                        "--username", config["user"], "--dbname", scratch,
+                        str(archive),
+                    ],
+                    env=environment, check=True, capture_output=True, timeout=120,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise RuntimeError("Disposable restore could not complete") from error
+            with psycopg.connect(
+                make_conninfo(target_admin_dsn, dbname=scratch),
+                connect_timeout=5,
+            ) as restored:
+                rows = restored.execute(
+                    "SELECT component, version FROM schema_revision"
+                ).fetchall()
+                revisions = {row[0]: row[1] for row in rows}
+                if not {"control", "policy"}.issubset(revisions):
+                    raise ValueError("Restored control/policy schema revisions missing")
+            return {
+                "status": "RESTORE_VERIFIED",
+                "restored_schema_revisions": revisions,
+                "scratch_database": scratch,
+                "scope": "DISPOSABLE_NATIVE_CLUSTER_ONLY",
+            }
+        finally:
+            admin.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
+                    sql.Identifier(scratch)
+                )
+            )
 
 
 def main() -> None:
