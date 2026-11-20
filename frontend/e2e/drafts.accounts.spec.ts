@@ -7,6 +7,7 @@ async function signIn(page: Page, name: string) {
     name: /Sign in|Switch named account/,
   }).click()
   await expect(page.getByText(`Signed in: ${name} (operator)`)).toBeVisible()
+  await expect(page.getByLabel('Implementation')).toBeEnabled()
   await expect(page.getByText(
     /No saved draft for this account|Recovered saved experiment draft/,
   )).toBeVisible()

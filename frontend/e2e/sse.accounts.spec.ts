@@ -8,6 +8,7 @@ async function signIn(page: Page, role: 'operator' | 'reviewer') {
   }).click()
   await expect(page.getByText(`Signed in: browser.${role} (${role})`))
     .toBeVisible()
+  await expect(page.getByLabel('Implementation')).toBeEnabled()
 }
 
 test('snapshot and timeline recover when the SSE transport is unavailable', async ({
@@ -26,6 +27,8 @@ test('snapshot and timeline recover when the SSE transport is unavailable', asyn
   await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
 
   await signIn(page, 'operator')
+  await page.getByLabel('Implementation').selectOption('racy')
+  await page.getByLabel('Checkpoint release order').selectOption('overlap')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
     timeout: 20_000,

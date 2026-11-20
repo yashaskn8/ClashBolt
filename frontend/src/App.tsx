@@ -68,6 +68,7 @@ export default function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
   const [draftVersion, setDraftVersion] = useState(0)
+  const [draftReady, setDraftReady] = useState(true)
   const [draftMessage, setDraftMessage] = useState('')
   const [operatorToken, setOperatorToken] = useState('')
   const [sessionReady, setSessionReady] = useState(false)
@@ -121,6 +122,7 @@ export default function App() {
     if (catalog.access_mode === 'private' && !sessionReady) return
     if (catalog.access_mode === 'accounts' && !account) return
     let cancelled = false
+    setDraftReady(false)
     fetch('/api/experiment-draft')
       .then((response) => parseResponse<{
         saved: {
@@ -149,7 +151,12 @@ export default function App() {
         }
         setDraftMessage('Recovered saved experiment draft.')
       })
-      .catch(() => setDraftMessage('Saved draft unavailable; current form is unchanged.'))
+      .catch(() => {
+        if (!cancelled) setDraftMessage('Saved draft unavailable; current form is unchanged.')
+      })
+      .finally(() => {
+        if (!cancelled) setDraftReady(true)
+      })
     return () => { cancelled = true }
   }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username])
 
@@ -192,6 +199,7 @@ export default function App() {
         username: string
         role: 'viewer' | 'operator' | 'reviewer'
       }>(response)
+      setDraftReady(false)
       setAccount({ username: identity.username, role: identity.role })
       setAccountPassword('')
       setDraftVersion(0)
@@ -212,6 +220,7 @@ export default function App() {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       setAccount(null)
+      setDraftReady(false)
       setDraftVersion(0)
       setDraftMessage('')
       setVariant('racy')
@@ -401,13 +410,15 @@ export default function App() {
             <small className="help-text">Fresh state for every run · Initial stock: 1 · Two clients</small>
 
             <label className="field-label" htmlFor="variant">Implementation</label>
-            <select id="variant" value={variant} onChange={(event) => setVariant(event.target.value as Variant)}>
+            <select id="variant" value={variant} disabled={!draftReady}
+              onChange={(event) => setVariant(event.target.value as Variant)}>
               <option value="racy">Racy — checks stale stock before commit</option>
               <option value="locked">Corrected — rechecks stock at commit</option>
             </select>
 
             <label className="field-label" htmlFor="schedule">Checkpoint release order</label>
-            <select id="schedule" value={schedule} onChange={(event) => setSchedule(event.target.value as Schedule)}>
+            <select id="schedule" value={schedule} disabled={!draftReady}
+              onChange={(event) => setSchedule(event.target.value as Schedule)}>
               <option value="overlap">Overlap — A.read → B.read → A.commit → B.commit</option>
               <option value="serial">Serial — A.read → A.commit → B.read → B.commit</option>
             </select>
@@ -417,6 +428,7 @@ export default function App() {
                 <label className="field-label" htmlFor="execution-backend">Target isolation</label>
                 <select
                   id="execution-backend" value={executionBackend}
+                  disabled={!draftReady}
                   onChange={(event) => {
                     setExecutionBackend(event.target.value as ExecutionBackend)
                   }}
@@ -499,7 +511,7 @@ export default function App() {
               <>
                 <button
                   className="secondary-button" type="button" onClick={saveDraft}
-                  disabled={!operatorReady || (catalog.access_mode === 'private' && !sessionReady)}
+                  disabled={!draftReady || !operatorReady || (catalog.access_mode === 'private' && !sessionReady)}
                 >
                   Save experiment draft
                 </button>
@@ -509,7 +521,7 @@ export default function App() {
             <button
               className="primary-button" type="button" onClick={run}
               disabled={
-                busy || !catalog ||
+                busy || !catalog || !draftReady ||
                 (catalog.access_mode === 'private' && !sessionReady) ||
                 !accountUnlocked ||
                 (catalog.access_mode === 'accounts' && !operatorReady) ||

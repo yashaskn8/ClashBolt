@@ -7,6 +7,7 @@ async function signIn(page: Page, role: string) {
     name: /Sign in|Switch named account/,
   }).click()
   await expect(page.getByText(`Signed in: browser.${role} (${role})`)).toBeVisible()
+  await expect(page.getByLabel('Implementation')).toBeEnabled()
 }
 
 test('independent reviewer approval permits a durable synthetic run', async ({
@@ -29,6 +30,8 @@ test('independent reviewer approval permits a durable synthetic run', async ({
     .toBeDisabled()
 
   await signIn(page, 'operator')
+  await page.getByLabel('Implementation').selectOption('racy')
+  await page.getByLabel('Checkpoint release order').selectOption('overlap')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
     timeout: 15_000,
@@ -56,6 +59,8 @@ test('native database verification is performed by the separate worker', async (
   await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
 
   await signIn(page, 'operator')
+  await page.getByLabel('Implementation').selectOption('racy')
+  await page.getByLabel('Checkpoint release order').selectOption('overlap')
   await page.getByLabel('Target isolation').selectOption('native-postgresql')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
