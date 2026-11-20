@@ -211,6 +211,9 @@ _POLICY_SCHEMA = (
             REFERENCES model_budget(project_id, window_date)
     )
     """,
+    "ALTER TABLE model_reservation ADD COLUMN IF NOT EXISTS "
+    "deadline_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 seconds')",
+    "ALTER TABLE model_reservation ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ",
     """
     CREATE TABLE IF NOT EXISTS agent_evidence_gap (
         plan_id UUID PRIMARY KEY REFERENCES agent_plan(id),
@@ -239,7 +242,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 7
+POLICY_SCHEMA_VERSION = 8
 
 
 class Policy(Ledger):
@@ -311,15 +314,15 @@ class Policy(Ledger):
                 """
                 UPDATE model_reservation
                 SET observed_tokens = %s,
-                    state = %s
+                    state = CASE
+                        WHEN %s IS NOT NULL AND deadline_at > now()
+                        THEN 'COMPLETE' ELSE 'UNKNOWN'
+                    END,
+                    finalized_at = now()
                 WHERE id = %s AND state = 'RESERVED'
                 RETURNING project_id, window_date
                 """,
-                (
-                    observed_tokens,
-                    "UNKNOWN" if observed_tokens is None else "COMPLETE",
-                    reservation_id,
-                ),
+                (observed_tokens, observed_tokens, reservation_id),
             ).fetchone()
             if not row:
                 return False
@@ -333,6 +336,33 @@ class Policy(Ledger):
                 )
             return True
 
+    def model_reservation_state(self, reservation_id: UUID) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT state FROM model_reservation WHERE id = %s",
+                (reservation_id,),
+            ).fetchone()
+            return row["state"] if row else None
+
+    def reconcile_stalled_model_calls(self) -> int:
+        """Classify expired model obligations UNKNOWN without refunding budget."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                WITH expired AS (
+                    SELECT id FROM model_reservation
+                    WHERE state = 'RESERVED' AND deadline_at < now()
+                    ORDER BY created_at, id LIMIT 100 FOR UPDATE SKIP LOCKED
+                )
+                UPDATE model_reservation AS reservations
+                SET state = 'UNKNOWN', finalized_at = now()
+                FROM expired
+                WHERE reservations.id = expired.id
+                RETURNING reservations.id
+                """
+            ).fetchall()
+            return len(rows)
+
     def local_model_budget(self) -> dict:
         with self.connect() as conn:
             row = conn.execute(
@@ -343,12 +373,28 @@ class Policy(Ledger):
                 WHERE project_id = 'local' AND window_date = CURRENT_DATE
                 """
             ).fetchone()
+            state_counts = conn.execute(
+                """
+                SELECT
+                    count(*) FILTER (WHERE state = 'RESERVED') AS inflight,
+                    count(*) FILTER (WHERE state = 'UNKNOWN') AS unknown
+                FROM model_reservation
+                WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                """
+            ).fetchone()
             if not row:
                 return {
                     "calls_reserved": 0, "tokens_reserved": 0, "tokens_observed": 0,
                     "call_limit": 20, "token_limit": 5120,
+                    "calls_inflight": state_counts["inflight"],
+                    "calls_unknown": state_counts["unknown"],
                 }
-            return {**row, "window_date": row["window_date"].isoformat()}
+            return {
+                **row,
+                "window_date": row["window_date"].isoformat(),
+                "calls_inflight": state_counts["inflight"],
+                "calls_unknown": state_counts["unknown"],
+            }
 
     def propose(
         self, proposed_by: str = "deterministic-workshop",

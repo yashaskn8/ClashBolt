@@ -265,7 +265,17 @@ def policy_router(dsn: str | None) -> APIRouter:
                 if plan.get("model_status") == "VALIDATED_PROPOSAL"
                 else None
             )
-            store.settle_model_call(reservation, usage)
+            settled = store.settle_model_call(reservation, usage)
+            if plan.get("model_status") == "VALIDATED_PROPOSAL" and (
+                not settled
+                or store.model_reservation_state(reservation) != "COMPLETE"
+            ):
+                # A late model suggestion is never upgraded into an agent plan.
+                plan = {
+                    **choose_plan(strategy="semantic", variant=request.variant),
+                    "planner_kind": "DETERMINISTIC_FALLBACK",
+                    "model_status": "LATE_OR_UNCONFIRMED_RESERVATION",
+                }
         try:
             return store.record_plan(request.proposal_id, plan)
         except ValueError as error:
