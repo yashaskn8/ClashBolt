@@ -18,7 +18,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the evidence-based 20-feature status 
 
 ## Native setup (no Docker)
 
-See [docs/NATIVE_SETUP.md](docs/NATIVE_SETUP.md) for PostgreSQL setup, PowerShell, the separate worker process, operator secret and CLI verification.
+See [docs/NATIVE_SETUP.md](docs/NATIVE_SETUP.md) for PostgreSQL setup and named-account provisioning. [Native systemd hardening examples](docs/SYSTEMD_DEPLOYMENT.md) use separate API and worker service users, distinct environment files, loopback-only connectivity and resource limits; actual host enforcement has not been verified.
 
 In-memory scratch mode:
 
