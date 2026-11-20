@@ -463,7 +463,10 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/experiment-draft")
-    def get_experiment_draft() -> dict:
+    def get_experiment_draft(http_request: Request) -> dict:
+        if access_mode == "accounts":
+            account_id = UUID(http_request.state.account["id"])
+            return {"saved": account_store.get_account_draft(account_id)}
         return {"saved": require_ledger().get_draft()}
 
     @app.post("/api/experiment-draft")
@@ -472,15 +475,18 @@ def create_app() -> FastAPI:
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
+        draft = {
+            "variant": request.variant,
+            "schedule": request.schedule,
+            "execution_backend": request.execution_backend,
+        }
         try:
-            return require_ledger().save_draft(
-                {
-                    "variant": request.variant,
-                    "schedule": request.schedule,
-                    "execution_backend": request.execution_backend,
-                },
-                request.expected_version,
-            )
+            if access_mode == "accounts":
+                account_id = UUID(http_request.state.account["id"])
+                return account_store.save_account_draft(
+                    account_id, draft, request.expected_version
+                )
+            return require_ledger().save_draft(draft, request.expected_version)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 

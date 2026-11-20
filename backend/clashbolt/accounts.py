@@ -15,13 +15,15 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from psycopg.types.json import Jsonb
+
 from clashbolt.policy import Policy
 from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
 
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
 KDF_ITERATIONS = 450_000
-ACCOUNT_SCHEMA_VERSION = 1
+ACCOUNT_SCHEMA_VERSION = 2
 
 _ACCOUNT_SCHEMA = (
     """
@@ -37,6 +39,14 @@ _ACCOUNT_SCHEMA = (
         locked_until TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         last_login_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS account_experiment_draft (
+        account_id UUID PRIMARY KEY REFERENCES local_account(id) ON DELETE CASCADE,
+        version BIGINT NOT NULL DEFAULT 1,
+        draft JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
 )
@@ -61,6 +71,47 @@ class AccountStore(Policy):
             for statement in _ACCOUNT_SCHEMA:
                 conn.execute(statement)
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)
+
+    def get_account_draft(self, account_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT version, draft, updated_at
+                FROM account_experiment_draft WHERE account_id = %s
+                """,
+                (account_id,),
+            ).fetchone()
+            return {**row, "updated_at": row["updated_at"].isoformat()} if row else None
+
+    def save_account_draft(
+        self, account_id: UUID, draft: dict, expected_version: int
+    ) -> dict:
+        """One optimistic-versioned draft per named account, never shared."""
+        self._validate_draft(draft, expected_version)
+        with self.connect() as conn:
+            if expected_version == 0:
+                row = conn.execute(
+                    """
+                    INSERT INTO account_experiment_draft(account_id, version, draft)
+                    VALUES (%s, 1, %s)
+                    ON CONFLICT (account_id) DO NOTHING
+                    RETURNING version, draft, updated_at
+                    """,
+                    (account_id, Jsonb(draft)),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    UPDATE account_experiment_draft
+                    SET version = version + 1, draft = %s, updated_at = now()
+                    WHERE account_id = %s AND version = %s
+                    RETURNING version, draft, updated_at
+                    """,
+                    (Jsonb(draft), account_id, expected_version),
+                ).fetchone()
+            if not row:
+                raise ValueError("Stale account experiment draft version")
+            return {**row, "updated_at": row["updated_at"].isoformat()}
 
     def create_account(self, username: str, role: str, password: str) -> str:
         if not USERNAME.fullmatch(username) or role not in ROLES:

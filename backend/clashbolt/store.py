@@ -339,8 +339,9 @@ class Ledger:
                 return None
             return {**row, "updated_at": row["updated_at"].isoformat()}
 
-    def save_draft(self, draft: dict, expected_version: int) -> dict:
-        """Version-CAS recovery; never infer approval from a saved draft."""
+    @staticmethod
+    def _validate_draft(draft: dict, expected_version: int) -> None:
+        """Never persist capabilities, authorization or unsupported settings."""
         if not 0 <= expected_version <= 2**63 - 2:
             raise ValueError("Invalid draft version")
         if draft.get("variant") not in ("racy", "locked"):
@@ -351,6 +352,10 @@ class Ledger:
             raise ValueError("Unsupported draft target backend")
         if set(draft) != {"variant", "schedule", "execution_backend"}:
             raise ValueError("Draft has unsupported fields")
+
+    def save_draft(self, draft: dict, expected_version: int) -> dict:
+        """Version-CAS recovery; never infer approval from a saved draft."""
+        self._validate_draft(draft, expected_version)
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"

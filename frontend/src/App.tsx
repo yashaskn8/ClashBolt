@@ -133,7 +133,14 @@ export default function App() {
         } | null
       }>(response))
       .then((response) => {
-        if (cancelled || !response.saved) return
+        if (cancelled) return
+        if (!response.saved) {
+          setDraftVersion(0)
+          if (catalog.access_mode === 'accounts') {
+            setDraftMessage('No saved draft for this account.')
+          }
+          return
+        }
         setDraftVersion(response.saved.version)
         setVariant(response.saved.draft.variant)
         setSchedule(response.saved.draft.schedule)
@@ -187,6 +194,11 @@ export default function App() {
       }>(response)
       setAccount({ username: identity.username, role: identity.role })
       setAccountPassword('')
+      setDraftVersion(0)
+      setDraftMessage('')
+      setVariant('racy')
+      setSchedule('overlap')
+      setExecutionBackend('memory')
       setApprovedOracleId(null)
       setDurable(null)
       setResult(null)
@@ -200,6 +212,11 @@ export default function App() {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       setAccount(null)
+      setDraftVersion(0)
+      setDraftMessage('')
+      setVariant('racy')
+      setSchedule('overlap')
+      setExecutionBackend('memory')
       setApprovedOracleId(null)
       setDurable(null)
       setResult(null)
