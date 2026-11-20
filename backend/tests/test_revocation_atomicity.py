@@ -1,7 +1,7 @@
 """Concurrency regression: oracle withdrawal must fence new tool authorization."""
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from uuid import UUID
 
 import pytest
