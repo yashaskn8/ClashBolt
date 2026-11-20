@@ -398,3 +398,31 @@ def test_valid_late_tool_receipt_is_unknown_before_periodic_reconciliation(polic
     assert saved["result"]["verdict"] == "UNKNOWN"
     assert saved["result"]["evidence_sha256"] is None
     assert policy.evidence_gaps(plan_id)[0]["classification"] == "MISSING_RECEIPT"
+
+
+
+def test_oracle_audit_is_transactional_and_append_only(policy):
+    import psycopg
+
+    proposed = policy.propose("audit-proposer")
+    approval_id = UUID(proposed["id"])
+    assert policy.oracle_audit() == []
+    with pytest.raises(ValueError):
+        policy.approve(approval_id, "x" * 64, "audit-reviewer")
+    assert policy.oracle_audit() == []
+    policy.approve(approval_id, ORACLE_HASH, "audit-reviewer")
+    assert policy.revoke_rule(approval_id, actor="audit-reviewer")
+    rows = policy.oracle_audit()
+    assert [event["action"] for event in rows] == ["REVOKED", "APPROVED"]
+    assert all(event["actor"] == "audit-reviewer" for event in rows)
+    assert all(event["rule_hash"] == ORACLE_HASH for event in rows)
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with policy.connect() as conn:
+            conn.execute("DELETE FROM oracle_audit WHERE proposal_id = %s", (approval_id,))
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with policy.connect() as conn:
+            conn.execute(
+                "UPDATE oracle_audit SET actor = 'forged' WHERE proposal_id = %s",
+                (approval_id,),
+            )
+    assert len(policy.oracle_audit()) == 2

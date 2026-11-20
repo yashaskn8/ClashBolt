@@ -87,6 +87,30 @@ _POLICY_SCHEMA = (
     EXECUTE FUNCTION clashbolt_guard_oracle_version()
     """,
     """
+    CREATE TABLE IF NOT EXISTS oracle_audit (
+        id BIGSERIAL PRIMARY KEY,
+        proposal_id UUID NOT NULL REFERENCES oracle_proposal(id),
+        action TEXT NOT NULL CHECK (action IN ('APPROVED', 'REVOKED')),
+        actor TEXT NOT NULL,
+        rule_hash TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_oracle_audit()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $audit_guard$
+    BEGIN
+        RAISE EXCEPTION 'Oracle approval audit is append-only';
+    END
+    $audit_guard$
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_oracle_audit_immutable ON oracle_audit",
+    """
+    CREATE TRIGGER clashbolt_oracle_audit_immutable
+    BEFORE UPDATE OR DELETE ON oracle_audit FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_oracle_audit()
+    """,
+    """
     CREATE TABLE IF NOT EXISTS tool_capability (
         id UUID PRIMARY KEY,
         token_hash TEXT UNIQUE NOT NULL,
@@ -183,7 +207,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 5
+POLICY_SCHEMA_VERSION = 6
 
 
 class Policy(Ledger):
@@ -317,6 +341,26 @@ class Policy(Ledger):
             ).fetchone()
             return {**row, "id": str(row["id"]), "target_id": TARGET_ID}
 
+    def oracle_audit(self, limit: int = 100) -> list[dict]:
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid audit page limit")
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT proposal_id, action, actor, rule_hash, created_at
+                FROM oracle_audit ORDER BY id DESC LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+            return [
+                {
+                    **row,
+                    "proposal_id": str(row["proposal_id"]),
+                    "created_at": row["created_at"].isoformat(),
+                }
+                for row in rows
+            ]
+
     def list_proposals(self) -> list[dict]:
         with self.connect() as conn:
             rows = conn.execute(
@@ -355,12 +399,23 @@ class Policy(Ledger):
                 """,
                 (reviewer, proposal_id),
             ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO oracle_audit(proposal_id, action, actor, rule_hash)
+                VALUES (%s, 'APPROVED', %s, %s)
+                """,
+                (proposal_id, reviewer, approved["rule_hash"]),
+            )
             return {**approved, "id": str(approved["id"])}
 
-    def revoke_rule(self, proposal_id: UUID) -> bool:
+    def revoke_rule(
+        self, proposal_id: UUID, actor: str = "local-reviewer"
+    ) -> bool:
+        if not actor or len(actor) > 100:
+            raise ValueError("Reviewer identity is required")
         with self.connect() as conn:
             rule = conn.execute(
-                "SELECT state FROM oracle_proposal WHERE id = %s FOR UPDATE",
+                "SELECT state, rule_hash FROM oracle_proposal WHERE id = %s FOR UPDATE",
                 (proposal_id,),
             ).fetchone()
             if not rule or rule["state"] != "APPROVED":
@@ -368,6 +423,13 @@ class Policy(Ledger):
             conn.execute(
                 "UPDATE oracle_proposal SET state = 'REVOKED' WHERE id = %s",
                 (proposal_id,),
+            )
+            conn.execute(
+                """
+                INSERT INTO oracle_audit(proposal_id, action, actor, rule_hash)
+                VALUES (%s, 'REVOKED', %s, %s)
+                """,
+                (proposal_id, actor, rule["rule_hash"]),
             )
             accepted = conn.execute(
                 """

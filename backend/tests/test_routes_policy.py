@@ -322,3 +322,20 @@ def test_private_mode_scoped_tool_dispatch_is_not_operator_privilege(
             "/api/agent/tools/run", json=requested,
             headers={"Authorization": f"Bearer {token}"},
         ).status_code == 403
+
+
+
+def test_oracle_audit_is_read_only_for_authenticated_operator(policy_client):
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "audit-writer"}
+    ).json()
+    headers = {"X-Operator-Token": "ci-local-only-secret"}
+    policy_client.post(
+        f"/api/oracle/proposals/{proposal['id']}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "audit-reviewer"},
+        headers=headers,
+    )
+    assert policy_client.get("/api/oracle/audit").status_code == 403
+    events = policy_client.get("/api/oracle/audit", headers=headers)
+    assert events.status_code == 200
+    assert any(event["action"] == "APPROVED" for event in events.json()["events"])

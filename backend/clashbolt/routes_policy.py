@@ -126,6 +126,13 @@ def policy_router(dsn: str | None) -> APIRouter:
         )
         return require_policy().propose(actor, request.candidate)
 
+    @router.get("/oracle/audit")
+    def list_oracle_audit(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
+        return {"events": require_policy().oracle_audit()}
+
     @router.get("/oracle/proposals")
     def list_rules():
         return {"proposals": require_policy().list_proposals()}
@@ -156,7 +163,12 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_reviewer_token: str | None = Header(default=None),
     ):
         require_reviewer(x_reviewer_token, x_operator_token, http_request)
-        if not require_policy().revoke_rule(proposal_id):
+        actor = (
+            http_request.state.account["username"]
+            if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
+            else "local-reviewer"
+        )
+        if not require_policy().revoke_rule(proposal_id, actor=actor):
             raise HTTPException(409, "Oracle version is not currently approved")
         return {"proposal_id": str(proposal_id), "state": "REVOKED"}
 
