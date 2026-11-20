@@ -127,3 +127,48 @@ def test_plan_binding_and_receipt(policy):
     stored = policy.get_plan(planned_id)
     assert stored["state"] == "COMPLETE"
     assert stored["result"]["verdict"] == "FAIL"
+
+
+def test_expired_tool_plan_abstains_and_cannot_late_certify(policy):
+    import asyncio
+    from uuid import UUID
+
+    from clashbolt.experiment import execute
+
+    proposal = policy.propose()
+    pid = UUID(proposal["id"])
+    policy.approve(pid, ORACLE_HASH, "operator")
+    plan = policy.record_plan(pid, choose_plan(strategy="semantic", variant="racy"))
+    planned_id = UUID(plan["id"])
+    cap = policy.issue(pid, "racy", "overlap", plan_id=planned_id)
+    assert policy.authorize(cap["token"], "racy", "overlap", planned_id)
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE agent_plan SET deadline_at = now() - interval '1 second' "
+            "WHERE id = %s", (planned_id,),
+        )
+    assert policy.reconcile_stalled_plans() == 1
+    saved = policy.get_plan(planned_id)
+    assert saved["state"] == "UNKNOWN"
+    assert saved["result"]["verdict"] == "UNKNOWN"
+    assert "missing" in saved["result"]["evidence_gap"]
+    witness = asyncio.run(execute("racy", "overlap"))
+    assert not policy.record_outcome(planned_id, witness)
+
+
+def test_incomplete_and_revoked_oracle_cannot_complete_plan(policy):
+    from uuid import UUID
+
+    proposal = policy.propose()
+    pid = UUID(proposal["id"])
+    policy.approve(pid, ORACLE_HASH, "operator")
+    plan = policy.record_plan(pid, choose_plan(strategy="semantic", variant="racy"))
+    plan_id = UUID(plan["id"])
+    cap = policy.issue(pid, "racy", "overlap", plan_id=plan_id)
+    assert policy.authorize(cap["token"], "racy", "overlap", plan_id)
+    assert policy.revoke_rule(pid)
+    incomplete = {"variant": "racy", "schedule": "overlap", "complete": False}
+    assert policy.record_outcome(plan_id, incomplete)
+    stored = policy.get_plan(plan_id)
+    assert stored["state"] == "UNKNOWN"
+    assert stored["result"]["verdict"] == "UNKNOWN"

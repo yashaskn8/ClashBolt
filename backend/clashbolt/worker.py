@@ -8,6 +8,7 @@ import sys
 from uuid import UUID, uuid4
 
 from clashbolt.experiment import ORACLE_HASH
+from clashbolt.policy import Policy
 from clashbolt.store import Ledger
 
 
@@ -64,9 +65,10 @@ async def main() -> None:
         parser.error("Set CLASHBOLT_DATABASE_URL to a local PostgreSQL database")
     if not 0.1 <= args.interval <= 60:
         parser.error("interval must be 0.1 to 60 seconds")
-    ledger = Ledger(dsn)
+    ledger = Policy(dsn)
     worker_id = f"worker-{uuid4()}"
     while True:
+        ledger.reconcile_stalled_plans()
         accepted = await process_one(ledger, worker_id)
         if args.once:
             break

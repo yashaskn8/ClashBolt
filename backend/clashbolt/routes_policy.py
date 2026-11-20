@@ -160,6 +160,11 @@ def policy_router(dsn: str | None) -> APIRouter:
             raise HTTPException(404, "Plan not found")
         return result
 
+    @router.post("/agent/plans/reconcile")
+    def reconcile_plans(x_operator_token: str | None = Header(default=None)):
+        require_operator(x_operator_token)
+        return {"reconciled": require_policy().reconcile_stalled_plans()}
+
     @router.post("/agent/evaluate")
     async def evaluate(
         request: EvaluationInput,

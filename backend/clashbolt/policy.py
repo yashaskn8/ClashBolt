@@ -77,6 +77,8 @@ _POLICY_SCHEMA = (
     "REFERENCES agent_plan(id)",
     "ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS plan_id UUID "
     "REFERENCES agent_plan(id)",
+    "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
+    "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
 )
 
 
@@ -326,7 +328,12 @@ class Policy(Ledger):
                 )
                 if plan_id is not None:
                     conn.execute(
-                        "UPDATE agent_plan SET state = 'IN_FLIGHT' WHERE id = %s",
+                        """
+                        UPDATE agent_plan SET state = 'IN_FLIGHT',
+                            started_at = now(),
+                            deadline_at = now() + interval '30 seconds'
+                        WHERE id = %s AND state = 'PROPOSED'
+                        """,
                         (plan_id,),
                     )
             return allowed
@@ -365,25 +372,83 @@ class Policy(Ledger):
             }
 
     def record_outcome(self, plan_id: UUID, witness: dict) -> bool:
-        """Write a single plan observation after independent contract validation."""
+        """Persist one receipt, but never certify incomplete or revoked evidence."""
         from clashbolt.witness import validate_contract
 
         invalid = validate_contract(witness)
-        final_state = "UNKNOWN" if invalid else "COMPLETE"
-        receipt = {
-            "verdict": witness.get("verdict") if not invalid else "UNKNOWN",
-            "evidence_sha256": witness.get("evidence_sha256") if not invalid else None,
-            "evidence_gap": invalid,
-        }
         with self.connect() as conn:
+            # Rule first, plan second: matches approval/revocation lock order.
+            binding = conn.execute(
+                "SELECT proposal_id FROM agent_plan WHERE id = %s", (plan_id,)
+            ).fetchone()
+            if not binding:
+                return False
+            rule = conn.execute(
+                "SELECT state, rule_hash FROM oracle_proposal WHERE id = %s FOR SHARE",
+                (binding["proposal_id"],),
+            ).fetchone()
+            plan = conn.execute(
+                "SELECT * FROM agent_plan WHERE id = %s FOR UPDATE", (plan_id,)
+            ).fetchone()
+            if (
+                not plan or plan["state"] != "IN_FLIGHT"
+                or plan["proposal_id"] != binding["proposal_id"]
+            ):
+                return False
+
+            if (
+                witness.get("variant") != plan["plan"].get("variant")
+                or witness.get("schedule") != plan["plan"].get("schedule")
+            ):
+                invalid = invalid or "Plan and observed fixture do not match"
+            if not rule or rule["state"] != "APPROVED" or rule["rule_hash"] != ORACLE_HASH:
+                invalid = invalid or "Oracle was revoked before receipt"
+            if not witness.get("complete"):
+                invalid = invalid or "Target observation incomplete"
+            if witness.get("verdict") not in ("PASS", "FAIL"):
+                invalid = invalid or "Oracle could not make a definitive determination"
+
+            status = "UNKNOWN" if invalid else "COMPLETE"
+            receipt = {
+                "verdict": "UNKNOWN" if invalid else witness["verdict"],
+                "evidence_sha256": witness.get("evidence_sha256") if not invalid else None,
+                "evidence_gap": invalid,
+            }
             updated = conn.execute(
                 """
                 UPDATE agent_plan SET state = %s, result = %s
                 WHERE id = %s AND state = 'IN_FLIGHT' RETURNING id
                 """,
-                (final_state, Jsonb(receipt), plan_id),
+                (status, Jsonb(receipt), plan_id),
             ).fetchone()
             return updated is not None
+
+    def reconcile_stalled_plans(self) -> int:
+        """Do not retry uncertain effects; make expired obligations inspectable."""
+        with self.connect() as conn:
+            expired = conn.execute(
+                """
+                SELECT id FROM agent_plan
+                WHERE state = 'IN_FLIGHT' AND deadline_at < now()
+                ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED
+                """
+            ).fetchall()
+            for item in expired:
+                conn.execute(
+                    """
+                    UPDATE agent_plan SET state = 'UNKNOWN',
+                        result = %s WHERE id = %s AND state = 'IN_FLIGHT'
+                    """,
+                    (
+                        Jsonb({
+                            "verdict": "UNKNOWN",
+                            "evidence_sha256": None,
+                            "evidence_gap": "Tool receipt missing after deadline",
+                        }),
+                        item["id"],
+                    ),
+                )
+            return len(expired)
 
     def audit(self, limit: int = 50) -> list[dict]:
         with self.connect() as conn:
