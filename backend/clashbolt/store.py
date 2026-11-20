@@ -18,7 +18,7 @@ from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
-BASE_SCHEMA_VERSION = 3
+BASE_SCHEMA_VERSION = 4
 
 _SCHEMA = (
     """
@@ -122,6 +122,13 @@ _SCHEMA = (
     """
     CREATE INDEX IF NOT EXISTS verification_job_claim_idx
     ON verification_job(status, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS worker_heartbeat (
+        owner TEXT PRIMARY KEY,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
     """,
 )
 
@@ -368,6 +375,57 @@ class Ledger:
             if not row:
                 raise ValueError("Stale experiment draft version")
             return {**row, "updated_at": row["updated_at"].isoformat()}
+
+    def heartbeat(self, owner: str) -> None:
+        """A worker reports liveness explicitly, never inferred from API uptime."""
+        if not 1 <= len(owner) <= 100:
+            raise ValueError("Invalid worker identity")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO worker_heartbeat(owner)
+                VALUES (%s)
+                ON CONFLICT (owner)
+                DO UPDATE SET last_seen = now()
+                """,
+                (owner,),
+            )
+
+    def operations(self) -> dict:
+        """Snapshot counts only: no worker secrets or target DSNs."""
+        with self.connect() as conn:
+            runs = conn.execute(
+                """
+                SELECT status, count(*) AS count FROM experiment_run
+                WHERE project_id = 'local' GROUP BY status
+                """
+            ).fetchall()
+            verifications = conn.execute(
+                "SELECT status, count(*) AS count FROM verification_job GROUP BY status"
+            ).fetchall()
+            workers = conn.execute(
+                """
+                SELECT owner, last_seen, last_seen > now() - interval '15 seconds'
+                    AS responsive FROM worker_heartbeat
+                WHERE last_seen > now() - interval '1 day'
+                ORDER BY last_seen DESC LIMIT 20
+                """
+            ).fetchall()
+            return {
+                "runs": {row["status"]: row["count"] for row in runs},
+                "verifications": {
+                    row["status"]: row["count"] for row in verifications
+                },
+                "workers": [
+                    {
+                        "owner": row["owner"],
+                        "responsive": row["responsive"],
+                        "last_seen": row["last_seen"].isoformat(),
+                    }
+                    for row in workers
+                ],
+                "responsive_workers": sum(row["responsive"] for row in workers),
+            }
 
     def recent(self, limit: int = 20) -> list[dict]:
         """Read-only recent-run index for recovery after UI/browser restarts."""

@@ -391,6 +391,13 @@ def create_app() -> FastAPI:
             "scope": "SYNTHETIC_ONLY",
         }
 
+    @app.get("/api/operations")
+    def operations(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token, http_request)
+        return require_ledger().operations()
+
     @app.get("/api/experiment-draft")
     def get_experiment_draft() -> dict:
         return {"saved": require_ledger().get_draft()}

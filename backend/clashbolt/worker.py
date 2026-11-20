@@ -164,6 +164,7 @@ async def main() -> None:
     ledger = Policy(dsn)
     worker_id = f"worker-{uuid4()}"
     while True:
+        ledger.heartbeat(worker_id)
         ledger.reconcile_stalled_plans()
         accepted = await process_one(ledger, worker_id)
         checked = False
