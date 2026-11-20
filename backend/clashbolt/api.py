@@ -36,6 +36,7 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
+from clashbolt.metrics import operational_metrics
 from clashbolt.policy import POLICY_SCHEMA_VERSION
 from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
@@ -427,6 +428,17 @@ def create_app() -> FastAPI:
     ) -> dict:
         require_operator(x_operator_token, http_request)
         return require_ledger().operations()
+
+    @app.get("/api/metrics")
+    def metrics(
+        http_request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
+        return Response(
+            operational_metrics(require_ledger().operations()),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/experiment-draft")
     def get_experiment_draft() -> dict:

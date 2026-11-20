@@ -395,3 +395,15 @@ scratch database. There is deliberately no restore-to-existing-database API.
 GitHub Actions exercises the restore drill against the two ephemeral native
 PostgreSQL clusters. Passing this test does not replace off-site encrypted
 backups, recovery-time objectives or a full disaster-recovery rehearsal.
+
+
+## Local operational metrics
+
+A token-protected `GET /api/metrics` endpoint exports bounded Prometheus
+text with only known run/job state labels and aggregate worker health. No run
+IDs, user names, passwords or witness contents appear in metrics. For single
+operator local mode, supply `X-Operator-Token` to the local endpoint. In named
+account mode, it requires an authenticated operator session.
+
+The metrics are gauges/snapshots only, not billing, alerting or a hosted
+monitoring service. Do not expose this development API through a public proxy.

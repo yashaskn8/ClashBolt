@@ -523,3 +523,23 @@ def test_worker_heartbeat_and_operator_queue_snapshot(ledger, monkeypatch):
         )
         assert response.status_code == 200
         assert response.json()["responsive_workers"] >= 1
+
+
+
+def test_metrics_endpoint_is_operator_only_and_redacts_worker_ids(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "metrics-secret")
+    ledger.heartbeat("sensitive-worker-name")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/metrics").status_code == 403
+        response = client.get(
+            "/api/metrics", headers={"X-Operator-Token": "metrics-secret"}
+        )
+        assert response.status_code == 200
+        assert "text/plain" in response.headers["content-type"]
+        assert 'clashbolt_runs{state="PENDING"}' in response.text
+        assert "clashbolt_responsive_workers" in response.text
+        assert "sensitive-worker-name" not in response.text
