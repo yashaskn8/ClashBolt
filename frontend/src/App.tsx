@@ -1,0 +1,174 @@
+import { useEffect, useState } from 'react'
+
+type Variant = 'racy' | 'locked'
+type Schedule = 'overlap' | 'serial'
+type Verdict = 'PASS' | 'FAIL' | 'UNKNOWN'
+
+type Step = {
+  sequence: number
+  client: string
+  checkpoint: string
+  observed_stock?: number
+  accepted?: boolean
+  stock_after?: number
+  confirmed_after?: number
+}
+
+type Witness = {
+  target_id: string
+  target_revision: string
+  variant: Variant
+  fixture: { initial_stock: number; clients: string[]; quantity_each: number }
+  fixture_hash: string
+  schedule: Schedule
+  requested_gates: string[]
+  observed_steps: Step[]
+  oracle: { id: string; version: string; sha256: string; authority: string }
+  final_state: { initial_stock: number; remaining_stock: number; confirmed_count: number }
+  complete: boolean
+  verdict: Verdict
+  evidence_sha256: string
+  scope: string
+}
+
+type Experiment = { run_id: string; witness: Witness; replay_status: string }
+type Catalog = {
+  target_id: string
+  target_revision: string
+  oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
+}
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    throw new Error(`API request failed (${response.status}). Check that the local backend is running.`)
+  }
+  return (await response.json()) as T
+}
+
+const shortHash = (hash: string) => `${hash.slice(0, 12)}…`
+
+export default function App() {
+  const [variant, setVariant] = useState<Variant>('racy')
+  const [schedule, setSchedule] = useState<Schedule>('overlap')
+  const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [result, setResult] = useState<Experiment | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [replaying, setReplaying] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/catalog')
+      .then((response) => parseResponse<Catalog>(response))
+      .then(setCatalog)
+      .catch(() => setError('Cannot connect to the local API. Start uvicorn on 127.0.0.1:8000.'))
+  }, [])
+
+  async function run() {
+    setBusy(true)
+    setError('')
+    setResult(null)
+    try {
+      const response = await fetch('/api/experiments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target_id: 'synthetic-inventory', variant, schedule }),
+      })
+      setResult(await parseResponse<Experiment>(response))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unexpected experiment error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function replay() {
+    if (!result) return
+    setReplaying(true)
+    setError('')
+    try {
+      const response = await fetch(`/api/experiments/${result.run_id}/replay`, { method: 'POST' })
+      const proof = await parseResponse<{ replay_status: string }>(response)
+      setResult({ ...result, replay_status: proof.replay_status })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
+    } finally {
+      setReplaying(false)
+    }
+  }
+
+  const witness = result?.witness
+
+  return (
+    <div className="site-shell">
+      <aside className="sidebar" aria-label="Project navigation">
+        <div className="logo"><span className="logo-mark">⚡</span><span>Clash<span className="logo-accent">Bolt</span></span></div>
+        <div className="sidebar-caption">CONCURRENCY INTELLIGENCE</div>
+        <nav className="navigation" aria-label="Workspace">
+          <span className="nav-active">◈ &nbsp; Experiment lab</span>
+          <span className="nav-disabled">◷ &nbsp; Run timeline <em>Later</em></span>
+          <span className="nav-disabled">▣ &nbsp; Agent planning <em>Later</em></span>
+        </nav>
+        <div className="sidebar-foot"><span className="live-dot" /> Local synthetic mode <small>Stage 1 · Architecture-backed prototype</small></div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar"><span>WORKSPACE <span className="crumb">/</span> EXPERIMENT LAB</span><span className="topbar-right">CLASHBOLT <b>0.1</b></span></header>
+        <section className="intro">
+          <div className="eyebrow">CONTROLLED CONCURRENCY EXPLORATION</div>
+          <h1>Find the clash.<br /><span>Prove the behavior.</span></h1>
+          <p>Run two concurrent purchases against a disposable in-memory inventory fixture. Compare a stale-check bug with a version that revalidates stock at commit.</p>
+          <div className="notice">SYNTHETIC DEMONSTRATION — Outcomes below are not findings against a real application.</div>
+        </section>
+
+        <div className="columns">
+          <section className="panel composer" aria-labelledby="composer-title">
+            <div className="panel-kicker">01 / EXPERIMENT COMPOSER</div>
+            <h2 id="composer-title">Configure a run</h2>
+            <p className="panel-description">The backend allows only this built-in fixture, two implementations, and two bounded schedules.</p>
+
+            <label className="field-label" htmlFor="target">Target fixture</label>
+            <input id="target" value={catalog?.target_id ?? 'synthetic-inventory'} readOnly />
+            <small className="help-text">Fresh memory state for every run · Initial stock: 1 · Two clients</small>
+
+            <label className="field-label" htmlFor="variant">Implementation</label>
+            <select id="variant" value={variant} onChange={(event) => setVariant(event.target.value as Variant)}>
+              <option value="racy">Racy — checks stale stock before commit</option>
+              <option value="locked">Corrected — rechecks stock at commit</option>
+            </select>
+
+            <label className="field-label" htmlFor="schedule">Checkpoint release order</label>
+            <select id="schedule" value={schedule} onChange={(event) => setSchedule(event.target.value as Schedule)}>
+              <option value="overlap">Overlap — A.read → B.read → A.commit → B.commit</option>
+              <option value="serial">Serial — A.read → A.commit → B.read → B.commit</option>
+            </select>
+            <p className="schedule-tip">Application checkpoints only. The controller does not control operating-system or database internals.</p>
+
+            <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
+            <button className="primary-button" type="button" onClick={run} disabled={busy || !catalog}>{busy ? 'Running experiment…' : 'Run synthetic experiment'} <span>→</span></button>
+            {error && <p className="error" role="alert">{error}</p>}
+          </section>
+
+          <section className="panel witness" aria-labelledby="witness-title">
+            <div className="panel-kicker">02 / WITNESS REVIEW</div>
+            <h2 id="witness-title">Observed evidence</h2>
+            {!witness ? (
+              <div className="empty-state"><div className="empty-graphic"><span>A</span><i /> <span>B</span></div><h3>No experiment yet</h3><p>Choose a fixture implementation and schedule, then run to inspect the controlled history.</p></div>
+            ) : (
+              <div className="witness-content">
+                <div className="result-heading"><span className={`verdict verdict-${witness.verdict.toLowerCase()}`}>{witness.verdict}</span><span className="synthetic-tag">SYNTHETIC ONLY</span></div>
+                <p className="verdict-explanation">{witness.verdict === 'FAIL' ? 'The fixed demo oracle found two accepted orders despite one available item.' : witness.verdict === 'PASS' ? 'The fixture finished without violating the fixed demo rule.' : 'Evidence is incomplete; no pass or failure is claimed.'}</p>
+                <div className="metrics"><div><small>INITIAL STOCK</small><strong>{witness.final_state.initial_stock}</strong></div><div><small>CONFIRMED</small><strong>{witness.final_state.confirmed_count}</strong></div><div><small>REMAINING</small><strong>{witness.final_state.remaining_stock}</strong></div></div>
+                <h3 className="subhead">Controlled checkpoint history</h3>
+                <ol className="steps">{witness.observed_steps.map((step) => <li key={step.sequence}><span className="step-number">{String(step.sequence).padStart(2, '0')}</span><span className="step-client">Client {step.client.toUpperCase()}</span><span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span></li>)}</ol>
+                <div className="evidence"><div><span>FIXTURE SHA256</span><code title={witness.fixture_hash}>{shortHash(witness.fixture_hash)}</code></div><div><span>ORACLE</span><code>{witness.oracle.id} @ {witness.oracle.version}</code></div><div><span>EVIDENCE SHA256</span><code title={witness.evidence_sha256}>{shortHash(witness.evidence_sha256)}</code></div><div><span>REPLAY</span><strong>{result?.replay_status}</strong></div></div>
+                <button className="secondary-button" type="button" onClick={replay} disabled={replaying}>{replaying ? 'Replaying on fresh state…' : 'Replay on a clean fixture'} ↻</button>
+                <p className="help-text">Replay compares the complete deterministic evidence hash. It does not establish uncontrolled reproduction.</p>
+              </div>
+            )}
+          </section>
+        </div>
+        <footer>CLASHBOLT LAB <span>·</span> No external targets, AI execution, or durable storage in this stage.</footer>
+      </main>
+    </div>
+  )
+}
