@@ -7,6 +7,7 @@ import random
 from hashlib import sha256
 from typing import Literal
 
+from clashbolt.evaluation_stats import paired_bootstrap
 from clashbolt.experiment import (
     FIXTURE_HASH,
     ORACLE_HASH,
@@ -104,8 +105,22 @@ async def compare_strategies(trials: int = 8) -> dict:
             "gate_budget": 4 * trials,
             "receipts": receipts,
         }
+    baseline = max(
+        ("random", "coverage"),
+        key=lambda name: results[name]["controlled_failures"],
+    )
+    paired = paired_bootstrap(
+        [r["verdict"] == "FAIL" for r in results["semantic"]["receipts"]],
+        [r["verdict"] == "FAIL" for r in results[baseline]["receipts"]],
+    )
     return {
         "scope": "SYNTHETIC_TRAINING_FIXTURE",
+        "paired_comparison": {
+            "candidate": "semantic",
+            "strongest_fixed_baseline": baseline,
+            "statistics": paired,
+            "warning": "Repeated seeds on one known fixture are not held-out evidence",
+        },
         "manifest": manifest,
         "manifest_sha256": manifest_sha256,
         "claim": "deterministic baseline comparison; no AI or held-out validation",
