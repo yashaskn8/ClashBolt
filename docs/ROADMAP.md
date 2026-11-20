@@ -63,7 +63,7 @@ Hardening committed directly to `main`:
 - The fixed child runner now limits stdout *during* capture and stops a child
   that exceeds 100 KB, rather than buffering an unlimited response.
 - The API now rejects malformed HTTP Host headers; bundled static deployments
-  accept same-origin writes only and no longer grant CORS access to Vite ports.
+  reject cross-origin browser write Origins and no longer grant CORS access to Vite ports.
 - GitHub Actions now uses a contents-read-only token and prevents checkout from
   persisting Git credentials. Regression tests exercise these code boundaries.
 
