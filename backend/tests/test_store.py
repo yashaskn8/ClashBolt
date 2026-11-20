@@ -495,3 +495,31 @@ def test_readiness_fails_closed_on_incompatible_database_revision(ledger, monkey
                     (POLICY_SCHEMA_VERSION,),
                 )
         assert client.get("/api/ready").status_code == 200
+
+
+def test_worker_heartbeat_and_operator_queue_snapshot(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    ledger.heartbeat("worker-recent")
+    ledger.heartbeat("worker-old")
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE worker_heartbeat SET last_seen = now() - interval '1 minute' "
+            "WHERE owner = 'worker-old'"
+        )
+    snapshot = ledger.operations()
+    assert snapshot["responsive_workers"] >= 1
+    worker = next(row for row in snapshot["workers"] if row["owner"] == "worker-old")
+    assert not worker["responsive"]
+    assert "verifications" in snapshot
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "monitor-secret")
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/operations").status_code == 403
+        response = client.get(
+            "/api/operations", headers={"X-Operator-Token": "monitor-secret"}
+        )
+        assert response.status_code == 200
+        assert response.json()["responsive_workers"] >= 1
