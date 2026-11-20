@@ -5,33 +5,33 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
-| B1 Durable Experiment Ledger | Atomic PostgreSQL admission, transitions and idempotency | Crash/failover and migration matrix |
+| B1 Durable Experiment Ledger | Atomic admission and events, idempotency, version-CAS drafts, serialized atomic schema migrations with downgrade guard | Multi-node failover, recovery and schema rollback drills |
 | B2 Fenced Worker Claims | Versioned worker claims, stale-write rejection, claim-generation target IDs | Database failover, crash-point matrix and target-effect readback |
 | B3 Disposable Target Isolation | Fresh memory or per-run database on separate native PostgreSQL cluster, per-run least-privilege role and orphan cleanup | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
-| B6 Minimal Witness Reproducer | JSON evidence, independent process replay, supported single-gate deletion trials on fresh fixtures, persisted reduction report | General-purpose trace reduction, external target bundle and independently verified cold-machine reproduction |
-| B7 Budgeted Admission and Recovery | Active quota, reserved gate budget, consumed-gate reconciliation, cancellation | CPU/model billing, target slots, fair admission benchmarks and backpressure |
-| A1 Invariant Workshop | Fixed rule proposal/review | Constrained agent-generated candidate DSL |
-| A2 Test Planner | Typed deterministic strategies plus optional validated local-model suggestions and safe fallback | Model-driven unfamiliar targets, total CPU+model cost and held-out effectiveness |
+| B6 Minimal Witness Reproducer | Evidence verifier, fresh-process replay, gate deletion on disposable fixtures, version-bound reduction, data-only ZIP bundle with tamper checks | General-purpose counterexample minimization and externally proven cold-machine application reproduction |
+| B7 Budgeted Admission and Recovery | PostgreSQL run quota, controlled gate accounting, cancellation and atomic daily local-model call/token reservations | Measured CPU/billed cost, target slots, fairness and stress/load tests |
+| A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
+| A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived scope-limited tokens, revocation, plan-bound scope, audit and bounded tool calls | Project-specific identity, lease/revocation fault matrix and multitenant limits |
-| A4 Evidence-Calibrated Abstention | UNKNOWN, deterministic abstention, persisted missing-receipt evidence gap | Model-specific evidence calibration and bounded diagnostic probes |
-| A5 Agent Decision Record | Typed plan, in-flight deadline, final receipt and expired-action recovery to UNKNOWN | Complete obligations, schema/version migration and crash-point tests |
-| A6 Counterexample Replanner | Deterministic finite follow-up | Persist feedback and test adaptive policy |
+| A4 Evidence-Calibrated Abstention | Structured persisted missing-receipt, withdrawn-oracle, incomplete and conflict gaps; UNKNOWN never becomes a finding | Evidence-calibrated confidence and independently reviewed bounded probes |
+| A5 Agent Decision Record | Typed plans, in-flight deadlines, verified receipts, persisted gaps/feedback, expired-action recovery and migration revisions | Full obligation/turn history, crash-point matrix and schema-versioned agent reasoning |
+| A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic training manifest, repeatable equal-gate-budget receipts, explicit promotion-ineligible status | Frozen *external held-out* suites, statistical validation, authenticated promotion and rollback |
-| P1 Experiment Composer | React typed form, approved oracle selection, operator-token-gated durable admission | Authenticated project ownership and durable drafts |
-| P2 Causal Run Timeline | Versioned events, SSE and snapshot reconciliation | Omission/reordering and cross-worker causal tests |
-| P3 Witness Review Desk | Evidence viewer/export, independent history checker, native fresh-database replay, bounded reduction and authoritative revocation | Cold-machine external reproduction and independent human review decisions |
+| P1 Experiment Composer | Typed React form, approved-oracle and operator-bound durable admission, version-CAS persisted draft recovery | Identity-backed projects and full browser end-to-end tests |
+| P2 Causal Run Timeline | Versioned PostgreSQL events, cursor pagination, Last-Event-ID resume, SSE hints and snapshot reconciliation | Browser fault injection for loss, reordering and long-running streams |
+| P3 Witness Review Desk | Evidence viewer, JSON and data-only ZIP exports, independent history validation, native replay, bounded reduction and revocation | Externally supported target reproduction and independent adjudication UI |
 | P4 Approval Console | React review/capability actions, optional separate reviewer token, optional HTTP-only private session | Identity-backed accounts, project RBAC, independent reviewers and cross-tenant tests |
-| P5 Live Run Operations | Operator cancellation, status/reconnect, persisted transitions, controlled gate cost and recovered native target records | CPU/model budgets, failure matrix and comprehensive load-tested UX |
-| S1 Semantic Conflict Frontier | Fixed inventory conflict edge, deterministic comparator | True model-guided search and held-out research evidence |
+| P5 Live Run Operations | Cancellation, SSE reconnect, paged events, saved drafts, gate costs, target recovery and local model budget inspection | CPU/provider cost, alerts, operator runbooks and load-tested multiuser UX |
+| S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
 ## Dependency-ordered next gates
 
-1. Isolated target PostgreSQL databases and restricted OS identities with enforced deny-egress; authenticated reviewer identity and general oracle versions.
-2. Persistence recovery, worker cancellation/lease fault injection, fair-budget accounting and independent witness reduction.
-3. Restricted agent adapter, obligation/receipt persistence, evaluation on frozen held-out targets and human policy promotion.
-4. Project authentication and role separation, audited operations, real end-to-end browser tests and native deployment hardening.
+1. Restrict target execution with tested OS identities, CPU/memory limits and deny-egress policy; validate untrusted target isolation before allowing any external applications.
+2. Replace local operator/reviewer secrets with authenticated accounts, project-scoped authorization and verified separation of duties.
+3. Complete agent obligations and evidence provenance, general approved-rule DSL, real model-guided search and frozen external held-out comparisons.
+4. Run multi-node failover, crash-point, database backup/restore, browser fault-injection, independent reproduction and sustained load/security reviews before calling the system production-ready.
 
 ## Claim boundaries
 

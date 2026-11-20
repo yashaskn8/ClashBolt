@@ -205,3 +205,54 @@ an invariant or mint capabilities.
 The local model service is **not configured or quality-tested in CI**. Its
 output is labeled unpromoted; benchmark superiority still requires frozen
 external held-out targets and total-cost paired trials.
+
+
+## 10. Versioned migration and saved experiment drafts
+
+`python -m clashbolt.policy` applies the control ledger and policy schema in
+one serialized PostgreSQL transaction, recording their schema revisions. A
+database newer than the installed application's revision is rejected. Before
+upgrading an existing installation, make a verified PostgreSQL backup; this
+repository does not yet ship automatic rollback or disaster-recovery automation.
+
+The React composer can save and reopen the selected implementation, schedule
+and execution backend. Optimistic version checks reject concurrent stale
+updates. Saved drafts never embed operator tokens, reviewer credentials, live
+capabilities or rule-approval authority.
+
+## 11. Model call budgets and evidence-ranked search
+
+Optional local model calls reserve up to 256 generated tokens **before** the
+HTTP request, with a default daily limit of 20 calls/5,120 reserved tokens.
+The budget uses an atomic PostgreSQL row, not process-local counters. Observed
+model usage is recorded when the adapter returns a valid receipt; timeouts or
+unknown usage retain the full reservation conservatively. The operator can
+inspect current reservations with `GET /api/agent/model-budget` using the
+operator header.
+
+The **semantic frontier** ranks only the shipped shared-inventory overlap/serial
+schedules from independently verified persisted plan receipts, using a
+deterministic exploration penalty. Selecting a frontier proposal does not
+execute a tool or grant capability. This is not an independently validated
+semantic AI improvement.
+
+The constrained invariant workshop records a source-bound fixed-rule
+candidate and three deterministic PASS/FAIL/UNKNOWN test vectors. Reviewer
+approval is still needed. Freeform user/model predicates or Python evaluation
+are deliberately unsupported.
+
+## 12. Portable evidence ZIP packages
+
+For currently certified durable witnesses, choose **Export verifier bundle
+(ZIP)**. The archive contains only `witness.json`, `manifest.json` and
+`README.txt`. It has no executable target or secrets. After installing the
+same ClashBolt Python package in another clean environment, verify using:
+
+```powershell
+python -m clashbolt.witness_bundle verify .\clashbolt-witness-RUN_ID.zip
+```
+
+The verifier checks archive bounds, member names, manifest bindings, evidence
+history and the fresh synthetic replay. Native database witnesses require the
+matching native test-cluster environment. A reproduced synthetic fixture is not
+proof of an ungated or independently deployed application vulnerability.

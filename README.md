@@ -6,11 +6,11 @@ ClashBolt is a Python/FastAPI + React/TypeScript research lab for **application-
 
 ## Implemented foundation
 
-- **Python/FastAPI:** typed scratch experiments, PostgreSQL atomic admission, idempotency, versioned transitions, generation-fenced worker claims, bounded step usage, cancellation and SSE. Durable commands require the local operator token.
+- **Python/FastAPI:** typed synthetic experiments, PostgreSQL atomic admission/idempotency, serialized versioned migrations, paged transitions with SSE replay, generation-fenced worker claims, bounded step usage and cancellation. Durable commands require the local operator token.
 - **Worker and evidence:** fixed subprocess with a minimized environment; fresh memory fixture or isolated native PostgreSQL target database per run, bounded gates, independent reconstruction of reads/commits, version-bound oracle, and fresh-fixture replay. A generation-fenced target ledger supports cleanup after worker crashes. Revocation withdraws historic certifications without deleting evidence.
-- **Witness reducer:** bounded application-gate deletion trials on clean fixtures, version-fenced persisted reduction reports, and a React review action. It does not claim arbitrary program minimization.
-- **Agent boundary:** versioned demo-rule proposals, optional separate reviewer credential, revocable typed tool capabilities and audit, persisted plan receipts and timeouts-to-UNKNOWN; optional local-model schedule suggestions with deterministic fallback, and deterministic semantic/random/coverage comparison.
-- **React/TypeScript:** experiment composer with target isolation selection, witness review and gate minimization, durable run monitor, cancellation, optional private operator unlock, and approval/capability console.
+- **Witness reducer:** bounded gate deletion on fresh fixtures, version-fenced PostgreSQL reports, JSON and data-only ZIP evidence bundles with manifest hashes and separate-process verifier. No arbitrary program minimization or real-world vulnerability claims.
+- **Agent boundary:** strict fixed-template candidate DSL and test vectors, optional separate reviewer credential, revocable typed tool capabilities and audit; persisted evidence gaps and bounded idempotent feedback, receipt-ranked synthetic conflict frontier, optional local-model planning with atomic daily token reservations and deterministic fallback.
+- **React/TypeScript:** typed experiment composer with version-CAS draft recovery and native isolation selection, witness export/minimization, paginated SSE run timeline, cancellation, optional private unlock and an approval/capability/frontier console.
 - **Evaluation:** repeatable synthetic strategy comparison with a hashed known-fixture manifest, equal gate budgets and per-trial receipts. It explicitly refuses AI policy promotion without held-out evidence.
 - **CI:** native PostgreSQL integration tests, Ruff, TypeScript and Vite build; no Docker.
 
@@ -52,6 +52,6 @@ cd frontend && npm run build
 
 Set `CLASHBOLT_TEST_DATABASE_URL` to a **disposable test-only PostgreSQL database** to run integration tests; test fixtures truncate their own tables. GitHub Actions prepares its own native PostgreSQL instance.
 
-Export a witness from the UI, then run `python -m clashbolt.witness path/to/witness.json`. The verifier independently reconstructs reads, commits, state transitions and the oracle verdict, rejects inconsistent evidence even if its hash was recomputed, and replays controlled checkpoints in a fresh process. This does **not** establish uncontrolled reproduction.
+Export a JSON witness from the UI and run `python -m clashbolt.witness path/to/witness.json`, or export a ZIP data-only bundle and run `python -m clashbolt.witness_bundle verify path/to/witness.zip`. The verifier independently reconstructs reads, commits, state transitions and the oracle verdict, rejects inconsistent evidence even if its hash was recomputed, and replays controlled checkpoints in a fresh process. This does **not** establish uncontrolled reproduction.
 
 **Security:** In standard local mode, durable mutations require `CLASHBOLT_OPERATOR_TOKEN` and reads are loopback-only. Optional `private` mode uses a time-limited HTTP-only session for reads and the token for writes. The API rejects direct non-loopback clients but can still be exposed unsafely through a reverse proxy. Project identity, multitenant RBAC, OS-level target isolation and external target support are not yet implemented. Bind the API to `127.0.0.1` only. This token is not production identity. The deterministic planner is **not** a validated LLM agent. No Docker, Temporal, Redis, Kafka or Kubernetes. Keep changes small, explicit and tested; commit directly on `main` with no branches or PRs.
