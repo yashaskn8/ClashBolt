@@ -39,6 +39,7 @@ from clashbolt.policy import POLICY_SCHEMA_VERSION
 from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import BASE_SCHEMA_VERSION, Ledger
+from clashbolt.verification_jobs import VerificationJobs
 from clashbolt.witness import verify
 from clashbolt.witness_bundle import create_bundle
 
@@ -81,6 +82,11 @@ class AccountLogin(BaseModel):
 class DraftRequest(ExperimentRequest):
     expected_version: int = Field(ge=0, le=2**63 - 2)
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
+
+
+class VerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["REPLAY", "REDUCE"]
 
 
 class RunRequest(ExperimentRequest):
@@ -534,6 +540,24 @@ def create_app() -> FastAPI:
         if result["witness"] is None:
             raise HTTPException(409, "No complete witness exists yet")
         return result["witness"]
+
+    @app.post("/api/runs/{run_id}/verification-jobs", status_code=202)
+    def enqueue_verification(
+        run_id: UUID, body: VerificationRequest, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token, http_request)
+        try:
+            return VerificationJobs(require_ledger().dsn).submit(run_id, body.kind)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.get("/api/verification-jobs/{job_id}")
+    def read_verification(job_id: UUID) -> dict:
+        record = VerificationJobs(require_ledger().dsn).get(job_id)
+        if record is None:
+            raise HTTPException(404, "Verification job not found")
+        return record
 
     @app.post("/api/runs/{run_id}/reduce")
     async def minimize_witness(

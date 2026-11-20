@@ -13,8 +13,11 @@ import psycopg
 
 from clashbolt.experiment import ORACLE_HASH
 from clashbolt.policy import Policy
+from clashbolt.reducer import reduce_witness
 from clashbolt.store import Ledger
 from clashbolt.target_db import disposable_target, drop_abandoned_target
+from clashbolt.verification_jobs import VerificationJobs
+from clashbolt.witness import verify
 
 
 async def isolated_synthetic_run(
@@ -117,6 +120,37 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
     return accepted
 
 
+async def process_verification_one(ledger: Ledger, owner: str) -> bool:
+    """A separate worker executes verification; the API never needs admin DSNs."""
+    queue = VerificationJobs(ledger.dsn)
+    claim = queue.claim(owner)
+    if claim is None:
+        return False
+    original = ledger.get(UUID(claim["run_id"]))
+    report = {"status": "UNCONFIRMED", "reason": "Run is not currently certified"}
+    if (
+        original and original["status"] == "COMPLETE"
+        and original["version"] == claim["run_version"]
+        and original["witness"] is not None
+    ):
+        try:
+            if claim["kind"] == "REPLAY":
+                report = await verify(original["witness"])
+            else:
+                report = await asyncio.to_thread(
+                    reduce_witness,
+                    original["witness"],
+                    os.getenv("CLASHBOLT_TARGET_ADMIN_URL"),
+                    ledger.dsn,
+                )
+        except (TimeoutError, RuntimeError, OSError, ValueError, psycopg.Error):
+            report = {"status": "UNCONFIRMED", "reason": "Verification worker failed"}
+    queue.finish(
+        UUID(claim["job_id"]), owner, claim["lease_generation"], report
+    )
+    return True
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description="ClashBolt local PostgreSQL worker")
     parser.add_argument("--once", action="store_true", help="process at most one queued run")
@@ -132,9 +166,12 @@ async def main() -> None:
     while True:
         ledger.reconcile_stalled_plans()
         accepted = await process_one(ledger, worker_id)
+        checked = False
+        if not args.once or not accepted:
+            checked = await process_verification_one(ledger, worker_id)
         if args.once:
             break
-        if not accepted:
+        if not accepted and not checked:
             await asyncio.sleep(args.interval)
 
 
