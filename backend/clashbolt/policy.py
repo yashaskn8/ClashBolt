@@ -21,7 +21,7 @@ from clashbolt.experiment import (
 )
 from clashbolt.frontier import next_frontier_plan, rank_frontier
 from clashbolt.oracle_workshop import RuleCandidate, evaluate_candidate, valid_evidence
-from clashbolt.store import Ledger, SCHEMA_LOCK_ID, _record_schema_revision
+from clashbolt.store import SCHEMA_LOCK_ID, Ledger, _record_schema_revision
 
 _POLICY_SCHEMA = (
     """
