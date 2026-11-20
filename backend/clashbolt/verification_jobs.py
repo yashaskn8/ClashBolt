@@ -154,10 +154,17 @@ class VerificationJobs:
                         and isinstance(report.get("minimal_gate_count"), int)
                         and 1 <= report["minimal_gate_count"] <= 4
                     )
-            final = report if current else {
-                "status": "UNCONFIRMED",
-                "reason": "Certified run changed while verification was in flight",
-            }
+            if current and credible:
+                final = report
+            else:
+                final = {
+                    "status": "UNCONFIRMED",
+                    "reason": (
+                        "Verification report did not match approved evidence"
+                        if current
+                        else "Certified run changed while verification was in flight"
+                    ),
+                }
             conn.execute(
                 """
                 UPDATE verification_job

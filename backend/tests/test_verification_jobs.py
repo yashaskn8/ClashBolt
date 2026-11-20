@@ -127,3 +127,5 @@ def test_forged_verification_status_without_evidence_does_not_certify(completed_
     )
     current = queue.get(UUID(claim["job_id"]))
     assert current["status"] == "UNKNOWN"
+    assert current["result"]["status"] == "UNCONFIRMED"
+    assert "evidence" in current["result"]["reason"]
