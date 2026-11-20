@@ -568,6 +568,8 @@ def create_app() -> FastAPI:
         current = require_ledger().get(run_id)
         if not current or current["status"] != "COMPLETE" or current["verdict"] != "FAIL":
             raise HTTPException(409, "Only current approved failures can be reduced")
+        if current["execution_backend"] == "native-postgresql":
+            raise HTTPException(409, "Native reductions require a worker verification job")
         cached = require_ledger().get_reduction(run_id)
         if cached:
             return cached
@@ -602,6 +604,8 @@ def create_app() -> FastAPI:
         original = require_ledger().get(run_id)
         if original is None:
             raise HTTPException(404, "Run not found")
+        if original["execution_backend"] == "native-postgresql":
+            raise HTTPException(409, "Native replay requires a worker verification job")
         witness = original["witness"]
         if witness is None:
             raise HTTPException(409, "Run has no replayable witness")

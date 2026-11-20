@@ -134,16 +134,11 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
         targets = ledger.target_instances(UUID(run_id))
         assert len(targets) == 1
         assert targets[0]["status"] == "CLEANED"
+        # Native verification cannot run directly inside the API process.
         replay = client.post(f"/api/runs/{run_id}/replay", headers=headers)
-        assert replay.status_code == 200
-        assert replay.json()["replay_status"] == "REPRODUCED"
+        assert replay.status_code == 409
         reduced = client.post(f"/api/runs/{run_id}/reduce", headers=headers)
-        assert reduced.status_code == 200, reduced.text
-        assert reduced.json()["status"] == "MINIMAL"
-        assert reduced.json()["minimal_gate_count"] == 4
-        stored = client.get(f"/api/runs/{run_id}/reduction")
-        assert stored.status_code == 200
-        assert stored.json()["report_sha256"] == reduced.json()["report_sha256"]
+        assert reduced.status_code == 409
 
         # API has only a safe cluster locator; admin secret stays with worker.
         monkeypatch.setenv(
