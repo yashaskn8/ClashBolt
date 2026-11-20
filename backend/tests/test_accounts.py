@@ -12,7 +12,7 @@ def accounts():
     store = AccountStore(dsn)
     store.migrate()
     with store.connect() as conn:
-        conn.execute("TRUNCATE local_account")
+        conn.execute("TRUNCATE local_account CASCADE")
     return store
 
 
