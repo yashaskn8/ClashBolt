@@ -65,6 +65,9 @@ jobs:
           sudo service postgresql start
           sudo -u postgres psql -c "CREATE USER clashbolt WITH PASSWORD 'clashbolt'"
           sudo -u postgres psql -c "CREATE DATABASE clashbolt_browser OWNER clashbolt"
+          VERSION="$(ls /usr/lib/postgresql | sort -V | tail -1)"
+          sudo pg_createcluster "$VERSION" clashbolt_browser_target -p 5433 --start
+          sudo -u postgres psql -p 5433 -c "ALTER USER postgres PASSWORD 'ci-target-only'"
           export CLASHBOLT_DATABASE_URL='postgresql://clashbolt:clashbolt@127.0.0.1:5432/clashbolt_browser'
           export CLASHBOLT_ACCESS_MODE=accounts
           export CLASHBOLT_SESSION_SECRET='ci-only-signed-session-secret-32-chars-123'
@@ -83,9 +86,12 @@ jobs:
           echo "CLASHBOLT_DATABASE_URL=$CLASHBOLT_DATABASE_URL" >> "$GITHUB_ENV"
           echo "CLASHBOLT_ACCESS_MODE=$CLASHBOLT_ACCESS_MODE" >> "$GITHUB_ENV"
           echo "CLASHBOLT_SESSION_SECRET=$CLASHBOLT_SESSION_SECRET" >> "$GITHUB_ENV"
+          echo "CLASHBOLT_TARGET_CLUSTER_URL=postgresql://127.0.0.1:5433/postgres" >> "$GITHUB_ENV"
       - name: Start separate native worker
         run: |
-          nohup python -m clashbolt.worker --interval 0.1             > /tmp/clashbolt-browser-worker.log 2>&1 &
+          CLASHBOLT_TARGET_ADMIN_URL='postgresql://postgres:ci-target-only@127.0.0.1:5433/postgres' \
+          nohup python -m clashbolt.worker --interval 0.1 \
+            > /tmp/clashbolt-browser-worker.log 2>&1 &
       - name: Verify named roles and durable execution in Chromium
         working-directory: frontend
         run: CLASHBOLT_BROWSER_MODE=accounts npm run test:e2e
