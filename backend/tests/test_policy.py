@@ -213,3 +213,74 @@ def test_proposal_includes_validated_candidate_evidence(policy):
         )
     with pytest.raises(ValueError, match="Stale"):
         policy.approve(UUID(created["id"]), ORACLE_HASH, "independent-reviewer")
+
+
+
+def test_persisted_feedback_replans_only_once_and_without_tool_authority(policy):
+    import asyncio
+    from uuid import UUID
+
+    from clashbolt.experiment import execute
+
+    proposal = policy.propose("feedback-source")
+    proposal_id = UUID(proposal["id"])
+    policy.approve(proposal_id, ORACLE_HASH, "reviewer")
+    from clashbolt.planner import choose_plan
+    from psycopg.types.json import Jsonb
+
+    prior = policy.record_plan(
+        proposal_id, choose_plan(strategy="random", variant="racy", seed=0)
+    )
+    prior_id = UUID(prior["id"])
+    assert prior["plan"]["schedule"] == "serial" or prior["plan"]["schedule"] == "overlap"
+    # Use explicit serial baseline to create a known, complete PASS.
+    serial_plan = dict(prior["plan"], schedule="serial")
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE agent_plan SET plan = %s WHERE id = %s",
+            (Jsonb(serial_plan), prior_id),
+        )
+    grant = policy.issue(
+        proposal_id, "racy", "serial", plan_id=prior_id
+    )
+    assert policy.authorize(grant["token"], "racy", "serial", prior_id)
+    witness = asyncio.run(execute("racy", "serial"))
+    assert policy.record_outcome(prior_id, witness)
+    first = policy.record_feedback(prior_id, 4)
+    again = policy.record_feedback(prior_id, 4)
+    assert first == again
+    assert first["decision"]["action"] == "REPLAN"
+    assert first["decision"]["automatically_authorized"] is False
+    assert first["next_plan_id"] is not None
+    next_plan = policy.get_plan(UUID(first["next_plan_id"]))
+    assert next_plan["state"] == "PROPOSED"
+    assert next_plan["plan"]["schedule"] == "overlap"
+    assert policy.get_feedback(prior_id) == first
+    with pytest.raises(ValueError, match="budget changed"):
+        policy.record_feedback(prior_id, 8)
+
+
+def test_abstention_after_expired_receipt_persists_gap(policy):
+    from uuid import UUID
+
+    proposal = policy.propose("gap-lab")
+    proposal_id = UUID(proposal["id"])
+    policy.approve(proposal_id, ORACLE_HASH, "reviewer")
+    plan = policy.record_plan(
+        proposal_id, choose_plan(strategy="semantic", variant="racy")
+    )
+    plan_id = UUID(plan["id"])
+    capability = policy.issue(proposal_id, "racy", "overlap", plan_id=plan_id)
+    assert policy.authorize(capability["token"], "racy", "overlap", plan_id)
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE agent_plan SET deadline_at = now() - interval '1 second' "
+            "WHERE id = %s", (plan_id,),
+        )
+    assert policy.reconcile_stalled_plans() == 1
+    gaps = policy.evidence_gaps(plan_id)
+    assert len(gaps) == 1
+    assert gaps[0]["classification"] == "MISSING_RECEIPT"
+    feedback = policy.record_feedback(plan_id, 8)
+    assert feedback["decision"]["action"] == "ABSTAIN"
+    assert feedback["next_plan_id"] is None

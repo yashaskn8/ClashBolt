@@ -172,3 +172,29 @@ def test_candidate_dsl_rejects_untrusted_predicate(policy_client):
     assert accepted.status_code == 201
     assert accepted.json()["evidence"]["verified"]
     assert accepted.json()["evidence"]["scope"] == "SHIPPED_SYNTHETIC_FIXTURE_ONLY"
+
+
+
+def test_feedback_route_requires_operator_and_preserves_missing_evidence(policy_client):
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "route-planner"}
+    ).json()
+    header = {"X-Operator-Token": "ci-local-only-secret"}
+    policy_client.post(
+        f"/api/oracle/proposals/{proposal['id']}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "reviewer"},
+        headers=header,
+    )
+    created = policy_client.post(
+        "/api/agent/plans", json={
+            "proposal_id": proposal["id"], "strategy": "semantic",
+            "variant": "racy", "seed": 0,
+        },
+    ).json()
+    plan_id = created["id"]
+    url = f"/api/agent/plans/{plan_id}/feedback"
+    assert policy_client.post(url, json={"remaining_budget": 8}).status_code == 403
+    assert policy_client.post(
+        url, json={"remaining_budget": 8}, headers=header,
+    ).status_code == 409
+    assert policy_client.get(f"/api/agent/plans/{plan_id}/gaps").json()["gaps"] == []

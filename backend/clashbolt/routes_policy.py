@@ -56,6 +56,10 @@ class LocalModelPlanInput(StrictModel):
     variant: Literal["racy", "locked"]
 
 
+class FeedbackInput(StrictModel):
+    remaining_budget: int = Field(ge=0, le=32)
+
+
 class EvaluationInput(StrictModel):
     trials: int = Field(default=8, ge=1, le=20)
 
@@ -201,6 +205,28 @@ def policy_router(dsn: str | None) -> APIRouter:
         if not result:
             raise HTTPException(404, "Plan not found")
         return result
+
+    @router.get("/agent/plans/{plan_id}/gaps")
+    def read_evidence_gaps(plan_id: UUID):
+        return {"gaps": require_policy().evidence_gaps(plan_id)}
+
+    @router.get("/agent/plans/{plan_id}/feedback")
+    def read_feedback(plan_id: UUID):
+        record = require_policy().get_feedback(plan_id)
+        if not record:
+            raise HTTPException(404, "No completed feedback for this plan")
+        return record
+
+    @router.post("/agent/plans/{plan_id}/feedback", status_code=201)
+    def record_feedback(
+        plan_id: UUID, request: FeedbackInput,
+        x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token)
+        try:
+            return require_policy().record_feedback(plan_id, request.remaining_budget)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
 
     @router.post("/agent/plans/reconcile")
     def reconcile_plans(x_operator_token: str | None = Header(default=None)):

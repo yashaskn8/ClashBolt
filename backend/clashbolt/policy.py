@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
+from clashbolt.agent_feedback import decide_feedback, gap_class
 from clashbolt.experiment import (
     ORACLE_HASH,
     ORACLE_RULE,
@@ -81,6 +82,31 @@ _POLICY_SCHEMA = (
     "REFERENCES agent_plan(id)",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
+    """
+    CREATE TABLE IF NOT EXISTS agent_evidence_gap (
+        plan_id UUID PRIMARY KEY REFERENCES agent_plan(id),
+        classification TEXT NOT NULL CHECK (
+            classification IN (
+                'MISSING_RECEIPT', 'WITHDRAWN_ORACLE',
+                'INCOMPLETE_OBSERVATION', 'CONFLICTING_EVIDENCE'
+            )
+        ),
+        reason TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS search_feedback (
+        plan_id UUID PRIMARY KEY REFERENCES agent_plan(id),
+        oracle_id UUID NOT NULL REFERENCES oracle_proposal(id),
+        evidence_sha256 TEXT,
+        policy_version TEXT NOT NULL,
+        remaining_budget INTEGER NOT NULL CHECK (remaining_budget BETWEEN 0 AND 32),
+        decision JSONB NOT NULL,
+        next_plan_id UUID REFERENCES agent_plan(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 )
 
 
@@ -198,6 +224,32 @@ class Policy(Ledger):
                         "oracle approval revoked; prior verdict withdrawn",
                     ),
                 )
+            completed_plans = conn.execute(
+                """
+                SELECT id, result FROM agent_plan
+                WHERE proposal_id = %s AND state = 'COMPLETE'
+                ORDER BY id FOR UPDATE
+                """,
+                (proposal_id,),
+            ).fetchall()
+            for plan in completed_plans:
+                receipt = plan["result"] or {}
+                conn.execute(
+                    """
+                    UPDATE agent_plan SET state = 'UNKNOWN', result = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        Jsonb({
+                            "verdict": "UNKNOWN",
+                            "evidence_sha256": None,
+                            "historic_evidence_sha256": receipt.get("evidence_sha256"),
+                            "evidence_gap": "Oracle approval revoked",
+                        }),
+                        plan["id"],
+                    ),
+                )
+                self._record_gap(conn, plan["id"], "Oracle approval revoked")
             return True
 
     def issue(
@@ -383,6 +435,119 @@ class Policy(Ledger):
                 "proposal_id": str(row["proposal_id"]),
             }
 
+    @staticmethod
+    def _record_gap(conn, plan_id: UUID, reason: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO agent_evidence_gap(plan_id, classification, reason)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (plan_id) DO NOTHING
+            """,
+            (plan_id, gap_class(reason), reason[:400]),
+        )
+
+    def evidence_gaps(self, plan_id: UUID) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT classification, reason, created_at
+                FROM agent_evidence_gap WHERE plan_id = %s
+                """,
+                (plan_id,),
+            ).fetchall()
+            return [
+                {**row, "created_at": row["created_at"].isoformat()}
+                for row in rows
+            ]
+
+    def record_feedback(self, plan_id: UUID, remaining_budget: int) -> dict:
+        """One idempotent proposal after a terminal observation, no tool authority."""
+        if not 0 <= remaining_budget <= 32:
+            raise ValueError("Remaining gate budget must be 0-32")
+        with self.connect() as conn:
+            binding = conn.execute(
+                "SELECT proposal_id FROM agent_plan WHERE id = %s",
+                (plan_id,),
+            ).fetchone()
+            if not binding:
+                raise ValueError("Plan not found")
+            rule = conn.execute(
+                "SELECT state, rule_hash FROM oracle_proposal WHERE id = %s FOR SHARE",
+                (binding["proposal_id"],),
+            ).fetchone()
+            plan = conn.execute(
+                "SELECT * FROM agent_plan WHERE id = %s FOR UPDATE", (plan_id,)
+            ).fetchone()
+            if not plan or plan["state"] not in ("COMPLETE", "UNKNOWN"):
+                raise ValueError("Only terminal plans can receive feedback")
+            existing = conn.execute(
+                "SELECT * FROM search_feedback WHERE plan_id = %s", (plan_id,)
+            ).fetchone()
+            if existing:
+                if existing["remaining_budget"] != remaining_budget:
+                    raise ValueError("Feedback budget changed after first observation")
+                return self._public_feedback(existing)
+
+            result = plan["result"] or {"verdict": "UNKNOWN"}
+            decision = decide_feedback(plan["plan"], result, remaining_budget)
+            if not rule or rule["state"] != "APPROVED" or rule["rule_hash"] != ORACLE_HASH:
+                decision = {
+                    "action": "ABSTAIN",
+                    "reason": "Oracle approval is no longer current",
+                    "policy_version": "fixed-inventory-feedback-v1",
+                    "budget_remaining": remaining_budget,
+                    "next_step_cost": 0,
+                    "automatically_authorized": False,
+                }
+            next_plan_id = None
+            if decision["action"] == "REPLAN":
+                next_plan_id = uuid4()
+                conn.execute(
+                    """
+                    INSERT INTO agent_plan(id, proposal_id, plan, strategy)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        next_plan_id, plan["proposal_id"], Jsonb(decision["plan"]),
+                        decision["plan"]["strategy"],
+                    ),
+                )
+            row = conn.execute(
+                """
+                INSERT INTO search_feedback(
+                    plan_id, oracle_id, evidence_sha256, policy_version,
+                    remaining_budget, decision, next_plan_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (
+                    plan_id, plan["proposal_id"], result.get("evidence_sha256"),
+                    decision["policy_version"], remaining_budget,
+                    Jsonb(decision), next_plan_id,
+                ),
+            ).fetchone()
+            return self._public_feedback(row)
+
+    @staticmethod
+    def _public_feedback(row: dict) -> dict:
+        return {
+            "plan_id": str(row["plan_id"]),
+            "oracle_id": str(row["oracle_id"]),
+            "evidence_sha256": row["evidence_sha256"],
+            "policy_version": row["policy_version"],
+            "remaining_budget": row["remaining_budget"],
+            "decision": row["decision"],
+            "next_plan_id": str(row["next_plan_id"]) if row["next_plan_id"] else None,
+        }
+
+    def get_feedback(self, plan_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM search_feedback WHERE plan_id = %s", (plan_id,)
+            ).fetchone()
+            return self._public_feedback(row) if row else None
+
     def record_outcome(self, plan_id: UUID, witness: dict) -> bool:
         """Persist one receipt, but never certify incomplete or revoked evidence."""
         from clashbolt.witness import validate_contract
@@ -433,6 +598,8 @@ class Policy(Ledger):
                 """,
                 (status, Jsonb(receipt), plan_id),
             ).fetchone()
+            if updated and invalid:
+                self._record_gap(conn, plan_id, invalid)
             return updated is not None
 
     def reconcile_stalled_plans(self) -> int:
@@ -459,6 +626,9 @@ class Policy(Ledger):
                         }),
                         item["id"],
                     ),
+                )
+                self._record_gap(
+                    conn, item["id"], "Tool receipt missing after deadline"
                 )
             return len(expired)
 
