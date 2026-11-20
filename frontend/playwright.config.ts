@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  testMatch: process.env.CLASHBOLT_BROWSER_MODE === 'accounts'
+    ? '**/*.accounts.spec.ts' : '**/*.spec.ts',
+  testIgnore: process.env.CLASHBOLT_BROWSER_MODE === 'accounts'
+    ? [] : ['**/*.accounts.spec.ts'],
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   use: {

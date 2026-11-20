@@ -58,3 +58,34 @@ jobs:
         working-directory: frontend
       - run: npm run test:e2e
         working-directory: frontend
+      - name: Initialize native PostgreSQL for role-based browser coverage
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql
+          sudo service postgresql start
+          sudo -u postgres psql -c "CREATE USER clashbolt WITH PASSWORD 'clashbolt'"
+          sudo -u postgres psql -c "CREATE DATABASE clashbolt_browser OWNER clashbolt"
+          export CLASHBOLT_DATABASE_URL='postgresql://clashbolt:clashbolt@127.0.0.1:5432/clashbolt_browser'
+          export CLASHBOLT_ACCESS_MODE=accounts
+          export CLASHBOLT_SESSION_SECRET='ci-only-signed-session-secret-32-chars-123'
+          python -m clashbolt.accounts migrate
+          python - <<'PY'
+          import os
+          from clashbolt.accounts import AccountStore
+          store = AccountStore(os.environ['CLASHBOLT_DATABASE_URL'])
+          for username, role in (
+              ('browser.operator', 'operator'),
+              ('browser.reviewer', 'reviewer'),
+              ('browser.viewer', 'viewer'),
+          ):
+              store.create_account(username, role, 'browser-local-password-000')
+          PY
+          echo "CLASHBOLT_DATABASE_URL=$CLASHBOLT_DATABASE_URL" >> "$GITHUB_ENV"
+          echo "CLASHBOLT_ACCESS_MODE=$CLASHBOLT_ACCESS_MODE" >> "$GITHUB_ENV"
+          echo "CLASHBOLT_SESSION_SECRET=$CLASHBOLT_SESSION_SECRET" >> "$GITHUB_ENV"
+      - name: Start separate native worker
+        run: |
+          nohup python -m clashbolt.worker --interval 0.1             > /tmp/clashbolt-browser-worker.log 2>&1 &
+      - name: Verify named roles and durable execution in Chromium
+        working-directory: frontend
+        run: CLASHBOLT_BROWSER_MODE=accounts npm run test:e2e
