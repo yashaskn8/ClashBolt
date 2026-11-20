@@ -59,6 +59,20 @@ _SCHEMA = (
     ON experiment_run (status, created_at)
     """,
     """
+    CREATE TABLE IF NOT EXISTS target_instance (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES experiment_run(id),
+        lease_generation BIGINT NOT NULL,
+        owner TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('PROVISIONING', 'ACTIVE', 'CLEANING', 'CLEANED', 'UNKNOWN')
+        ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (run_id, lease_generation)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS run_transition (
         run_id UUID NOT NULL REFERENCES experiment_run(id),
         version BIGINT NOT NULL,
@@ -306,6 +320,94 @@ class Ledger:
             ).fetchone()
             _event(conn, claimed, "worker claimed run")
             return _public(claimed)
+
+    def track_target(
+        self, run_id: UUID, generation: int, owner: str, instance_id: UUID
+    ) -> bool:
+        """Record the exact claim instance before touching the target cluster."""
+        with self.connect() as conn:
+            run = conn.execute(
+                "SELECT status, lease_owner, lease_generation, lease_until "
+                "FROM experiment_run WHERE id = %s FOR SHARE",
+                (run_id,),
+            ).fetchone()
+            if (
+                not run
+                or run["status"] != "RUNNING"
+                or run["lease_owner"] != owner
+                or run["lease_generation"] != generation
+                or run["lease_until"]
+                    <= conn.execute("SELECT now() AS now").fetchone()["now"]
+            ):
+                return False
+            conn.execute(
+                """
+                INSERT INTO target_instance(
+                    id, run_id, lease_generation, owner, status
+                ) VALUES (%s, %s, %s, %s, 'PROVISIONING')
+                """,
+                (instance_id, run_id, generation, owner),
+            )
+            return True
+
+    def mark_target(self, instance_id: UUID, status: str) -> None:
+        """Target records are facts; do not infer run success from cleanup."""
+        if status not in ("ACTIVE", "CLEANED", "UNKNOWN"):
+            raise ValueError("Invalid target lifecycle status")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE target_instance SET status = %s, updated_at = now()
+                WHERE id = %s AND status != 'CLEANED'
+                """,
+                (status, instance_id),
+            )
+
+    def claim_abandoned_targets(self, limit: int = 8) -> list[UUID]:
+        """Lease-fenced cleanup work; target IDs are derived, never supplied by API."""
+        if not 1 <= limit <= 50:
+            raise ValueError("Invalid cleanup batch size")
+        with self.connect() as conn:
+            targets = conn.execute(
+                """
+                SELECT t.id FROM target_instance t
+                JOIN experiment_run r ON r.id = t.run_id
+                WHERE t.status IN ('PROVISIONING', 'ACTIVE', 'UNKNOWN', 'CLEANING')
+                AND t.updated_at < now() - interval '5 seconds'
+                AND (
+                    r.lease_generation != t.lease_generation
+                    OR r.status != 'RUNNING'
+                    OR r.lease_until < now()
+                )
+                ORDER BY t.created_at, t.id
+                LIMIT %s FOR UPDATE OF t SKIP LOCKED
+                """,
+                (limit,),
+            ).fetchall()
+            for row in targets:
+                conn.execute(
+                    """
+                    UPDATE target_instance SET status = 'CLEANING',
+                        updated_at = now() WHERE id = %s
+                    """,
+                    (row["id"],),
+                )
+            return [item["id"] for item in targets]
+
+    def target_instances(self, run_id: UUID) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, lease_generation, status
+                FROM target_instance WHERE run_id = %s
+                ORDER BY lease_generation
+                """,
+                (run_id,),
+            ).fetchall()
+            return [
+                {**row, "id": str(row["id"])}
+                for row in rows
+            ]
 
     def finish(self, run_id: UUID, owner: str, generation: int, witness: dict) -> bool:
         """A stale worker cannot publish a result after its lease is lost."""

@@ -51,6 +51,25 @@ class TargetLease:
     url: str
 
 
+
+def drop_abandoned_target(target_admin_dsn: str, control_dsn: str, instance_id: UUID) -> None:
+    """Idempotently discard only an instance address derived from a UUID."""
+    validate_target_cluster(target_admin_dsn, control_dsn)
+    dbname = f"cb_target_{instance_id.hex}"
+    role = f"cb_runner_{instance_id.hex}"
+    with psycopg.connect(
+        target_admin_dsn, autocommit=True, connect_timeout=5
+    ) as connection:
+        connection.execute(
+            sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
+                sql.Identifier(dbname)
+            )
+        )
+        connection.execute(
+            sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role))
+        )
+
+
 @contextmanager
 def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
     """One run, one database, one least-privilege role, and forced teardown.
