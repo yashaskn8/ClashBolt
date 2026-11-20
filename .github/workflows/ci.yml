@@ -84,6 +84,7 @@ jobs:
           store = AccountStore(os.environ['CLASHBOLT_DATABASE_URL'])
           for username, role in (
               ('browser.operator', 'operator'),
+              ('browser.second', 'operator'),
               ('browser.reviewer', 'reviewer'),
               ('browser.viewer', 'viewer'),
           ):
