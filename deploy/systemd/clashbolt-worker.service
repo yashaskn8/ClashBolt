@@ -1,7 +1,7 @@
 [Unit]
-Description=ClashBolt fixed-fixture worker (trusted synthetic lab)
-After=network-online.target postgresql.service
-Wants=network-online.target
+Description=ClashBolt generation-fenced synthetic worker
+After=network.target postgresql.service
+Wants=postgresql.service
 
 [Service]
 Type=simple
@@ -9,31 +9,29 @@ User=clashbolt-worker
 Group=clashbolt-worker
 WorkingDirectory=/opt/clashbolt
 EnvironmentFile=/etc/clashbolt/worker.env
-ExecStart=/opt/clashbolt/.venv/bin/python -m clashbolt.worker --interval 0.5
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/clashbolt/.venv/bin/python -m clashbolt.worker
 Restart=on-failure
-RestartSec=3
+RestartSec=5
+TimeoutStopSec=30
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectHome=yes
 ProtectSystem=strict
+ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictNamespaces=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
+RestrictRealtime=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
 MemoryMax=1G
-TasksMax=64
-LimitNOFILE=512
-TimeoutStopSec=20
+TasksMax=128
 
 [Install]
 WantedBy=multi-user.target

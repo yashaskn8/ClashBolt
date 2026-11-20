@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 from collections import OrderedDict
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -15,6 +16,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from psycopg import Error as DatabaseError
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,6 +102,13 @@ class RunRequest(ExperimentRequest):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ClashBolt Synthetic Lab", version="0.3.0")
+    dist_path = os.getenv("CLASHBOLT_FRONTEND_DIST")
+    frontend_dir = Path(dist_path).resolve() if dist_path else None
+    if frontend_dir and (
+        not (frontend_dir / "index.html").is_file()
+        or not (frontend_dir / "assets").is_dir()
+    ):
+        raise ValueError("CLASHBOLT_FRONTEND_DIST must be a built Vite distribution")
     access_mode = os.getenv("CLASHBOLT_ACCESS_MODE", "local")
     if access_mode not in ("local", "private", "accounts"):
         raise ValueError("Unsupported CLASHBOLT_ACCESS_MODE")
@@ -153,6 +162,12 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        if frontend_dir:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+                "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+            )
         if not request.url.path.endswith("/stream"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -677,6 +692,9 @@ def create_app() -> FastAPI:
             "adjudicated_verdict": latest["verdict"] if latest else "UNKNOWN",
         }
 
+    if frontend_dir:
+        # API routes are registered first; only static build artifacts are served.
+        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
     return app
 
 

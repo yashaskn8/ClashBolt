@@ -61,3 +61,9 @@ For native control-plane archive creation with archive integrity verification,
 run `python -m clashbolt.backup /path/to/new-backup.dump`. The archive contains
 sensitive data, must be stored securely, and **does not establish restore or
 disaster-recovery readiness**. See the native setup guide.
+
+
+For a **native Linux loopback service** using separate API/worker identities,
+private built React assets and no Vite runtime, see
+[docs/NATIVE_SERVICE.md](docs/NATIVE_SERVICE.md). This is a hardened
+single-host option, not proof of secure production isolation or tenancy.

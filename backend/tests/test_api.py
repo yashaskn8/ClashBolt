@@ -1,3 +1,4 @@
+import pytest
 from clashbolt.api import create_app
 from fastapi.testclient import TestClient
 
@@ -124,3 +125,34 @@ def test_local_host_origin_and_private_data_cache_boundaries(monkeypatch):
         assert allowed.headers["cache-control"] == "no-store"
         assert allowed.headers["x-content-type-options"] == "nosniff"
         assert allowed.headers["referrer-policy"] == "no-referrer"
+
+
+
+def test_opt_in_same_origin_react_build_is_static_and_api_remains_separate(
+    monkeypatch, tmp_path,
+):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>ClashBolt</title>")
+    (assets / "test.js").write_text("export const ready = true;")
+    monkeypatch.setenv("CLASHBOLT_FRONTEND_DIST", str(dist))
+    with TestClient(create_app()) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "ClashBolt" in page.text
+        assert "default-src 'self'" in page.headers["content-security-policy"]
+        script = client.get("/assets/test.js")
+        assert script.status_code == 200
+        assert "ready = true" in script.text
+        health = client.get("/api/health")
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+    monkeypatch.setenv("CLASHBOLT_FRONTEND_DIST", str(tmp_path))
+    with pytest.raises(ValueError, match="built Vite"):
+        create_app()
