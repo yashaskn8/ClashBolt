@@ -8,8 +8,8 @@ import os
 import secrets
 import time
 from collections import OrderedDict
-from urllib.parse import urlsplit
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
