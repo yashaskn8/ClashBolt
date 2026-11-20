@@ -198,3 +198,26 @@ def test_feedback_route_requires_operator_and_preserves_missing_evidence(policy_
         url, json={"remaining_budget": 8}, headers=header,
     ).status_code == 409
     assert policy_client.get(f"/api/agent/plans/{plan_id}/gaps").json()["gaps"] == []
+
+
+
+def test_frontier_proposal_is_operator_gated(policy_client):
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "frontier-proposer"}
+    ).json()
+    pid = proposal["id"]
+    url = f"/api/agent/frontier/{pid}"
+    assert policy_client.get(url).status_code == 409
+    headers = {"X-Operator-Token": "ci-local-only-secret"}
+    policy_client.post(
+        f"/api/oracle/proposals/{pid}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "reviewer"},
+        headers=headers,
+    )
+    result = policy_client.get(url).json()
+    assert result["promotion_eligible"] is False
+    body = {"proposal_id": pid, "variant": "racy"}
+    assert policy_client.post(f"{url}/plans", json=body).status_code == 403
+    planned = policy_client.post(f"{url}/plans", json=body, headers=headers)
+    assert planned.status_code == 201
+    assert planned.json()["plan"]["max_steps"] == 4

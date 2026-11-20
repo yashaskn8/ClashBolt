@@ -169,6 +169,28 @@ def policy_router(dsn: str | None) -> APIRouter:
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
+    @router.get("/agent/frontier/{proposal_id}")
+    def get_frontier(
+        proposal_id: UUID, variant: Literal["racy", "locked"] = "racy",
+    ):
+        try:
+            return require_policy().frontier(proposal_id, variant)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.post("/agent/frontier/{proposal_id}/plans", status_code=201)
+    def create_frontier_plan(
+        proposal_id: UUID, request: LocalModelPlanInput,
+        x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token)
+        if proposal_id != request.proposal_id:
+            raise HTTPException(409, "Frontier and oracle proposal IDs differ")
+        try:
+            return require_policy().propose_frontier_plan(proposal_id, request.variant)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
     @router.post("/agent/plans/model", status_code=201)
     async def propose_local_model_plan(
         request: LocalModelPlanInput,

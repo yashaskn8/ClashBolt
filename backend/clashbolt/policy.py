@@ -19,6 +19,7 @@ from clashbolt.experiment import (
     TARGET_ID,
     TARGET_REVISION,
 )
+from clashbolt.frontier import next_frontier_plan, rank_frontier
 from clashbolt.oracle_workshop import RuleCandidate, evaluate_candidate, valid_evidence
 from clashbolt.store import Ledger
 
@@ -401,6 +402,62 @@ class Policy(Ledger):
                         (plan_id,),
                     )
             return allowed
+
+    def frontier(self, proposal_id: UUID, variant: str) -> dict:
+        if variant not in ("racy", "locked"):
+            raise ValueError("Unsupported synthetic fixture variant")
+        with self.connect() as conn:
+            rule = conn.execute(
+                "SELECT state, rule_hash FROM oracle_proposal WHERE id = %s",
+                (proposal_id,),
+            ).fetchone()
+            if not rule or rule["state"] != "APPROVED" or rule["rule_hash"] != ORACLE_HASH:
+                raise ValueError("Frontier requires an approved oracle")
+            evidence = conn.execute(
+                """
+                SELECT plan, result FROM agent_plan
+                WHERE proposal_id = %s AND state IN ('COMPLETE', 'UNKNOWN')
+                ORDER BY created_at, id LIMIT 1000
+                """,
+                (proposal_id,),
+            ).fetchall()
+            return {
+                "proposal_id": str(proposal_id),
+                "scope": "SHIPPED_SYNTHETIC_FIXTURE_ONLY",
+                "policy_version": "known-inventory-frontier-v1",
+                "variant": variant,
+                "candidates": rank_frontier(evidence, variant),
+                "promotion_eligible": False,
+            }
+
+    def propose_frontier_plan(self, proposal_id: UUID, variant: str) -> dict:
+        if variant not in ("racy", "locked"):
+            raise ValueError("Unsupported synthetic fixture variant")
+        with self.connect() as conn:
+            rule = conn.execute(
+                "SELECT state, rule_hash FROM oracle_proposal WHERE id = %s FOR SHARE",
+                (proposal_id,),
+            ).fetchone()
+            if not rule or rule["state"] != "APPROVED" or rule["rule_hash"] != ORACLE_HASH:
+                raise ValueError("Frontier requires an approved oracle")
+            evidence = conn.execute(
+                """
+                SELECT plan, result FROM agent_plan
+                WHERE proposal_id = %s AND state IN ('COMPLETE', 'UNKNOWN')
+                ORDER BY created_at, id LIMIT 1000
+                """,
+                (proposal_id,),
+            ).fetchall()
+            plan = next_frontier_plan(evidence, variant)
+            row = conn.execute(
+                """
+                INSERT INTO agent_plan(id, proposal_id, plan, strategy)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, strategy, state
+                """,
+                (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
+            ).fetchone()
+            return {**row, "id": str(row["id"]), "plan": plan}
 
     def record_plan(self, proposal_id: UUID, plan: dict) -> dict:
         """Persist typed deterministic planning intent; no tool call is implied."""

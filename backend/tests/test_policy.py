@@ -284,3 +284,26 @@ def test_abstention_after_expired_receipt_persists_gap(policy):
     feedback = policy.record_feedback(plan_id, 8)
     assert feedback["decision"]["action"] == "ABSTAIN"
     assert feedback["next_plan_id"] is None
+
+
+
+def test_frontier_scopes_to_approved_rule_and_stored_receipts(policy):
+    from uuid import UUID
+
+    proposal = policy.propose("frontier-source")
+    proposal_id = UUID(proposal["id"])
+    with pytest.raises(ValueError, match="approved"):
+        policy.frontier(proposal_id, "racy")
+    policy.approve(proposal_id, ORACLE_HASH, "independent-reviewer")
+    result = policy.frontier(proposal_id, "racy")
+    assert result["scope"] == "SHIPPED_SYNTHETIC_FIXTURE_ONLY"
+    assert [item["schedule"] for item in result["candidates"]] == [
+        "overlap", "serial"
+    ]
+    proposal_plan = policy.propose_frontier_plan(proposal_id, "racy")
+    assert proposal_plan["plan"]["planner_kind"] == "DETERMINISTIC_EVIDENCE_FRONTIER"
+    assert proposal_plan["plan"]["schedule"] == "overlap"
+    assert proposal_plan["state"] == "PROPOSED"
+    assert policy.revoke_rule(proposal_id)
+    with pytest.raises(ValueError, match="approved"):
+        policy.propose_frontier_plan(proposal_id, "racy")
