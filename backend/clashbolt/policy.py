@@ -315,7 +315,7 @@ class Policy(Ledger):
                 UPDATE model_reservation
                 SET observed_tokens = %s,
                     state = CASE
-                        WHEN %s IS NOT NULL AND deadline_at > now()
+                        WHEN %s::integer IS NOT NULL AND deadline_at > now()
                         THEN 'COMPLETE' ELSE 'UNKNOWN'
                     END,
                     finalized_at = now()
