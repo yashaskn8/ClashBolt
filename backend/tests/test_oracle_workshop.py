@@ -1,11 +1,10 @@
 import pytest
-from pydantic import ValidationError
-
 from clashbolt.oracle_workshop import (
     RuleCandidate,
     evaluate_candidate,
     valid_evidence,
 )
+from pydantic import ValidationError
 
 
 def test_rule_candidate_is_fixed_and_test_vectors_are_separated():
