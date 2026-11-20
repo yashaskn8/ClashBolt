@@ -129,6 +129,7 @@ export default function App() {
   }
 
   const witness = durable?.witness ?? result?.witness
+  const adjudicatedVerdict = durable ? durable.verdict ?? 'UNKNOWN' : witness?.verdict
 
   return (
     <div className="site-shell">
@@ -198,8 +199,12 @@ export default function App() {
               <div className="empty-state"><div className="empty-graphic"><span>A</span><i /> <span>B</span></div><h3>No experiment yet</h3><p>Choose a fixture implementation and schedule, then run to inspect the controlled history.</p></div>
             ) : (
               <div className="witness-content">
-                <div className="result-heading"><span className={`verdict verdict-${witness.verdict.toLowerCase()}`}>{witness.verdict}</span><span className="synthetic-tag">SYNTHETIC ONLY</span></div>
-                <p className="verdict-explanation">{witness.verdict === 'FAIL' ? 'The fixed demo oracle found two accepted orders despite one available item.' : witness.verdict === 'PASS' ? 'The fixture finished without violating the fixed demo rule.' : 'Evidence is incomplete; no pass or failure is claimed.'}</p>
+                <div className="result-heading"><span className={`verdict verdict-${adjudicatedVerdict?.toLowerCase()}`}>{adjudicatedVerdict}</span><span className="synthetic-tag">SYNTHETIC ONLY</span></div>
+                <p className="verdict-explanation">{adjudicatedVerdict === 'FAIL'
+                  ? 'The approved synthetic oracle found two accepted orders for one item.'
+                  : adjudicatedVerdict === 'PASS'
+                    ? 'The approved synthetic rule found no invariant violation.'
+                    : 'No current approved verdict. Historical evidence may have been withdrawn.'}</p>
                 <div className="metrics"><div><small>INITIAL STOCK</small><strong>{witness.final_state.initial_stock}</strong></div><div><small>CONFIRMED</small><strong>{witness.final_state.confirmed_count}</strong></div><div><small>REMAINING</small><strong>{witness.final_state.remaining_stock}</strong></div></div>
                 <h3 className="subhead">Controlled checkpoint history</h3>
                 <ol className="steps">{witness.observed_steps.map((step) => <li key={step.sequence}><span className="step-number">{String(step.sequence).padStart(2, '0')}</span><span className="step-client">Client {step.client.toUpperCase()}</span><span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span></li>)}</ol>

@@ -236,3 +236,27 @@ def test_step_budget_excess_never_certifies_oversized_trace(ledger):
     assert saved["status"] == "UNKNOWN"
     assert saved["verdict"] == "UNKNOWN"
     assert saved["consumed_steps"] == 8
+
+
+def test_revoked_witness_replay_cannot_regain_certification(ledger, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from clashbolt.api import create_app
+
+    queued = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claim = ledger.claim("replay-worker")
+    assert claim and claim["run_id"] == queued["run_id"]
+    witness = asyncio.run(execute("racy", "overlap"))
+    assert ledger.finish(
+        UUID(queued["run_id"]), "replay-worker", claim["lease_generation"], witness
+    )
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    with TestClient(create_app()) as client:
+        accepted = client.post(f"/api/runs/{queued['run_id']}/replay")
+        assert accepted.status_code == 200
+        assert accepted.json()["replay_status"] == "REPRODUCED"
+        assert ledger.revoke_rule(ledger.approval_id)
+        withdrawn = client.post(f"/api/runs/{queued['run_id']}/replay")
+        assert withdrawn.status_code == 200
+        assert withdrawn.json()["replay_status"] == "UNCONFIRMED"
+        assert withdrawn.json()["adjudicated_verdict"] == "UNKNOWN"

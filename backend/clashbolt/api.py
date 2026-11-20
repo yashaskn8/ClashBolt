@@ -216,18 +216,24 @@ def create_app() -> FastAPI:
         if witness is None:
             raise HTTPException(409, "Run has no replayable witness")
         replayed = await execute(witness["variant"], witness["schedule"])
+        latest = require_ledger().get(run_id)
         same = (
             witness["complete"]
             and replayed["complete"]
             and witness["evidence_sha256"] == replayed["evidence_sha256"]
+            and latest is not None
+            and latest["version"] == original["version"]
+            and latest["status"] == "COMPLETE"
+            and latest["verdict"] in ("PASS", "FAIL")
         )
         return {
             "run_id": str(run_id),
             "replay_status": "REPRODUCED" if same else "UNCONFIRMED",
             "original_sha256": witness["evidence_sha256"],
             "replay_sha256": replayed["evidence_sha256"],
-            "replay_verdict": replayed["verdict"],
+            "replay_verdict": replayed["verdict"] if same else "UNKNOWN",
             "scope": "SYNTHETIC_ONLY",
+            "adjudicated_verdict": latest["verdict"] if latest else "UNKNOWN",
         }
 
     return app
