@@ -203,7 +203,9 @@ def test_oracle_revocation_withdraws_existing_verdict(ledger):
     claim = ledger.claim("revocation-worker")
     assert claim and claim["run_id"] == run["run_id"]
     witness = asyncio.run(execute("racy", "overlap"))
-    assert ledger.finish(UUID(run["run_id"]), "revocation-worker", claim["lease_generation"], witness)
+    assert ledger.finish(
+        UUID(run["run_id"]), "revocation-worker", claim["lease_generation"], witness
+    )
     assert ledger.get(UUID(run["run_id"]))["verdict"] == "FAIL"
     assert ledger.revoke_rule(ledger.approval_id)
     after = ledger.get(UUID(run["run_id"]))
