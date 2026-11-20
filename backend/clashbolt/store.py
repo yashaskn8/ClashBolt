@@ -270,20 +270,34 @@ class Ledger:
             ).fetchone()
             return _public(row) if row else None
 
-    def transitions(self, run_id: UUID, after: int = 0) -> list[dict]:
+    def transition_page(
+        self, run_id: UUID, after: int = 0, limit: int = 100
+    ) -> dict:
+        """Sequence-ordered pages; a missing SSE notification never loses history."""
+        if after < 0 or not 1 <= limit <= 100:
+            raise ValueError("Invalid event cursor or page limit")
         with self.connect() as conn:
             events = conn.execute(
                 """
                 SELECT version, status, note, created_at
                 FROM run_transition WHERE run_id = %s AND version > %s
-                ORDER BY version ASC LIMIT 100
+                ORDER BY version ASC LIMIT %s
                 """,
-                (run_id, after),
+                (run_id, after, limit + 1),
             ).fetchall()
-            return [
+        more = len(events) > limit
+        visible = events[:limit]
+        return {
+            "events": [
                 {**event, "created_at": event["created_at"].isoformat()}
-                for event in events
-            ]
+                for event in visible
+            ],
+            "next_after": visible[-1]["version"] if visible else after,
+            "has_more": more,
+        }
+
+    def transitions(self, run_id: UUID, after: int = 0) -> list[dict]:
+        return self.transition_page(run_id, after)["events"]
 
     def claim(self, owner: str, lease_seconds: int = 30) -> dict | None:
         if not owner or len(owner) > 100 or not 5 <= lease_seconds <= 300:

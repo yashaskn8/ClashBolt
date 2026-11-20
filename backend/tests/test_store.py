@@ -327,3 +327,33 @@ def test_reduction_report_is_bound_to_current_verdict(ledger):
     assert ledger.revoke_rule(ledger.approval_id)
     assert ledger.get_reduction(run_id) is None
     assert ledger.record_reduction(run_id, after["version"], report) is None
+
+
+
+def test_transition_cursor_paginates_history_without_loss(ledger):
+    run = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="serial")
+    run_id = UUID(run["run_id"])
+    with ledger.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO run_transition(run_id, version, status, note)
+            SELECT %s, n, 'PENDING', 'synthetic history page'
+            FROM generate_series(2, 125) AS n
+            """,
+            (run_id,),
+        )
+    first = ledger.transition_page(run_id, limit=100)
+    assert first["has_more"]
+    assert first["next_after"] == 100
+    assert len(first["events"]) == 100
+    second = ledger.transition_page(run_id, after=first["next_after"])
+    assert not second["has_more"]
+    assert second["next_after"] == 125
+    assert len(second["events"]) == 25
+    assert [row["version"] for row in first["events"] + second["events"]] == list(
+        range(1, 126)
+    )
+    with pytest.raises(ValueError):
+        ledger.transition_page(run_id, after=-1)
+    with pytest.raises(ValueError):
+        ledger.transition_page(run_id, limit=101)

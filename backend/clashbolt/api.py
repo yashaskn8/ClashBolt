@@ -249,19 +249,27 @@ def create_app() -> FastAPI:
         return run
 
     @app.get("/api/runs/{run_id}/events")
-    def get_events(run_id: UUID, after: int = 0) -> dict:
-        if after < 0:
-            raise HTTPException(422, "Cursor cannot be negative")
+    def get_events(run_id: UUID, after: int = 0, limit: int = 100) -> dict:
+        if after < 0 or not 1 <= limit <= 100:
+            raise HTTPException(422, "Invalid event cursor or limit")
         store = require_ledger()
         if not store.get(run_id):
             raise HTTPException(404, "Run not found")
-        return {"run_id": str(run_id), "events": store.transitions(run_id, after)}
+        return {
+            "run_id": str(run_id),
+            **store.transition_page(run_id, after=after, limit=limit),
+        }
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_events(request: Request, run_id: UUID, after: int = 0):
         store = require_ledger()
         if not store.get(run_id):
             raise HTTPException(404, "Run not found")
+        resume = request.headers.get("Last-Event-ID")
+        if resume is not None:
+            if not resume.isascii() or not resume.isdigit() or len(resume) > 18:
+                raise HTTPException(422, "Malformed Last-Event-ID")
+            after = max(after, int(resume))
         if after < 0:
             raise HTTPException(422, "Cursor cannot be negative")
 
@@ -271,10 +279,15 @@ def create_app() -> FastAPI:
             for _ in range(30):
                 if await request.is_disconnected():
                     break
-                for event in store.transitions(run_id, cursor):
-                    cursor = event["version"]
-                    payload = json.dumps(event, separators=(",", ":"))
-                    yield f"id: {cursor}\nevent: transition\ndata: {payload}\n\n"
+                # Replay all pending pages before waiting for another hint.
+                for _ in range(20):
+                    page = store.transition_page(run_id, cursor)
+                    for event in page["events"]:
+                        cursor = event["version"]
+                        payload = json.dumps(event, separators=(",", ":"))
+                        yield f"id: {cursor}\nevent: transition\ndata: {payload}\n\n"
+                    if not page["has_more"]:
+                        break
                 await asyncio.sleep(1)
 
         return StreamingResponse(

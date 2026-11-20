@@ -60,17 +60,31 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
 
     async function refresh() {
       try {
-        const [snapshotResponse, eventsResponse] = await Promise.all([
-          fetch(`/api/runs/${runId}`),
-          fetch(`/api/runs/${runId}/events?after=0`),
-        ])
-        if (!snapshotResponse.ok || !eventsResponse.ok) throw new Error('Refresh failed')
+        const snapshotResponse = await fetch(`/api/runs/${runId}`)
+        if (!snapshotResponse.ok) throw new Error('Snapshot refresh failed')
         const run = (await snapshotResponse.json()) as DurableRun
-        const history = (await eventsResponse.json()) as { events: Event[] }
+        let cursor = 0
+        let more = true
+        const history: Event[] = []
+        for (let pageNumber = 0; pageNumber < 10 && more; pageNumber++) {
+          const response = await fetch(`/api/runs/${runId}/events?after=${cursor}`)
+          if (!response.ok) throw new Error('History refresh failed')
+          const page = (await response.json()) as {
+            events: Event[]
+            next_after: number
+            has_more: boolean
+          }
+          if (page.has_more && page.next_after <= cursor) {
+            throw new Error('Transition cursor did not advance')
+          }
+          history.push(...page.events)
+          cursor = page.next_after
+          more = page.has_more
+        }
         if (mounted) {
           onUpdate(run)
-          setEvents(history.events)
-          setError('')
+          setEvents(history)
+          setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
         }
       } catch {
         if (mounted) setError('Cannot refresh the authoritative run snapshot.')
