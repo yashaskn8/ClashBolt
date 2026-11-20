@@ -25,6 +25,7 @@ from clashbolt.experiment import (
 )
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import Ledger
+from clashbolt.witness import verify
 
 
 class ExperimentRequest(BaseModel):
@@ -243,12 +244,10 @@ def create_app() -> FastAPI:
         witness = original["witness"]
         if witness is None:
             raise HTTPException(409, "Run has no replayable witness")
-        replayed = await execute(witness["variant"], witness["schedule"])
+        proof = await verify(witness)
         latest = require_ledger().get(run_id)
         same = (
-            witness["complete"]
-            and replayed["complete"]
-            and witness["evidence_sha256"] == replayed["evidence_sha256"]
+            proof["status"] == "REPRODUCED"
             and latest is not None
             and latest["version"] == original["version"]
             and latest["status"] == "COMPLETE"
@@ -257,9 +256,9 @@ def create_app() -> FastAPI:
         return {
             "run_id": str(run_id),
             "replay_status": "REPRODUCED" if same else "UNCONFIRMED",
-            "original_sha256": witness["evidence_sha256"],
-            "replay_sha256": replayed["evidence_sha256"],
-            "replay_verdict": replayed["verdict"] if same else "UNKNOWN",
+            "original_sha256": witness.get("evidence_sha256"),
+            "replay_sha256": proof.get("replay_sha256"),
+            "replay_verdict": proof.get("verdict") if same else "UNKNOWN",
             "scope": "SYNTHETIC_ONLY",
             "adjudicated_verdict": latest["verdict"] if latest else "UNKNOWN",
         }

@@ -9,6 +9,8 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+import psycopg
+
 from clashbolt.experiment import (
     FIXTURE,
     FIXTURE_HASH,
@@ -166,7 +168,7 @@ async def verify(witness: dict) -> dict:
                 replay = await execute_postgres(
                     witness["variant"], witness["schedule"], target.url
                 )
-        except (OSError, ValueError, RuntimeError):
+        except (OSError, ValueError, RuntimeError, psycopg.Error):
             return {"status": "UNCONFIRMED", "reason": "Native target replay failed"}
     else:
         replay = await execute(witness["variant"], witness["schedule"])
@@ -182,7 +184,7 @@ async def verify(witness: dict) -> dict:
         "original_sha256": witness["evidence_sha256"],
         "replay_sha256": replay["evidence_sha256"],
         "reason": (
-            "Fresh Python process can replay the declared application checkpoints"
+            "Fresh isolated fixture replayed the declared application checkpoints"
             if matched else "Controlled outcome differs on fresh fixture"
         ),
     }

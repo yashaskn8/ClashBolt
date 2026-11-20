@@ -5,6 +5,7 @@ import RecentRuns from './RecentRuns'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
+type ExecutionBackend = 'memory' | 'native-postgresql'
 type Verdict = 'PASS' | 'FAIL' | 'UNKNOWN'
 
 type Step = {
@@ -39,6 +40,7 @@ type Catalog = {
   target_id: string
   target_revision: string
   storage: 'postgresql' | 'memory-only'
+  execution_backends: ExecutionBackend[]
   oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
 }
 
@@ -54,6 +56,7 @@ const shortHash = (hash: string) => `${hash.slice(0, 12)}…`
 export default function App() {
   const [variant, setVariant] = useState<Variant>('racy')
   const [schedule, setSchedule] = useState<Schedule>('overlap')
+  const [executionBackend, setExecutionBackend] = useState<ExecutionBackend>('memory')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
   const [operatorToken, setOperatorToken] = useState('')
@@ -102,6 +105,7 @@ export default function App() {
                 client_key: crypto.randomUUID(),
                 step_budget: 4,
                 approved_oracle_id: approvedOracleId,
+                execution_backend: executionBackend,
               }
             : {}),
         }),
@@ -156,7 +160,8 @@ export default function App() {
         <section className="intro">
           <div className="eyebrow">CONTROLLED CONCURRENCY EXPLORATION</div>
           <h1>Find the clash.<br /><span>Prove the behavior.</span></h1>
-          <p>Run two concurrent purchases against a disposable in-memory inventory fixture. Compare a stale-check bug with a version that revalidates stock at commit.</p>
+          <p>Run two concurrent purchases against a disposable synthetic inventory fixture.
+          Compare a stale-check bug with a version that revalidates stock at commit.</p>
           <div className="notice">SYNTHETIC DEMONSTRATION — Outcomes below are not findings against a real application.</div>
         </section>
 
@@ -168,7 +173,7 @@ export default function App() {
 
             <label className="field-label" htmlFor="target">Target fixture</label>
             <input id="target" value={catalog?.target_id ?? 'synthetic-inventory'} readOnly />
-            <small className="help-text">Fresh memory state for every run · Initial stock: 1 · Two clients</small>
+            <small className="help-text">Fresh state for every run · Initial stock: 1 · Two clients</small>
 
             <label className="field-label" htmlFor="variant">Implementation</label>
             <select id="variant" value={variant} onChange={(event) => setVariant(event.target.value as Variant)}>
@@ -182,6 +187,28 @@ export default function App() {
               <option value="serial">Serial — A.read → A.commit → B.read → B.commit</option>
             </select>
             <p className="schedule-tip">Application checkpoints only. The controller does not control operating-system or database internals.</p>
+            {catalog?.storage === 'postgresql' && (
+              <>
+                <label className="field-label" htmlFor="execution-backend">Target isolation</label>
+                <select
+                  id="execution-backend" value={executionBackend}
+                  onChange={(event) => {
+                    setExecutionBackend(event.target.value as ExecutionBackend)
+                  }}
+                >
+                  <option value="memory">Fresh in-memory fixture</option>
+                  {catalog.execution_backends.includes('native-postgresql') && (
+                    <option value="native-postgresql">
+                      Fresh isolated native PostgreSQL database
+                    </option>
+                  )}
+                </select>
+                <p className="help-text">
+                  Native database mode requires a second local PostgreSQL cluster.
+                  Database separation is not an OS or network sandbox.
+                </p>
+              </>
+            )}
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
             {catalog?.storage === 'postgresql' && (

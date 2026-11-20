@@ -8,6 +8,7 @@ export type DurableRun = {
   version: number
   verdict: 'PASS' | 'FAIL' | 'UNKNOWN' | null
   cancel_requested: boolean
+  execution_backend: 'memory' | 'native-postgresql'
   step_budget: number
   consumed_steps: number
   witness: {
@@ -126,6 +127,8 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
         <code title={runId}>Run {runId.slice(0, 13)}…</code>
         <span>Version {initial.version}</span>
         <span>Controlled gates: {initial.consumed_steps}/{initial.step_budget}</span>
+        <span>{initial.execution_backend === 'native-postgresql'
+          ? 'Disposable PostgreSQL target' : 'In-memory target'}</span>
       </div>
       {initial.status === 'PENDING' && (
         <p className="help-text">Queued. Start the separate Python worker to process this run.</p>

@@ -1,7 +1,7 @@
 """Native isolated-cluster tests (opt-in via CLASHBOLT_TEST_TARGET_ADMIN_URL)."""
 
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -88,3 +88,54 @@ def test_disposable_sql_fixture_matches_synthetic_contract(cluster):
         corrected = asyncio.run(execute_postgres("locked", "overlap", target.url))
         assert corrected["verdict"] == "PASS"
         assert validate_contract(corrected) is None
+
+
+def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
+    import asyncio
+
+    from clashbolt.api import create_app
+    from clashbolt.experiment import ORACLE_HASH
+    from clashbolt.policy import Policy
+    from clashbolt.worker import process_one
+    from fastapi.testclient import TestClient
+
+    admin, control = cluster
+    monkeypatch.setenv("CLASHBOLT_TEST_TARGET_ADMIN_URL", admin)
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", control)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "target-ci-token")
+    ledger = Policy(control)
+    ledger.migrate()
+    with ledger.connect() as conn:
+        conn.execute(
+            "TRUNCATE tool_audit, agent_plan, tool_capability, oracle_proposal, "
+            "run_transition, experiment_run, project_quota CASCADE"
+        )
+    proposed = ledger.propose("target-test")
+    approved = ledger.approve(UUID(proposed["id"]), ORACLE_HASH, "reviewer")
+    payload = {
+        "client_key": str(uuid4()), "variant": "racy", "schedule": "overlap",
+        "execution_backend": "native-postgresql",
+        "approved_oracle_id": approved["id"],
+    }
+    with TestClient(create_app()) as client:
+        catalog = client.get("/api/catalog").json()
+        assert "native-postgresql" in catalog["execution_backends"]
+        headers = {"X-Operator-Token": "target-ci-token"}
+        response = client.post("/api/runs", json=payload, headers=headers)
+        assert response.status_code == 201, response.text
+        run_id = response.json()["run_id"]
+        assert asyncio.run(process_one(ledger, "native-test-worker"))
+        completed = client.get(f"/api/runs/{run_id}").json()
+        assert completed["status"] == "COMPLETE"
+        assert completed["verdict"] == "FAIL"
+        assert completed["execution_backend"] == "native-postgresql"
+        assert completed["witness"]["execution_backend"] == "native-postgresql"
+        replay = client.post(f"/api/runs/{run_id}/replay", headers=headers)
+        assert replay.status_code == 200
+        assert replay.json()["replay_status"] == "REPRODUCED"
+    with psycopg.connect(admin, autocommit=True) as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM pg_database WHERE datname = %s",
+            (f"cb_target_{UUID(run_id).hex}",),
+        ).fetchone()[0] == 0
