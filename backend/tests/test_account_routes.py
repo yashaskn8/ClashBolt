@@ -118,3 +118,13 @@ def test_account_mode_requires_explicit_secrets(monkeypatch):
     monkeypatch.setenv("CLASHBOLT_SESSION_SECRET", "short")
     with pytest.raises(ValueError, match="32-character"):
         create_app()
+
+
+def test_account_readiness_requires_an_active_identity(named_accounts):
+    with TestClient(create_app()) as client:
+        assert client.get("/api/ready").status_code == 200
+        for role in ("viewer", "operator", "reviewer"):
+            assert named_accounts.disable_account(f"sample.{role}")
+        response = client.get("/api/ready")
+        assert response.status_code == 503
+        assert "account" in response.json()["detail"]

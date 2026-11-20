@@ -466,3 +466,32 @@ def test_certified_run_can_export_bounded_bundle(ledger, monkeypatch):
         assert client.get(
             f"/api/runs/{queued['run_id']}/bundle"
         ).status_code == 409
+
+
+def test_readiness_fails_closed_on_incompatible_database_revision(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from clashbolt.policy import POLICY_SCHEMA_VERSION
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/ready").status_code == 200
+        try:
+            with ledger.connect() as conn:
+                conn.execute(
+                    "UPDATE schema_revision SET version = 999 WHERE component = 'policy'"
+                )
+            failed = client.get("/api/ready")
+            assert failed.status_code == 503
+            assert "incompatible" in failed.json()["detail"]
+        finally:
+            with ledger.connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE schema_revision SET version = %s
+                    WHERE component = 'policy'
+                    """,
+                    (POLICY_SCHEMA_VERSION,),
+                )
+        assert client.get("/api/ready").status_code == 200

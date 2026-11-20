@@ -91,3 +91,13 @@ def test_scratch_experiment_history_has_a_strict_bound():
         assert first is not None and latest is not None
         assert client.get(f"/api/experiments/{first}").status_code == 404
         assert client.get(f"/api/experiments/{latest}").status_code == 200
+
+
+def test_volatile_readiness_reports_explicit_scope(monkeypatch):
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+        response = client.get("/api/ready")
+        assert response.status_code == 200
+        assert response.json()["storage"] == "volatile-scratch-only"
