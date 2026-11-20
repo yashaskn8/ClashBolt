@@ -36,8 +36,12 @@ def test_concurrent_native_slots_are_capped_but_memory_can_pass(
     monkeypatch.setenv("CLASHBOLT_TARGET_CLUSTER_URL", target)
     with store.connect() as conn:
         conn.execute(
-            "UPDATE project_quota SET max_native_active = 1 "
-            "WHERE project_id = 'local'"
+            """
+            INSERT INTO project_quota(project_id, max_native_active)
+            VALUES ('local', 1)
+            ON CONFLICT (project_id)
+            DO UPDATE SET max_native_active = EXCLUDED.max_native_active
+            """
         )
 
     def admit(backend):
