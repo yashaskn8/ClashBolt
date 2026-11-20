@@ -1,5 +1,4 @@
 import pytest
-
 from clashbolt.agent_feedback import decide_feedback, gap_class
 
 
