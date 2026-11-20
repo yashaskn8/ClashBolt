@@ -6,11 +6,11 @@ The checkpoints control application actions, not OS or PostgreSQL scheduling.
 
 import asyncio
 import json
-
-import psycopg
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Literal
+
+import psycopg
 
 Variant = Literal["racy", "locked"]
 Schedule = Literal["overlap", "serial"]
