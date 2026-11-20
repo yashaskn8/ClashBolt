@@ -47,3 +47,31 @@ experiment. Model timeout recovery consumes reservation budgets conservatively
 and explicitly reports uncertainty. Host-level isolation, multi-project
 tenancy, real external held-out targets and independent study results remain
 required before claiming complete PDF or production readiness.
+
+## Adversarial security review (20 November 2026)
+
+Scope: manual code review and targeted fail-closed regression tests against the
+shipped local synthetic fixture, API, native target provisioning, worker, frontend,
+and CI configuration. **No live production penetration test or external-target
+attack was performed.** Passing synthetic tests cannot establish zero vulnerabilities.
+
+Hardening committed directly to `main`:
+
+- Native PostgreSQL target validation now rejects control/target port reuse even
+  through different loopback aliases. It also rejects remote libpq `hostaddr`,
+  connection-service redirection, and unsafe inherited connection settings.
+- The fixed child runner now limits stdout *during* capture and stops a child
+  that exceeds 100 KB, rather than buffering an unlimited response.
+- The API now rejects malformed HTTP Host headers; bundled static deployments
+  accept same-origin writes only and no longer grant CORS access to Vite ports.
+- GitHub Actions now uses a contents-read-only token and prevents checkout from
+  persisting Git credentials. Regression tests exercise these code boundaries.
+
+Unresolved security/production gates: demonstrated independent host/process and
+deny-egress containment; independently verified target/control cluster identity;
+real multi-project authorization and tenant isolation; trusted external identity;
+bounded IP-level authentication throttling and proxy-hardening verification;
+dependency lockfiles, vulnerability scanning and software provenance; real
+worker crash/partition/failover tests; and external independent security review.
+The main branch is not currently protected. These issues remain open rather
+than being represented as completed or solved by the new unit tests.
