@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from clashbolt.agent_feedback import decide_feedback, gap_class
+from clashbolt.agent_history import append_history, verify_history
 from clashbolt.experiment import (
     ORACLE_HASH,
     ORACLE_RULE,
@@ -152,6 +153,37 @@ _POLICY_SCHEMA = (
     "REFERENCES agent_plan(id)",
     "ALTER TABLE tool_audit ADD COLUMN IF NOT EXISTS plan_id UUID "
     "REFERENCES agent_plan(id)",
+    """
+    CREATE TABLE IF NOT EXISTS agent_history (
+        plan_id UUID NOT NULL REFERENCES agent_plan(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 10000),
+        event TEXT NOT NULL CHECK (
+            event IN (
+                'PROPOSED', 'DISPATCHED', 'RECEIPT',
+                'TIMEOUT', 'ORACLE_REVOKED', 'FEEDBACK'
+            )
+        ),
+        payload JSONB NOT NULL,
+        previous_sha256 TEXT NOT NULL,
+        entry_sha256 TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (plan_id, sequence)
+    )
+    """,
+    """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_agent_history()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $agent_guard$
+    BEGIN
+        RAISE EXCEPTION 'Agent decision history is append-only';
+    END
+    $agent_guard$
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_agent_history_immutable ON agent_history",
+    """
+    CREATE TRIGGER clashbolt_agent_history_immutable
+    BEFORE UPDATE OR DELETE ON agent_history FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_agent_history()
+    """,
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
     """
@@ -207,7 +239,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 6
+POLICY_SCHEMA_VERSION = 7
 
 
 class Policy(Ledger):
@@ -489,6 +521,10 @@ class Policy(Ledger):
                     ),
                 )
                 self._record_gap(conn, plan["id"], "Oracle approval revoked")
+                append_history(conn, plan["id"], "ORACLE_REVOKED", {
+                    "historical_evidence_sha256": receipt.get("evidence_sha256"),
+                    "new_state": "UNKNOWN",
+                })
             return True
 
     def issue(
@@ -639,6 +675,11 @@ class Policy(Ledger):
                         """,
                         (plan_id,),
                     )
+                    append_history(conn, plan_id, "DISPATCHED", {
+                        "capability_id": str(row["id"]),
+                        "variant": variant,
+                        "schedule": schedule,
+                    })
             return allowed
 
     def frontier(self, proposal_id: UUID, variant: str) -> dict:
@@ -695,6 +736,16 @@ class Policy(Ledger):
                 """,
                 (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
             ).fetchone()
+            append_history(conn, row["id"], "PROPOSED", {
+                "proposal_id": str(proposal_id),
+                "rule_sha256": ORACLE_HASH,
+                "plan": plan,
+            })
+            append_history(conn, row["id"], "PROPOSED", {
+                "proposal_id": str(proposal_id),
+                "rule_sha256": ORACLE_HASH,
+                "plan": plan,
+            })
             return {**row, "id": str(row["id"]), "plan": plan}
 
     def record_plan(self, proposal_id: UUID, plan: dict) -> dict:
@@ -715,6 +766,33 @@ class Policy(Ledger):
                 (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
             ).fetchone()
             return {**row, "id": str(row["id"]), "plan": plan}
+
+    def plan_history(self, plan_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            plan = conn.execute(
+                "SELECT id, state FROM agent_plan WHERE id = %s",
+                (plan_id,),
+            ).fetchone()
+            if not plan:
+                return None
+            entries = conn.execute(
+                """
+                SELECT sequence, event, payload, previous_sha256, entry_sha256,
+                    created_at
+                FROM agent_history WHERE plan_id = %s ORDER BY sequence
+                """,
+                (plan_id,),
+            ).fetchall()
+            status = verify_history(plan_id, entries)
+            return {
+                "plan_id": str(plan_id),
+                "current_state": plan["state"],
+                "integrity": status,
+                "entries": [
+                    {**row, "created_at": row["created_at"].isoformat()}
+                    for row in entries
+                ],
+            }
 
     def get_plan(self, plan_id: UUID) -> dict | None:
         with self.connect() as conn:
@@ -807,6 +885,11 @@ class Policy(Ledger):
                         decision["plan"]["strategy"],
                     ),
                 )
+                append_history(conn, next_plan_id, "PROPOSED", {
+                    "proposal_id": str(plan["proposal_id"]),
+                    "rule_sha256": ORACLE_HASH,
+                    "plan": decision["plan"],
+                })
             row = conn.execute(
                 """
                 INSERT INTO search_feedback(
@@ -822,6 +905,10 @@ class Policy(Ledger):
                     Jsonb(decision), next_plan_id,
                 ),
             ).fetchone()
+            append_history(conn, plan_id, "FEEDBACK", {
+                "decision": decision,
+                "next_plan_id": str(next_plan_id) if next_plan_id else None,
+            })
             return self._public_feedback(row)
 
     @staticmethod
@@ -899,8 +986,13 @@ class Policy(Ledger):
                 """,
                 (status, Jsonb(receipt), plan_id),
             ).fetchone()
-            if updated and invalid:
-                self._record_gap(conn, plan_id, invalid)
+            if updated:
+                if invalid:
+                    self._record_gap(conn, plan_id, invalid)
+                append_history(conn, plan_id, "RECEIPT", {
+                    "state": status,
+                    "receipt": receipt,
+                })
             return updated is not None
 
     def reconcile_stalled_plans(self) -> int:
@@ -931,6 +1023,10 @@ class Policy(Ledger):
                 self._record_gap(
                     conn, item["id"], "Tool receipt missing after deadline"
                 )
+                append_history(conn, item["id"], "TIMEOUT", {
+                    "state": "UNKNOWN",
+                    "reason": "Tool receipt missing after deadline",
+                })
             return len(expired)
 
     def audit(self, limit: int = 50) -> list[dict]:

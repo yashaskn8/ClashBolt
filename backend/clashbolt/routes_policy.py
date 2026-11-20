@@ -299,6 +299,17 @@ def policy_router(dsn: str | None) -> APIRouter:
             raise HTTPException(404, "Plan not found")
         return result
 
+    @router.get("/agent/plans/{plan_id}/history")
+    def read_plan_history(
+        plan_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token, http_request)
+        record = require_policy().plan_history(plan_id)
+        if not record:
+            raise HTTPException(404, "Plan not found")
+        return record
+
     @router.get("/agent/plans/{plan_id}/gaps")
     def read_evidence_gaps(plan_id: UUID):
         return {"gaps": require_policy().evidence_gaps(plan_id)}
