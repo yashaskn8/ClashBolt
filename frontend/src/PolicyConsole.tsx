@@ -87,6 +87,18 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
     })
   }
 
+  async function modelPlan() {
+    if (!rule) return
+    await action(async () => {
+      const suggested = await request<Plan>(
+        '/api/agent/plans/model',
+        { proposal_id: rule.id, variant }, operator,
+      )
+      setPlan(suggested)
+      return suggested
+    })
+  }
+
   async function issue() {
     if (!rule) return
     await action(async () => {
@@ -140,12 +152,20 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
         <button type="button" onClick={() => void propose()} disabled={busy}>1. Propose fixed rule</button>
         <button type="button" onClick={() => void approve()} disabled={busy || !rule || rule.state !== 'PROPOSED' || !operator}>2. Approve exact hash</button>
         <button type="button" onClick={() => void createPlan()} disabled={busy || rule?.state !== 'APPROVED'}>3. Propose typed plan</button>
+        <button type="button" onClick={() => void modelPlan()}
+          disabled={busy || rule?.state !== 'APPROVED' || !operator}>
+          3b. Suggest local model plan
+        </button>
         <button type="button" onClick={() => void issue()} disabled={busy || rule?.state !== 'APPROVED' || !plan || !operator}>4. Issue one-call capability</button>
         <button type="button" onClick={() => void useTool()} disabled={busy || !capability || !plan}>5. Execute approved synthetic tool</button>
         <button type="button" onClick={() => void revoke()} disabled={busy || !capability || !operator}>Revoke tool capability</button>
         <button type="button" onClick={() => void action(() => request('/api/tool-audit', undefined, operator))} disabled={busy || !operator}>Review tool audit</button>
         <button type="button" onClick={() => void action(() => request('/api/agent/evaluate', { trials: 8 }, operator))} disabled={busy || !operator}>Compare deterministic baselines</button>
       </div>
+      <p className="help-text">
+        Local model mode is optional and unpromoted. Invalid or unavailable model
+        responses fall back to the deterministic planner; no model can issue authority.
+      </p>
       <p className="help-text">
         Selected form: {variant} / {schedule}. Approved plan:
         {plan ? ` ${plan.plan.variant} / ${plan.plan.schedule}` : ' none'}.

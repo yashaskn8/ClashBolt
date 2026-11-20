@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import execute
+from clashbolt.model_planner import propose_model_plan
 from clashbolt.planner import choose_plan, compare_strategies
 from clashbolt.policy import Policy
 
@@ -46,6 +47,11 @@ class PlanInput(StrictModel):
     strategy: Literal["semantic", "random", "coverage"]
     variant: Literal["racy", "locked"]
     seed: int = Field(default=0, ge=0, le=1_000_000)
+
+
+class LocalModelPlanInput(StrictModel):
+    proposal_id: UUID
+    variant: Literal["racy", "locked"]
 
 
 class EvaluationInput(StrictModel):
@@ -134,6 +140,18 @@ def policy_router(dsn: str | None) -> APIRouter:
             plan = choose_plan(
                 strategy=request.strategy, variant=request.variant, seed=request.seed
             )
+            return require_policy().record_plan(request.proposal_id, plan)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.post("/agent/plans/model", status_code=201)
+    async def propose_local_model_plan(
+        request: LocalModelPlanInput,
+        x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token)
+        plan = await propose_model_plan(request.variant)
+        try:
             return require_policy().record_plan(request.proposal_id, plan)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
