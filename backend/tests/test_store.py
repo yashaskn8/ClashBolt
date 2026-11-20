@@ -84,7 +84,10 @@ def test_cancel_pending_and_inflight_unknown(ledger):
 def test_quota_uses_single_serialized_row(ledger):
     key = str(uuid4())
     with ledger.connect() as conn:
-        conn.execute("UPDATE project_quota SET max_open = 1 WHERE project_id = 'local'")
+        conn.execute(
+            "INSERT INTO project_quota(project_id, max_open) VALUES ('local', 1) "
+            "ON CONFLICT (project_id) DO UPDATE SET max_open = EXCLUDED.max_open"
+        )
     try:
         # Other tests may leave active runs: use a unique local workspace test DB per job.
         with ledger.connect() as conn:
