@@ -40,6 +40,53 @@ _POLICY_SCHEMA = (
     """,
     "ALTER TABLE oracle_proposal ADD COLUMN IF NOT EXISTS evidence JSONB",
     """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_oracle_version()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $
+    BEGIN
+        IF OLD.state = 'REVOKED' THEN
+            RAISE EXCEPTION 'Revoked oracle versions are immutable';
+        END IF;
+        IF NEW.target_revision IS DISTINCT FROM OLD.target_revision
+            OR NEW.rule_hash IS DISTINCT FROM OLD.rule_hash
+            OR NEW.rule_version IS DISTINCT FROM OLD.rule_version
+            OR NEW.description IS DISTINCT FROM OLD.description
+            OR NEW.proposed_by IS DISTINCT FROM OLD.proposed_by
+            OR (
+                OLD.state != 'PROPOSED'
+                AND NEW.evidence IS DISTINCT FROM OLD.evidence
+            )
+        THEN
+            RAISE EXCEPTION 'Approved oracle rule identity cannot change';
+        END IF;
+        IF OLD.state = 'PROPOSED' THEN
+            IF NEW.state NOT IN ('PROPOSED', 'APPROVED') THEN
+                RAISE EXCEPTION 'Invalid oracle state transition';
+            END IF;
+            IF NEW.state = 'APPROVED' AND (
+                NEW.evidence IS DISTINCT FROM OLD.evidence
+                OR NEW.reviewed_by IS NULL OR NEW.reviewed_at IS NULL
+            ) THEN
+                RAISE EXCEPTION 'Approved oracle must bind existing evidence and reviewer';
+            END IF;
+        ELSIF OLD.state = 'APPROVED' THEN
+            IF NEW.state != 'REVOKED'
+                OR NEW.reviewed_by IS DISTINCT FROM OLD.reviewed_by
+                OR NEW.reviewed_at IS DISTINCT FROM OLD.reviewed_at
+            THEN
+                RAISE EXCEPTION 'Approved oracle may only be revoked';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END
+    $
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_oracle_immutable ON oracle_proposal",
+    """
+    CREATE TRIGGER clashbolt_oracle_immutable
+    BEFORE UPDATE ON oracle_proposal FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_oracle_version()
+    """,
+    """
     CREATE TABLE IF NOT EXISTS tool_capability (
         id UUID PRIMARY KEY,
         token_hash TEXT UNIQUE NOT NULL,
@@ -136,7 +183,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 4
+POLICY_SCHEMA_VERSION = 5
 
 
 class Policy(Ledger):

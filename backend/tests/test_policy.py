@@ -338,3 +338,33 @@ def test_model_token_reservations_are_atomic_and_conservative(policy):
     assert policy.settle_model_call(reservations[0], None)
     assert not policy.settle_model_call(reservations[0], 10)
     assert policy.local_model_budget()["tokens_observed"] == 0
+
+
+
+def test_approved_oracle_is_database_immutable_except_for_revocation(policy):
+    from uuid import UUID
+
+    import psycopg
+
+    proposed = policy.propose("immutable-oracle")
+    oracle_id = UUID(proposed["id"])
+    policy.approve(oracle_id, ORACLE_HASH, "reviewer")
+    with pytest.raises(psycopg.errors.RaiseException, match="identity"):
+        with policy.connect() as conn:
+            conn.execute(
+                "UPDATE oracle_proposal SET rule_hash = 'not-approved' WHERE id = %s",
+                (oracle_id,),
+            )
+    with pytest.raises(psycopg.errors.RaiseException, match="only be revoked"):
+        with policy.connect() as conn:
+            conn.execute(
+                "UPDATE oracle_proposal SET reviewed_by = 'spoofed' WHERE id = %s",
+                (oracle_id,),
+            )
+    assert policy.revoke_rule(oracle_id)
+    with pytest.raises(psycopg.errors.RaiseException, match="immutable"):
+        with policy.connect() as conn:
+            conn.execute(
+                "UPDATE oracle_proposal SET state = 'APPROVED' WHERE id = %s",
+                (oracle_id,),
+            )
