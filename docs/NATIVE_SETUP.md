@@ -129,3 +129,17 @@ silently certifying a finding.
 firewall. Do not substitute untrusted application code for the shipped fixture
 until proper process/account/network isolation and disposable target databases
 have been implemented and independently tested.
+
+
+## 6. Reproducible baseline evaluation
+
+Run the deterministic comparison locally, without any model API calls:
+
+```powershell
+python -m clashbolt.planner --trials 8
+```
+
+The JSON report binds seeds, the synthetic fixture and the oracle SHA-256,
+counts controlled failures, and records per-trial evidence hashes under an equal
+gate budget. It explicitly returns `promotion_eligible: false`. These runs
+cannot establish held-out performance, statistical advantage, or AI safety.

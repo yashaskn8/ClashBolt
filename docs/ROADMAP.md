@@ -18,7 +18,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A4 Evidence-Calibrated Abstention | UNKNOWN, deterministic abstention, persisted missing-receipt evidence gap | Model-specific evidence calibration and bounded diagnostic probes |
 | A5 Agent Decision Record | Typed plan, in-flight deadline, final receipt and expired-action recovery to UNKNOWN | Complete obligations, schema/version migration and crash-point tests |
 | A6 Counterexample Replanner | Deterministic finite follow-up | Persist feedback and test adaptive policy |
-| A7 Agent Evaluation Gate | Equal-budget local baseline comparison | Frozen held-out suites, promotion and rollback |
+| A7 Agent Evaluation Gate | Hashed synthetic training manifest, repeatable equal-gate-budget receipts, explicit promotion-ineligible status | Frozen *external held-out* suites, statistical validation, authenticated promotion and rollback |
 | P1 Experiment Composer | React typed form, approved oracle selection, operator-token-gated durable admission | Authenticated project ownership and durable drafts |
 | P2 Causal Run Timeline | Versioned events, SSE and snapshot reconciliation | Omission/reordering and cross-worker causal tests |
 | P3 Witness Review Desk | Evidence viewer, export, independently validated history, fresh-process replay and authoritative revocation display | Witness reduction, outside-machine reproduction and review decisions |
@@ -35,4 +35,4 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 
 ## Claim boundaries
 
-The synthetic `FAIL` demonstrates only an intentional test-fixture bug under controlled application checkpoints. Repeating its digest in a fresh Python process is not ungated or real-world reproduction. A generation fence covers database **control-plane state**, not arbitrary external effects. Fixed child processes are not secure sandboxes. A local operator token is not proof of independently authenticated reviewer identity. The semantic AI research hypothesis is **unverified**, and there is no exactly-once execution claim.
+The built-in benchmark manifest is a **known training fixture**, not held-out AI evidence. The synthetic `FAIL` demonstrates only an intentional test-fixture bug under controlled application checkpoints. Repeating its digest in a fresh Python process is not ungated or real-world reproduction. A generation fence covers database **control-plane state**, not arbitrary external effects. Fixed child processes are not secure sandboxes. A local operator token is not proof of independently authenticated reviewer identity. The semantic AI research hypothesis is **unverified**, and there is no exactly-once execution claim.
