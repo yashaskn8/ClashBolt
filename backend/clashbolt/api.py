@@ -12,9 +12,9 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from psycopg import Error as DatabaseError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from psycopg import Error as DatabaseError
 from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.accounts import (
