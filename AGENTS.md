@@ -30,3 +30,4 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
   tied to its worker lease generation and reclaimed after an expired claim.
 - **Approval:** Keep the reviewer secret distinct from the executor token.
   New model strategies remain unpromoted until held-out equal-budget evidence.
+\n- **Accounts:** Provision role credentials with the native CLI. A reviewer account\n  cannot execute operator actions; submitted reviewer and proposer labels are\n  replaced with authenticated local identity names. No public signup.\n

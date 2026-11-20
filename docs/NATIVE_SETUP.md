@@ -269,3 +269,58 @@ require the operator credential or a scope-limited tool capability.
 
 This separates credentials for review and execution, but is not yet proof
 of different human identities or a project-level RBAC system.
+
+
+## 13. Named local accounts (optional single-project role mode)
+
+The shared-token `private` mode remains supported for a single-machine lab.
+For a stronger local separation of review and execution, use **named accounts**
+instead. This mode has no public HTTP registration, default passwords, or
+passwords in environment variables. All credentials are provisioned by a
+trusted machine/database administrator from the local CLI.
+
+1. Set `CLASHBOLT_DATABASE_URL` to the trusted control PostgreSQL database.
+2. Apply the schema with `python -m clashbolt.accounts migrate`.
+3. Create individual accounts using the terminal commands below. Each command
+   prompts twice for a password (at least 16 characters), and never prints it.
+4. Set a fresh secret of **at least 32 characters** in the application runtime:
+   `CLASHBOLT_SESSION_SECRET`. Do not commit it or reuse a password.
+5. Set `CLASHBOLT_ACCESS_MODE=accounts`, restart the API, and sign in through
+   the React composer.
+
+```powershell
+python -m clashbolt.accounts create experiment-operator operator
+python -m clashbolt.accounts create independent-reviewer reviewer
+python -m clashbolt.accounts create read-only-user viewer
+$env:CLASHBOLT_ACCESS_MODE = "accounts"
+$env:CLASHBOLT_SESSION_SECRET = "REPLACE_WITH_FRESH_32_PLUS_CHAR_SECRET"
+```
+
+In account mode, operators may create proposals, plans, scoped capabilities,
+synthetic experiments and run cancellations; reviewers may only approve/revoke
+existing oracle proposals; viewers may inspect available read-only API data.
+The backend records the **authenticated account name**, ignoring identity
+labels supplied in request JSON. Cookies are signed, HTTP-only, SameSite=Strict,
+expire after one hour, and are revalidated against the active account on each
+request. Password-derived hashes, failed-login lockout, and revocable account
+sessions are persisted in PostgreSQL.
+
+A reviewer can select a pending proposal in the React console after signing in
+without possessing an operator credential. An operator can then sign back in
+to execute the separately approved proposal.
+
+To revoke an account and invalidate its sessions immediately, run:
+
+```powershell
+python -m clashbolt.accounts disable experiment-operator
+```
+
+To reset a password and invalidate existing sessions:
+
+```powershell
+python -m clashbolt.accounts reset independent-reviewer
+```
+
+This is **single-project local account authorization**, not SSO,
+multi-organization tenancy, production TLS termination, device trust, or a
+verified two-person approval process. Do not make the API Internet-facing.
