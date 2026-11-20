@@ -27,6 +27,51 @@ def test_same_cluster_and_remote_are_rejected():
         )
 
 
+def test_loopback_alias_cannot_reuse_control_database_port():
+    control = "postgresql://user:pwd@127.0.0.1:5432/control"
+    for alias in ("127.0.0.2", "127.1", "::1"):
+        host = f"[{alias}]" if ":" in alias else alias
+        with pytest.raises(ValueError, match="independent"):
+            validate_target_cluster(
+                f"postgresql://user:pwd@{host}:5432/postgres", control
+            )
+
+
+def test_libpq_hostaddr_and_service_cannot_redirect_target(monkeypatch):
+    control = "postgresql://user:pwd@127.0.0.1:5432/control"
+    target = "postgresql://admin:pwd@localhost:5433/postgres"
+    validate_target_cluster(target, control)
+
+    remote_hostaddr = target + "?hostaddr=198.51.100.1"
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(remote_hostaddr, control)
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(
+            target,
+            control + "?hostaddr=198.51.100.1",
+        )
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(target + "?service=remote-target", control)
+
+    monkeypatch.setenv("PGHOSTADDR", "198.51.100.1")
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(target, control)
+    monkeypatch.delenv("PGHOSTADDR")
+    monkeypatch.setenv("PGSERVICE", "remote-target")
+    with pytest.raises(ValueError, match="loopback"):
+        validate_target_cluster(target, control)
+
+
+def test_inherited_postgres_port_is_compared(monkeypatch):
+    control = "postgresql://user:pwd@127.0.0.1:5432/control"
+    target = "postgresql://admin:pwd@localhost/postgres"
+    monkeypatch.setenv("PGPORT", "5432")
+    with pytest.raises(ValueError, match="independent"):
+        validate_target_cluster(target, control)
+    monkeypatch.setenv("PGPORT", "5433")
+    validate_target_cluster(target, control)
+
+
 def test_target_database_is_per_run_and_is_dropped(cluster):
     admin, control = cluster
     first, second = uuid4(), uuid4()
