@@ -11,6 +11,10 @@ type Operations = {
   responsive_workers: number
   runs: Record<string, number>
   verifications: Record<string, number>
+  diagnostics?: {
+    status: 'NORMAL' | 'ATTENTION'
+    alerts: { code: string; message: string }[]
+  }
 }
 
 export default function RecentRuns({
@@ -62,6 +66,11 @@ export default function RecentRuns({
           Verification queue: {operations.verifications.PENDING ?? 0}
         </p>
       )}
+      {operations?.diagnostics?.alerts.map((alert) => (
+        <p className="error" role="status" key={alert.code}>
+          Operator check: {alert.message}
+        </p>
+      ))}
       {error && <p className="error" role="alert">{error}</p>}
       {runs.length === 0 && !error && <p className="help-text">No saved runs yet.</p>}
       <div className="recent-list">

@@ -39,6 +39,7 @@ from clashbolt.experiment import (
     execute,
 )
 from clashbolt.metrics import operational_metrics
+from clashbolt.ops_alerts import diagnose_operations
 from clashbolt.policy import POLICY_SCHEMA_VERSION
 from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
@@ -449,7 +450,8 @@ def create_app() -> FastAPI:
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        return require_ledger().operations()
+        snapshot = require_ledger().operations()
+        return {**snapshot, "diagnostics": diagnose_operations(snapshot)}
 
     @app.get("/api/metrics")
     def metrics(

@@ -23,7 +23,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
 | P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, role-bound signed sessions, revoked-account enforcement, selectable pending rules; legacy independent reviewer token | Multi-project isolation, SSO, administrative identity verification and cross-tenant tests |
-| P5 Live Run Operations | Cancellation, SSE reconnect, paged events, per-account drafts, target cleanup, operator-visible model-obligation counts, worker health and latency gauges | CPU/provider cost, automated alerts, full runbooks and load-tested multiuser UX |
+| P5 Live Run Operations | Cancellation, SSE reconnect, per-account drafts, model uncertainty, worker and queue gauges, fixed operator-facing backlog diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
 ## Dependency-ordered next gates
