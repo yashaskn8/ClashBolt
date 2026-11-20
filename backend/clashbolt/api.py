@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from clashbolt.accounts import AccountStore, sign_session, verify_session
 from clashbolt.experiment import (
     FIXTURE,
     FIXTURE_HASH,
@@ -64,6 +65,12 @@ class ExperimentRequest(BaseModel):
     schedule: Literal["overlap", "serial"]
 
 
+class AccountLogin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=48)
+    password: str = Field(min_length=1, max_length=256)
+
+
 class DraftRequest(ExperimentRequest):
     expected_version: int = Field(ge=0, le=2**63 - 2)
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
@@ -77,12 +84,26 @@ class RunRequest(ExperimentRequest):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ClashBolt Synthetic Lab", version="0.2.0")
+    app = FastAPI(title="ClashBolt Synthetic Lab", version="0.3.0")
+    access_mode = os.getenv("CLASHBOLT_ACCESS_MODE", "local")
+    if access_mode not in ("local", "private", "accounts"):
+        raise ValueError("Unsupported CLASHBOLT_ACCESS_MODE")
+    dsn = os.getenv("CLASHBOLT_DATABASE_URL")
+    account_store = AccountStore(dsn) if access_mode == "accounts" and dsn else None
+    session_secret = os.getenv("CLASHBOLT_SESSION_SECRET", "")
+    if access_mode == "accounts" and (
+        account_store is None or len(session_secret) < 32
+    ):
+        raise ValueError("Account mode needs database and a 32-character session secret")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
+        allow_headers=[
+            "Content-Type", "Authorization", "Last-Event-ID",
+            "X-Operator-Token", "X-Reviewer-Token",
+        ],
+        allow_credentials=True,
     )
     @app.middleware("http")
     async def local_only(request: Request, call_next):
@@ -141,6 +162,83 @@ def create_app() -> FastAPI:
                 )
         return await call_next(request)
 
+    @app.middleware("http")
+    async def account_access(request: Request, call_next):
+        if access_mode != "accounts" or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+        path = request.url.path
+        if path in ("/api/health", "/api/catalog", "/api/auth/login"):
+            return await call_next(request)
+        if path == "/api/session":
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        # A separately issued, bounded capability authorizes the one fixed tool.
+        if path == "/api/agent/tools/run" and request.method == "POST":
+            return await call_next(request)
+        identity = verify_session(
+            request.cookies.get("clashbolt_identity"), session_secret, account_store
+        )
+        if identity is None:
+            return JSONResponse(
+                status_code=401, content={"detail": "Named account session required"},
+            )
+        request.state.account = identity
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            reviewing = (
+                request.method == "POST"
+                and path.startswith("/api/oracle/proposals/")
+                and (path.endswith("/approve") or path.endswith("/revoke"))
+            )
+            permitted = (
+                path == "/api/auth/logout"
+                or (reviewing and identity["role"] == "reviewer")
+                or (not reviewing and identity["role"] == "operator")
+            )
+            if not permitted:
+                return JSONResponse(
+                    status_code=403, content={"detail": "Account role is not authorized"},
+                )
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/api/auth/login")
+    def account_login(request: Request, credentials: AccountLogin):
+        if account_store is None:
+            raise HTTPException(404, "Named accounts are not enabled")
+        identity = account_store.authenticate(
+            credentials.username, credentials.password
+        )
+        if identity is None:
+            raise HTTPException(401, "Invalid account credentials")
+        response = JSONResponse(content={
+            "username": identity["username"], "role": identity["role"],
+            "expires_in": 3600,
+        })
+        response.set_cookie(
+            key="clashbolt_identity",
+            value=sign_session(identity, session_secret),
+            httponly=True, samesite="strict", path="/api", max_age=3600,
+            secure=request.url.scheme == "https",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/auth/me")
+    def account_me(request: Request):
+        if account_store is None:
+            raise HTTPException(404, "Named accounts are not enabled")
+        identity = request.state.account
+        return {"username": identity["username"], "role": identity["role"]}
+
+    @app.post("/api/auth/logout")
+    def account_logout():
+        if account_store is None:
+            raise HTTPException(404, "Named accounts are not enabled")
+        response = JSONResponse(content={"status": "LOGGED_OUT"})
+        response.delete_cookie("clashbolt_identity", path="/api")
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.post("/api/session")
     def unlock_session(
         request: Request, x_operator_token: str | None = Header(default=None),
@@ -159,7 +257,6 @@ def create_app() -> FastAPI:
     # Scratch-only compatibility is intentionally bounded and volatile.
     runs: OrderedDict[str, dict] = OrderedDict()
     max_scratch_runs = 50
-    dsn = os.getenv("CLASHBOLT_DATABASE_URL")
     ledger = Ledger(dsn) if dsn else None
     app.include_router(policy_router(dsn))
 
@@ -195,10 +292,7 @@ def create_app() -> FastAPI:
                 "authority": "fixed-demo-rule",
             },
             "storage": "postgresql" if ledger else "memory-only",
-            "access_mode": (
-                "private" if os.getenv("CLASHBOLT_ACCESS_MODE") == "private"
-                else "local"
-            ),
+            "access_mode": access_mode,
             "execution_backends": (
                 ["memory", "native-postgresql"]
                 if dsn and os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
@@ -255,10 +349,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/experiment-draft")
     def save_experiment_draft(
-        request: DraftRequest,
+        request: DraftRequest, http_request: Request,
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         try:
             return require_ledger().save_draft(
                 {
@@ -280,9 +374,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/runs", status_code=201)
     def submit_run(
-        request: RunRequest, x_operator_token: str | None = Header(default=None),
+        request: RunRequest, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ) -> dict:
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         store = require_ledger()
         try:
             return store.admit(
@@ -353,9 +448,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/runs/{run_id}/cancel")
     def cancel_run(
-        run_id: UUID, x_operator_token: str | None = Header(default=None),
+        run_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ) -> dict:
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         result = require_ledger().cancel(run_id)
         if result is None:
             raise HTTPException(404, "Run not found")
@@ -399,9 +495,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/runs/{run_id}/reduce")
     async def minimize_witness(
-        run_id: UUID, x_operator_token: str | None = Header(default=None),
+        run_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ) -> dict:
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         current = require_ledger().get(run_id)
         if not current or current["status"] != "COMPLETE" or current["verdict"] != "FAIL":
             raise HTTPException(409, "Only current approved failures can be reduced")
@@ -432,9 +529,10 @@ def create_app() -> FastAPI:
 
     @app.post("/api/runs/{run_id}/replay")
     async def replay_durable_run(
-        run_id: UUID, x_operator_token: str | None = Header(default=None),
+        run_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
     ) -> dict:
-        require_operator(x_operator_token)
+        require_operator(x_operator_token, http_request)
         original = require_ledger().get(run_id)
         if original is None:
             raise HTTPException(404, "Run not found")
