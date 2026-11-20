@@ -398,3 +398,37 @@ def test_draft_api_requires_operator_credential(ledger, monkeypatch):
         assert client.post(
             "/api/experiment-draft", json=payload, headers=headers
         ).status_code == 409
+
+
+
+def test_migrations_are_atomic_and_serialize_competing_starts(ledger):
+    from clashbolt.policy import POLICY_SCHEMA_VERSION
+    from clashbolt.store import BASE_SCHEMA_VERSION
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(lambda _: ledger.migrate(), range(4))) == [
+            None, None, None, None
+        ]
+    with ledger.connect() as conn:
+        revisions = dict(conn.execute(
+            "SELECT component, version FROM schema_revision ORDER BY component"
+        ).fetchall())
+    assert revisions == {
+        "control": BASE_SCHEMA_VERSION,
+        "policy": POLICY_SCHEMA_VERSION,
+    }
+
+
+def test_migration_refuses_unknown_future_schema(ledger):
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE schema_revision SET version = 999 WHERE component = 'policy'"
+        )
+    try:
+        with pytest.raises(ValueError, match="newer"):
+            ledger.migrate()
+    finally:
+        with ledger.connect() as conn:
+            conn.execute(
+                "UPDATE schema_revision SET version = 3 WHERE component = 'policy'"
+            )

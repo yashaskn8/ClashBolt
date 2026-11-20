@@ -17,6 +17,9 @@ from clashbolt.experiment import ORACLE_HASH, SCHEDULES, TARGET_REVISION
 from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
+SCHEMA_LOCK_ID = 538192047
+BASE_SCHEMA_VERSION = 2
+
 _SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS project_quota (
@@ -152,6 +155,33 @@ def _event(conn: psycopg.Connection, row: dict, note: str) -> None:
     )
 
 
+def _record_schema_revision(conn, component: str, version: int) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_revision (
+            component TEXT PRIMARY KEY,
+            version INTEGER NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    current = conn.execute(
+        "SELECT version FROM schema_revision WHERE component = %s FOR UPDATE",
+        (component,),
+    ).fetchone()
+    if current and current["version"] > version:
+        raise ValueError("Database schema is newer than the installed application")
+    conn.execute(
+        """
+        INSERT INTO schema_revision(component, version)
+        VALUES (%s, %s)
+        ON CONFLICT (component)
+        DO UPDATE SET version = EXCLUDED.version, updated_at = now()
+        """,
+        (component, version),
+    )
+
+
 class Ledger:
     def __init__(self, dsn: str):
         self.dsn = dsn
@@ -159,10 +189,17 @@ class Ledger:
     def connect(self) -> psycopg.Connection:
         return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
 
+    @staticmethod
+    def _apply_base_schema(conn) -> None:
+        for statement in _SCHEMA:
+            conn.execute(statement)
+        _record_schema_revision(conn, "control", BASE_SCHEMA_VERSION)
+
     def migrate(self) -> None:
+        """Atomic, serialized, idempotent control-plane schema migration."""
         with self.connect() as conn:
-            for statement in _SCHEMA:
-                conn.execute(statement)
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
+            self._apply_base_schema(conn)
 
     def admit(
         self,

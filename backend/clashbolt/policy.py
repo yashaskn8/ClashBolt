@@ -21,7 +21,7 @@ from clashbolt.experiment import (
 )
 from clashbolt.frontier import next_frontier_plan, rank_frontier
 from clashbolt.oracle_workshop import RuleCandidate, evaluate_candidate, valid_evidence
-from clashbolt.store import Ledger
+from clashbolt.store import Ledger, SCHEMA_LOCK_ID, _record_schema_revision
 
 _POLICY_SCHEMA = (
     """
@@ -111,12 +111,18 @@ _POLICY_SCHEMA = (
 )
 
 
+POLICY_SCHEMA_VERSION = 3
+
+
 class Policy(Ledger):
     def migrate(self) -> None:
-        super().migrate()
+        """Control and policy schema changes commit atomically as one version."""
         with self.connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
+            self._apply_base_schema(conn)
             for statement in _POLICY_SCHEMA:
                 conn.execute(statement)
+            _record_schema_revision(conn, "policy", POLICY_SCHEMA_VERSION)
 
     def propose(
         self, proposed_by: str = "deterministic-workshop",
