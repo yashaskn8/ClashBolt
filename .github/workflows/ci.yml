@@ -58,6 +58,12 @@ jobs:
         working-directory: frontend
       - run: npm run test:e2e
         working-directory: frontend
+      - name: Build frontend assets for same-origin deployment smoke test
+        run: npm run build
+        working-directory: frontend
+      - name: Verify same-origin static deployment in Chromium
+        run: CLASHBOLT_BROWSER_MODE=static npm run test:e2e
+        working-directory: frontend
       - name: Initialize native PostgreSQL for role-based browser coverage
         run: |
           sudo apt-get update -qq
