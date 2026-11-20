@@ -345,3 +345,20 @@ rather than silently retrying an uncertain effect.
 
 This is a **single-project native worker queue**, not a distributed exactly-once
 effect guarantee or an externally verified finding.
+
+
+## 15. Operational status and request boundaries
+
+`GET /api/health` is process liveness only. `GET /api/ready` checks native
+PostgreSQL connectivity, expected schema revisions, and configured active
+accounts in named-account mode. For worker availability use the **operator-only**
+`GET /api/operations`: it shows responsive worker heartbeats, pending run
+count and native verification queue depth. The React recovery index shows the
+same snapshot to an authorized operator. Heartbeats older than 15 seconds are
+reported as stale; an active API is not evidence of an active worker.
+
+Browser writes are restricted to the documented local origins; unexpected
+`Host` headers and non-loopback peers are rejected, and API data is marked
+`Cache-Control: no-store`. These defenses do not replace actual host-enforced
+network egress rules, project tenancy, TLS, or a penetration test. Do not
+expose the synthetic lab beyond a trusted local machine.
