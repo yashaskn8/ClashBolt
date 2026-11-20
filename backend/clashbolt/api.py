@@ -1,8 +1,12 @@
 """ClashBolt API: local scratch lab and optional PostgreSQL durable run control."""
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -27,6 +31,28 @@ from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import Ledger
 from clashbolt.witness import verify
+
+
+def _signed_session(secret: str) -> str:
+    payload = f"{int(time.time()) + 3600}.{secrets.token_urlsafe(18)}"
+    digest = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{digest}"
+
+
+def _valid_session(cookie: str | None, secret: str | None) -> bool:
+    if not cookie or not secret:
+        return False
+    try:
+        expiry, nonce, digest = cookie.split(".", 2)
+        if len(nonce) > 64 or len(digest) != 64 or not expiry.isdigit():
+            return False
+        if not int(time.time()) < int(expiry) <= int(time.time()) + 3600:
+            return False
+        payload = f"{expiry}.{nonce}"
+        correct = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(correct, digest)
+    except (TypeError, ValueError):
+        return False
 
 
 class ExperimentRequest(BaseModel):
@@ -62,6 +88,43 @@ def create_app() -> FastAPI:
                 content={"detail": "ClashBolt is restricted to local connections"},
             )
         return await call_next(request)
+
+    @app.middleware("http")
+    async def private_access(request: Request, call_next):
+        if (
+            os.getenv("CLASHBOLT_ACCESS_MODE") != "private"
+            or not request.url.path.startswith("/api/")
+            or request.url.path in ("/api/health", "/api/catalog", "/api/session")
+        ):
+            return await call_next(request)
+        secret = os.getenv("CLASHBOLT_OPERATOR_TOKEN")
+        if not _valid_session(request.cookies.get("clashbolt_session"), secret):
+            return JSONResponse(
+                status_code=401, content={"detail": "Private operator session required"}
+            )
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            try:
+                require_operator(request.headers.get("X-Operator-Token"))
+            except HTTPException:
+                return JSONResponse(
+                    status_code=403, content={"detail": "Operator token required"}
+                )
+        return await call_next(request)
+
+    @app.post("/api/session")
+    def unlock_session(
+        request: Request, x_operator_token: str | None = Header(default=None),
+    ):
+        require_operator(x_operator_token)
+        response = JSONResponse(content={"status": "UNLOCKED", "expires_in": 3600})
+        response.set_cookie(
+            key="clashbolt_session",
+            value=_signed_session(x_operator_token),
+            max_age=3600, httponly=True, samesite="strict",
+            path="/api", secure=request.url.scheme == "https",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     runs: dict[str, dict] = {}
     dsn = os.getenv("CLASHBOLT_DATABASE_URL")
@@ -100,6 +163,10 @@ def create_app() -> FastAPI:
                 "authority": "fixed-demo-rule",
             },
             "storage": "postgresql" if ledger else "memory-only",
+            "access_mode": (
+                "private" if os.getenv("CLASHBOLT_ACCESS_MODE") == "private"
+                else "local"
+            ),
             "execution_backends": (
                 ["memory", "native-postgresql"]
                 if dsn and os.getenv("CLASHBOLT_TARGET_ADMIN_URL")

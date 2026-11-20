@@ -42,3 +42,35 @@ def test_remote_direct_client_is_denied():
         assert client.post(
             "/api/experiments", json={"variant": "racy", "schedule": "overlap"}
         ).status_code == 403
+
+
+
+def test_private_mode_requires_operator_session_for_reads_and_writes(monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "private")
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "local-private-secret")
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/catalog").status_code == 200
+        assert client.get("/api/experiments/fake").status_code == 401
+        payload = {"variant": "racy", "schedule": "overlap"}
+        assert client.post("/api/experiments", json=payload).status_code == 401
+        assert client.post(
+            "/api/session", headers={"X-Operator-Token": "wrong"}
+        ).status_code == 403
+        unlocked = client.post(
+            "/api/session", headers={"X-Operator-Token": "local-private-secret"}
+        )
+        assert unlocked.status_code == 200
+        assert "httponly" in unlocked.headers["set-cookie"].lower()
+        assert client.post("/api/experiments", json=payload).status_code == 403
+        accepted = client.post(
+            "/api/experiments", json=payload,
+            headers={"X-Operator-Token": "local-private-secret"},
+        )
+        assert accepted.status_code == 201
+        assert client.get(
+            f"/api/experiments/{accepted.json()['run_id']}"
+        ).status_code == 200

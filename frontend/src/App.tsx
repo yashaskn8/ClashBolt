@@ -47,6 +47,7 @@ type Catalog = {
   target_id: string
   target_revision: string
   storage: 'postgresql' | 'memory-only'
+  access_mode: 'local' | 'private'
   execution_backends: ExecutionBackend[]
   oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
 }
@@ -67,6 +68,7 @@ export default function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
   const [operatorToken, setOperatorToken] = useState('')
+  const [sessionReady, setSessionReady] = useState(false)
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
@@ -85,13 +87,29 @@ export default function App() {
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
+    if (catalog.access_mode === 'private' && !sessionReady) return
     fetch('/api/oracle/proposals')
       .then((response) => parseResponse<{ proposals: { id: string; state: string }[] }>(response))
       .then((data) => {
         setApprovedOracleId(data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null)
       })
       .catch(() => setApprovedOracleId(null))
-  }, [catalog?.storage])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady])
+
+  async function unlock() {
+    setError('')
+    try {
+      const response = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'X-Operator-Token': operatorToken },
+      })
+      await parseResponse<{ status: string }>(response)
+      setSessionReady(true)
+    } catch (cause) {
+      setSessionReady(false)
+      setError(cause instanceof Error ? cause.message : 'Operator login failed')
+    }
+  }
 
   async function run() {
     setBusy(true)
@@ -106,7 +124,8 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(storage === 'runs' ? { 'X-Operator-Token': operatorToken } : {}),
+          ...(storage === 'runs' || catalog?.access_mode === 'private'
+            ? { 'X-Operator-Token': operatorToken } : {}),
         },
         body: JSON.stringify({
           target_id: 'synthetic-inventory', variant, schedule,
@@ -238,24 +257,38 @@ export default function App() {
             )}
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
-            {catalog?.storage === 'postgresql' && (
+            {(catalog?.storage === 'postgresql' || catalog?.access_mode === 'private') && (
               <>
               <label className="field-label" htmlFor="operator-token">Local operator token</label>
               <input
                 id="operator-token" type="password" autoComplete="off"
-                value={operatorToken} onChange={(event) => setOperatorToken(event.target.value)}
+                value={operatorToken} onChange={(event) => {
+                  setOperatorToken(event.target.value)
+                  setSessionReady(false)
+                }}
               />
-              <p className="schedule-tip">
+              {catalog?.access_mode === 'private' && (
+                <button
+                  className="secondary-button" type="button"
+                  disabled={!operatorToken || sessionReady} onClick={unlock}
+                >
+                  {sessionReady ? 'Private session unlocked' : 'Unlock private API'}
+                </button>
+              )}
+              {catalog?.storage === 'postgresql' && (
+                <p className="schedule-tip">
                 Approved oracle: {approvedOracleId
                   ? approvedOracleId.slice(0, 13) + '…'
                   : 'none — approve the fixed rule in the console below before submitting'}
-              </p>
+                </p>
+              )}
               </>
             )}
             <button
               className="primary-button" type="button" onClick={run}
               disabled={
                 busy || !catalog ||
+                (catalog.access_mode === 'private' && !sessionReady) ||
                 (catalog.storage === 'postgresql' && (!approvedOracleId || !operatorToken))
               }
             >{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
@@ -308,7 +341,8 @@ export default function App() {
             )}
           </section>
         </div>
-        {catalog?.storage === 'postgresql' && (
+        {catalog?.storage === 'postgresql' &&
+        (catalog.access_mode !== 'private' || sessionReady) && (
           <RecentRuns onSelect={(run) => {
             setDurable(run)
             setResult(null)
@@ -319,7 +353,8 @@ export default function App() {
         {durable && <DurableMonitor
           initial={durable} onUpdate={setDurable} operatorToken={operatorToken}
         />}
-        {catalog?.storage === 'postgresql' && <PolicyConsole
+        {catalog?.storage === 'postgresql' &&
+        (catalog.access_mode !== 'private' || sessionReady) && <PolicyConsole
           variant={variant} schedule={schedule}
           onApproved={(id) => setApprovedOracleId(id)}
           operator={operatorToken}

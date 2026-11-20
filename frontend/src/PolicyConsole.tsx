@@ -53,7 +53,7 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
     await action(async () => {
       const result = await request<Rule>('/api/oracle/proposals', {
         proposed_by: 'deterministic-workshop',
-      })
+      }, operator)
       setRule(result)
       setCapability(null)
       setPlan(null)
@@ -80,7 +80,7 @@ export default function PolicyConsole({ variant, schedule, onApproved, operator 
     await action(async () => {
       const saved = await request<Plan>(
         '/api/agent/plans',
-        { proposal_id: rule.id, strategy: 'semantic', variant, seed: 0 },
+        { proposal_id: rule.id, strategy: 'semantic', variant, seed: 0 }, operator,
       )
       setPlan(saved)
       return saved
