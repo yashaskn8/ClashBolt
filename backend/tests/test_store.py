@@ -543,3 +543,23 @@ def test_metrics_endpoint_is_operator_only_and_redacts_worker_ids(ledger, monkey
         assert 'clashbolt_runs{state="PENDING"}' in response.text
         assert "clashbolt_responsive_workers" in response.text
         assert "sensitive-worker-name" not in response.text
+
+
+
+def test_readiness_can_require_fresh_separate_worker_heartbeat(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE worker_heartbeat SET last_seen = now() - interval '2 hours'"
+        )
+    with TestClient(create_app()) as client:
+        assert client.get("/api/ready").status_code == 200
+        assert client.get("/api/ready?require_worker=true").status_code == 503
+        ledger.heartbeat("ready-worker")
+        response = client.get("/api/ready?require_worker=true")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ready"

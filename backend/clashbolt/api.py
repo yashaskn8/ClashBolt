@@ -334,7 +334,7 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/ready")
-    def ready() -> dict:
+    def ready(require_worker: bool = False) -> dict:
         """Readiness does not create schema or hide failed dependencies."""
         if ledger is None:
             return {"status": "ready", "storage": "volatile-scratch-only"}
@@ -362,6 +362,13 @@ def create_app() -> FastAPI:
                         raise HTTPException(503, "No active named accounts are configured")
         except DatabaseError as error:
             raise HTTPException(503, "Control database is unavailable") from error
+        if require_worker:
+            try:
+                worker_count = ledger.operations()["responsive_workers"]
+            except DatabaseError as error:
+                raise HTTPException(503, "Worker liveness is unavailable") from error
+            if worker_count < 1:
+                raise HTTPException(503, "No responsive worker heartbeat")
         return {"status": "ready", "storage": "postgresql", "access_mode": access_mode}
 
     @app.get("/api/catalog")
