@@ -166,3 +166,18 @@ footer span { padding: 0 8px; color: #c1ec6b; }
   .columns { grid-template-columns: minmax(0, 1fr); }
   .notice { line-height: 1.6; }
 }
+
+.operations { margin-bottom: 36px; }
+.run-overview { display: flex; align-items: center; gap: 17px; flex-wrap: wrap; padding: 15px 0; }
+.run-overview code, .run-overview > span:last-child { color: #92a6bc; font-size: 12px; }
+.run-status { font: 700 11px ui-monospace, monospace; border-radius: 5px; padding: 7px 10px; background: #344458; color: #d2e5f7; }
+.status-complete { background: #263e30; color: #c1f5b5; }
+.status-unknown, .status-cancelling { background: #443824; color: #ffe0a0; }
+.status-cancelled { background: #3e2933; color: #ffb8bc; }
+.operation-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
+.operation-buttons button { width: auto; }
+.transition-list { list-style: none; margin: 24px 0 0; padding: 0; }
+.transition-list li { display: flex; gap: 16px; border-top: 1px solid #2b3a4d; padding: 14px 0; align-items: center; font-size: 12px; }
+.transition-list code { color: #bce56b; }
+.transition-list strong { min-width: 90px; color: #e0eafa; }
+.transition-list span { color: #91a7bf; }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import DurableMonitor, { type DurableRun } from './DurableMonitor'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
@@ -35,6 +36,7 @@ type Experiment = { run_id: string; witness: Witness; replay_status: string }
 type Catalog = {
   target_id: string
   target_revision: string
+  storage: 'postgresql' | 'memory-only'
   oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
 }
 
@@ -52,6 +54,8 @@ export default function App() {
   const [schedule, setSchedule] = useState<Schedule>('overlap')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [result, setResult] = useState<Experiment | null>(null)
+  const [durable, setDurable] = useState<DurableRun | null>(null)
+  const [replayStatus, setReplayStatus] = useState('NOT_RUN')
   const [busy, setBusy] = useState(false)
   const [replaying, setReplaying] = useState(false)
   const [error, setError] = useState('')
@@ -67,13 +71,20 @@ export default function App() {
     setBusy(true)
     setError('')
     setResult(null)
+    setDurable(null)
+    setReplayStatus('NOT_RUN')
     try {
-      const response = await fetch('/api/experiments', {
+      const storage = catalog?.storage === 'postgresql' ? 'runs' : 'experiments'
+      const response = await fetch(`/api/${storage}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_id: 'synthetic-inventory', variant, schedule }),
+        body: JSON.stringify({
+          target_id: 'synthetic-inventory', variant, schedule,
+          ...(storage === 'runs' ? { client_key: crypto.randomUUID(), step_budget: 4 } : {}),
+        }),
       })
-      setResult(await parseResponse<Experiment>(response))
+      if (storage === 'runs') setDurable(await parseResponse<DurableRun>(response))
+      else setResult(await parseResponse<Experiment>(response))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unexpected experiment error')
     } finally {
@@ -82,13 +93,15 @@ export default function App() {
   }
 
   async function replay() {
-    if (!result) return
+    if (!result && !durable?.witness) return
     setReplaying(true)
     setError('')
     try {
-      const response = await fetch(`/api/experiments/${result.run_id}/replay`, { method: 'POST' })
+      const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
+      const response = await fetch(`/api/${path}/replay`, { method: 'POST' })
       const proof = await parseResponse<{ replay_status: string }>(response)
-      setResult({ ...result, replay_status: proof.replay_status })
+      setReplayStatus(proof.replay_status)
+      if (result) setResult({ ...result, replay_status: proof.replay_status })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
     } finally {
@@ -96,7 +109,7 @@ export default function App() {
     }
   }
 
-  const witness = result?.witness
+  const witness = durable?.witness ?? result?.witness
 
   return (
     <div className="site-shell">
@@ -108,11 +121,11 @@ export default function App() {
           <span className="nav-disabled">◷ &nbsp; Run timeline <em>Later</em></span>
           <span className="nav-disabled">▣ &nbsp; Agent planning <em>Later</em></span>
         </nav>
-        <div className="sidebar-foot"><span className="live-dot" /> Local synthetic mode <small>Stage 1 · Architecture-backed prototype</small></div>
+        <div className="sidebar-foot"><span className="live-dot" /> Local synthetic mode <small>Stage 2 · PostgreSQL when configured</small></div>
       </aside>
 
       <main className="main">
-        <header className="topbar"><span>WORKSPACE <span className="crumb">/</span> EXPERIMENT LAB</span><span className="topbar-right">CLASHBOLT <b>0.1</b></span></header>
+        <header className="topbar"><span>WORKSPACE <span className="crumb">/</span> EXPERIMENT LAB</span><span className="topbar-right">CLASHBOLT <b>0.2</b></span></header>
         <section className="intro">
           <div className="eyebrow">CONTROLLED CONCURRENCY EXPLORATION</div>
           <h1>Find the clash.<br /><span>Prove the behavior.</span></h1>
@@ -144,8 +157,9 @@ export default function App() {
             <p className="schedule-tip">Application checkpoints only. The controller does not control operating-system or database internals.</p>
 
             <div className="rule-info"><span>INVARIANT / IMMUTABLE DEMO RULE</span><strong>{catalog?.oracle.rule ?? 'confirmed_count ≤ initial_stock; remaining_stock matches confirmations'}</strong><small>Version {catalog?.oracle.version ?? '1'} · Fixed fixture rule, not human-approved production policy</small></div>
-            <button className="primary-button" type="button" onClick={run} disabled={busy || !catalog}>{busy ? 'Running experiment…' : 'Run synthetic experiment'} <span>→</span></button>
+            <button className="primary-button" type="button" onClick={run} disabled={busy || !catalog}>{busy ? 'Running experiment…' : 'Submit synthetic experiment'} <span>→</span></button>
             {error && <p className="error" role="alert">{error}</p>}
+            <p className="help-text">Storage: {catalog?.storage ?? 'connecting'} · Durable runs require a separate worker.</p>
           </section>
 
           <section className="panel witness" aria-labelledby="witness-title">
@@ -160,14 +174,15 @@ export default function App() {
                 <div className="metrics"><div><small>INITIAL STOCK</small><strong>{witness.final_state.initial_stock}</strong></div><div><small>CONFIRMED</small><strong>{witness.final_state.confirmed_count}</strong></div><div><small>REMAINING</small><strong>{witness.final_state.remaining_stock}</strong></div></div>
                 <h3 className="subhead">Controlled checkpoint history</h3>
                 <ol className="steps">{witness.observed_steps.map((step) => <li key={step.sequence}><span className="step-number">{String(step.sequence).padStart(2, '0')}</span><span className="step-client">Client {step.client.toUpperCase()}</span><span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span></li>)}</ol>
-                <div className="evidence"><div><span>FIXTURE SHA256</span><code title={witness.fixture_hash}>{shortHash(witness.fixture_hash)}</code></div><div><span>ORACLE</span><code>{witness.oracle.id} @ {witness.oracle.version}</code></div><div><span>EVIDENCE SHA256</span><code title={witness.evidence_sha256}>{shortHash(witness.evidence_sha256)}</code></div><div><span>REPLAY</span><strong>{result?.replay_status}</strong></div></div>
+                <div className="evidence"><div><span>FIXTURE SHA256</span><code title={witness.fixture_hash}>{shortHash(witness.fixture_hash)}</code></div><div><span>ORACLE</span><code>{witness.oracle.id} @ {witness.oracle.version}</code></div><div><span>EVIDENCE SHA256</span><code title={witness.evidence_sha256}>{shortHash(witness.evidence_sha256)}</code></div><div><span>REPLAY</span><strong>{replayStatus !== 'NOT_RUN' ? replayStatus : result?.replay_status ?? 'NOT_RUN'}</strong></div></div>
                 <button className="secondary-button" type="button" onClick={replay} disabled={replaying}>{replaying ? 'Replaying on fresh state…' : 'Replay on a clean fixture'} ↻</button>
                 <p className="help-text">Replay compares the complete deterministic evidence hash. It does not establish uncontrolled reproduction.</p>
               </div>
             )}
           </section>
         </div>
-        <footer>CLASHBOLT LAB <span>·</span> No external targets, AI execution, or durable storage in this stage.</footer>
+        {durable && <DurableMonitor initial={durable} onUpdate={setDurable} />}
+        <footer>CLASHBOLT LAB <span>·</span> Synthetic targets only. PostgreSQL mode keeps durable control state, not external effects.</footer>
       </main>
     </div>
   )
