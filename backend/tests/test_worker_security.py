@@ -5,7 +5,6 @@ import subprocess
 import sys
 
 import pytest
-
 from clashbolt.worker import isolated_synthetic_run
 
 
