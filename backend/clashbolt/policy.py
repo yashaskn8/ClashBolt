@@ -741,11 +741,6 @@ class Policy(Ledger):
                 "rule_sha256": ORACLE_HASH,
                 "plan": plan,
             })
-            append_history(conn, row["id"], "PROPOSED", {
-                "proposal_id": str(proposal_id),
-                "rule_sha256": ORACLE_HASH,
-                "plan": plan,
-            })
             return {**row, "id": str(row["id"]), "plan": plan}
 
     def record_plan(self, proposal_id: UUID, plan: dict) -> dict:
@@ -765,6 +760,11 @@ class Policy(Ledger):
                 """,
                 (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
             ).fetchone()
+            append_history(conn, row["id"], "PROPOSED", {
+                "proposal_id": str(proposal_id),
+                "rule_sha256": ORACLE_HASH,
+                "plan": plan,
+            })
             return {**row, "id": str(row["id"]), "plan": plan}
 
     def plan_history(self, plan_id: UUID) -> dict | None:
