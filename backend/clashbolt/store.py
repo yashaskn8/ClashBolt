@@ -47,6 +47,8 @@ _SCHEMA = (
         UNIQUE (project_id, client_key)
     )
     """,
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "consumed_steps INTEGER NOT NULL DEFAULT 0",
     """
     CREATE INDEX IF NOT EXISTS experiment_claim_idx
     ON experiment_run (status, created_at)
@@ -87,6 +89,7 @@ def _public(row: dict) -> dict:
             str(row["approved_oracle_id"]) if row["approved_oracle_id"] else None
         ),
         "step_budget": row["step_budget"],
+        "consumed_steps": row["consumed_steps"],
         "status": row["status"],
         "version": row["version"],
         "lease_generation": row["lease_generation"],
@@ -311,8 +314,12 @@ class Ledger:
             ):
                 return False
 
+            observed = witness.get("observed_steps")
+            consumed = len(observed) if isinstance(observed, list) else 0
             if current["cancel_requested"]:
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "cancelled during execution"
+            elif consumed > current["step_budget"]:
+                status, verdict, note = "UNKNOWN", "UNKNOWN", "step budget exceeded"
             elif (
                 not approval
                 or approval["state"] != "APPROVED"
@@ -336,11 +343,12 @@ class Ledger:
             updated = conn.execute(
                 """
                 UPDATE experiment_run SET status = %s, verdict = %s,
-                    witness = %s, version = version + 1,
-                    lease_owner = NULL, lease_until = NULL, updated_at = now()
+                    witness = %s, consumed_steps = %s,
+                    version = version + 1, lease_owner = NULL,
+                    lease_until = NULL, updated_at = now()
                 WHERE id = %s RETURNING *
                 """,
-                (status, verdict, Jsonb(witness), run_id),
+                (status, verdict, Jsonb(witness), consumed, run_id),
             ).fetchone()
             _event(conn, updated, note)
             return True

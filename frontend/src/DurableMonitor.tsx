@@ -8,6 +8,8 @@ export type DurableRun = {
   version: number
   verdict: 'PASS' | 'FAIL' | 'UNKNOWN' | null
   cancel_requested: boolean
+  step_budget: number
+  consumed_steps: number
   witness: {
     variant: 'racy' | 'locked'
     schedule: 'overlap' | 'serial'
@@ -120,6 +122,7 @@ export default function DurableMonitor({ initial, onUpdate }: Props) {
         <span className={`run-status status-${initial.status.toLowerCase()}`}>{initial.status}</span>
         <code title={runId}>Run {runId.slice(0, 13)}…</code>
         <span>Version {initial.version}</span>
+        <span>Controlled gates: {initial.consumed_steps}/{initial.step_budget}</span>
       </div>
       {initial.status === 'PENDING' && (
         <p className="help-text">Queued. Start the separate Python worker to process this run.</p>

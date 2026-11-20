@@ -51,6 +51,8 @@ def test_worker_publishes_one_result_and_transitions(ledger):
     result = ledger.get(UUID(run["run_id"]))
     assert result["status"] == "COMPLETE"
     assert result["verdict"] == "FAIL"
+    assert result["consumed_steps"] == 4
+    assert result["step_budget"] == 4
     assert [e["status"] for e in ledger.transitions(UUID(run["run_id"]))] == [
         "PENDING", "RUNNING", "COMPLETE"
     ]
@@ -219,3 +221,18 @@ def test_oracle_revocation_withdraws_existing_verdict(ledger):
             approved_oracle_id=ledger.approval_id,
             client_key=str(uuid4()), variant="racy", schedule="overlap",
         )
+
+
+def test_step_budget_excess_never_certifies_oversized_trace(ledger):
+    run = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claim = ledger.claim("budget-worker")
+    assert claim and claim["run_id"] == run["run_id"]
+    witness = asyncio.run(execute("racy", "overlap"))
+    witness["observed_steps"].extend(witness["observed_steps"])
+    assert ledger.finish(
+        UUID(run["run_id"]), "budget-worker", claim["lease_generation"], witness
+    )
+    saved = ledger.get(UUID(run["run_id"]))
+    assert saved["status"] == "UNKNOWN"
+    assert saved["verdict"] == "UNKNOWN"
+    assert saved["consumed_steps"] == 8
