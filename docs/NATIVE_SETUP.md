@@ -324,3 +324,24 @@ python -m clashbolt.accounts reset independent-reviewer
 This is **single-project local account authorization**, not SSO,
 multi-organization tenancy, production TLS termination, device trust, or a
 verified two-person approval process. Do not make the API Internet-facing.
+
+
+## 14. Native verification without API database-administrator credentials
+
+For a native PostgreSQL experiment, the React witness desk submits a typed
+`REPLAY` or `REDUCE` verification job to:
+`POST /api/runs/{run_id}/verification-jobs`, with a JSON body such as
+`{"kind":"REPLAY"}`. Poll `GET /api/verification-jobs/{job_id}` to
+inspect the authoritative `PENDING`, `RUNNING`, `COMPLETE` or `UNKNOWN`
+result. The independent worker processes the job using its separately held
+target-cluster administrator credential.
+
+The API should receive only the **non-secret**
+`CLASHBOLT_TARGET_CLUSTER_URL`, while the worker has
+`CLASHBOLT_TARGET_ADMIN_URL`. Verification completion is bound to the
+current version of the approved experiment; withdrawal of the oracle makes
+previous results `UNKNOWN`. A missing worker receipt also yields `UNKNOWN`
+rather than silently retrying an uncertain effect.
+
+This is a **single-project native worker queue**, not a distributed exactly-once
+effect guarantee or an externally verified finding.

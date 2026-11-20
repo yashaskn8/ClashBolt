@@ -24,9 +24,12 @@ It must **not** contain `CLASHBOLT_TARGET_ADMIN_URL`.
 The **worker environment** contains its own control database DSN and, if
 native targets are enabled, the credential-bearing
 `CLASHBOLT_TARGET_ADMIN_URL`. The API must not share that secret.
-The API's native replay/reduction operations will fail closed when it does
-not have a target-admin credential; moving those operations to a worker-side
-job queue is a remaining engineering task.
+Native replay and reduction use version-fenced `verification_job` work
+submitted to the control database. The independent worker executes verification
+using its target-admin credential and persists a result that the API can read.
+For native runs, the React desk uses this queue instead of making API-side
+target connections. Legacy synchronous API replay/reduction endpoints should
+not be relied on in an API instance without target-admin credentials.
 
 Both units bind or communicate only on loopback and include systemd
 `IPAddressDeny=any` plus `IPAddressAllow=localhost`, along with CPU/memory
