@@ -38,6 +38,7 @@ class RunRequest(ExperimentRequest):
     client_key: str = Field(min_length=1, max_length=100)
     step_budget: int = Field(default=4, ge=4, le=32)
     approved_oracle_id: UUID
+    execution_backend: Literal["memory", "native-postgresql"] = "memory"
 
 
 def create_app() -> FastAPI:
@@ -97,6 +98,11 @@ def create_app() -> FastAPI:
                 "authority": "fixed-demo-rule",
             },
             "storage": "postgresql" if ledger else "memory-only",
+            "execution_backends": (
+                ["memory", "native-postgresql"]
+                if dsn and os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+                else ["memory"]
+            ),
             "limitations": (
                 "Local synthetic fixture only; no external targets, "
                 "network isolation, or human-approved policy"
@@ -160,6 +166,7 @@ def create_app() -> FastAPI:
                 schedule=request.schedule,
                 step_budget=request.step_budget,
                 approved_oracle_id=request.approved_oracle_id,
+                execution_backend=request.execution_backend,
             )
         except ValueError as error:
             status = 429 if "quota" in str(error).lower() else 409

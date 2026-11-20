@@ -70,3 +70,22 @@ def test_exception_still_drops_target(cluster):
             "SELECT count(*) FROM pg_database WHERE datname = %s",
             (f"cb_target_{run_id.hex}",),
         ).fetchone()[0] == 0
+
+
+
+def test_disposable_sql_fixture_matches_synthetic_contract(cluster):
+    import asyncio
+
+    from clashbolt.experiment import execute_postgres
+    from clashbolt.witness import validate_contract
+
+    admin, control = cluster
+    with disposable_target(admin, control, uuid4()) as target:
+        broken = asyncio.run(execute_postgres("racy", "overlap", target.url))
+        assert broken["execution_backend"] == "native-postgresql"
+        assert broken["verdict"] == "FAIL"
+        assert validate_contract(broken) is None
+    with disposable_target(admin, control, uuid4()) as target:
+        corrected = asyncio.run(execute_postgres("locked", "overlap", target.url))
+        assert corrected["verdict"] == "PASS"
+        assert validate_contract(corrected) is None

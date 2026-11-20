@@ -7,16 +7,29 @@ import os
 import sys
 from uuid import UUID, uuid4
 
+import psycopg
+
 from clashbolt.experiment import ORACLE_HASH
 from clashbolt.policy import Policy
 from clashbolt.store import Ledger
+from clashbolt.target_db import disposable_target
 
 
-async def isolated_synthetic_run(variant: str, schedule: str) -> dict:
-    """Launch only the installed fixture runner with allowlisted typed arguments."""
+async def isolated_synthetic_run(
+    variant: str, schedule: str, target_dsn: str | None = None
+) -> dict:
+    """Run the allowlisted child with a minimized environment."""
+    environment = {
+        key: os.environ[key]
+        for key in ("PATH", "VIRTUAL_ENV", "SYSTEMROOT", "WINDIR")
+        if key in os.environ
+    }
+    if target_dsn is not None:
+        environment["CLASHBOLT_TARGET_DATABASE_URL"] = target_dsn
     process = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "clashbolt.fixture_runner", variant, schedule,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=environment,
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=5)
@@ -38,8 +51,17 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
     # If cancel raced with claim, the authoritative final transition is UNKNOWN.
     # The fixture is entirely synthetic, newly initialized for every execution.
     try:
-        witness = await isolated_synthetic_run(claim["variant"], claim["schedule"])
-    except (TimeoutError, RuntimeError, OSError, ValueError):
+        if claim["execution_backend"] == "native-postgresql":
+            admin_url = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+            if not admin_url:
+                raise ValueError("Native target cluster is not configured")
+            with disposable_target(admin_url, ledger.dsn, UUID(claim["run_id"])) as target:
+                witness = await isolated_synthetic_run(
+                    claim["variant"], claim["schedule"], target.url
+                )
+        else:
+            witness = await isolated_synthetic_run(claim["variant"], claim["schedule"])
+    except (TimeoutError, RuntimeError, OSError, ValueError, psycopg.Error):
         # An ambiguous child outcome is never promoted into a proved finding.
         witness = {
             "variant": claim["variant"],

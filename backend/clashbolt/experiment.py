@@ -6,6 +6,8 @@ The checkpoints control application actions, not OS or PostgreSQL scheduling.
 
 import asyncio
 import json
+
+import psycopg
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Literal
@@ -39,6 +41,13 @@ class InventoryFixture:
     stock: int = 1
     confirmed_count: int = 0
 
+    def final_state(self) -> dict:
+        return {
+            "initial_stock": FIXTURE["initial_stock"],
+            "remaining_stock": self.stock,
+            "confirmed_count": self.confirmed_count,
+        }
+
     def read(self, client: str) -> dict:
         return {"client": client, "checkpoint": "read", "observed_stock": self.stock}
 
@@ -57,6 +66,61 @@ class InventoryFixture:
             "stock_after": self.stock,
             "confirmed_after": self.confirmed_count,
         }
+
+
+class PostgresInventoryFixture:
+    """Restricted role runs real SQL on a fresh disposable database."""
+
+    def __init__(self, dsn: str):
+        self.dsn = dsn
+
+    def read(self, client: str) -> dict:
+        with psycopg.connect(self.dsn, connect_timeout=3) as conn:
+            row = conn.execute("SELECT remaining FROM inventory WHERE id = 1").fetchone()
+            if row is None:
+                raise RuntimeError("Disposable fixture missing")
+            return {"client": client, "checkpoint": "read", "observed_stock": row[0]}
+
+    def commit(self, client: str, observed: int, variant: Variant) -> dict:
+        with psycopg.connect(self.dsn, connect_timeout=3) as conn:
+            row = conn.execute(
+                "SELECT remaining FROM inventory WHERE id = 1 FOR UPDATE"
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Disposable fixture missing")
+            available = observed if variant == "racy" else row[0]
+            accepted = available >= 1
+            if accepted:
+                conn.execute(
+                    """
+                    UPDATE inventory SET remaining = %s,
+                        confirmed_count = confirmed_count + 1 WHERE id = 1
+                    """,
+                    (available - 1,),
+                )
+            new = conn.execute(
+                "SELECT remaining, confirmed_count FROM inventory WHERE id = 1"
+            ).fetchone()
+            return {
+                "client": client,
+                "checkpoint": "commit",
+                "accepted": accepted,
+                "stock_after": new[0],
+                "confirmed_after": new[1],
+            }
+
+    def final_state(self) -> dict:
+        with psycopg.connect(self.dsn, connect_timeout=3) as conn:
+            row = conn.execute(
+                "SELECT remaining, confirmed_count FROM inventory WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("Disposable fixture missing")
+            return {
+                "initial_stock": FIXTURE["initial_stock"],
+                "remaining_stock": row[0],
+                "confirmed_count": row[1],
+            }
 
 
 @dataclass
@@ -99,11 +163,20 @@ def check_invariant(state: dict | None, *, complete: bool) -> Verdict:
 
 
 async def execute(variant: Variant, schedule: Schedule) -> dict:
-    """Run only the shipped fixture and known, bounded schedules."""
+    """Run the shipped in-memory fixture."""
+    return await _execute(variant, schedule, InventoryFixture(), "memory")
+
+
+async def execute_postgres(variant: Variant, schedule: Schedule, dsn: str) -> dict:
+    """Run the same fixed gates against a freshly provisioned PostgreSQL target."""
+    return await _execute(
+        variant, schedule, PostgresInventoryFixture(dsn), "native-postgresql"
+    )
+
+
+async def _execute(variant: Variant, schedule: Schedule, fixture, backend: str) -> dict:
     if variant not in ("racy", "locked") or schedule not in SCHEDULES:
         raise ValueError("Only shipped synthetic targets and schedules are permitted")
-
-    fixture = InventoryFixture()
     controller = CheckpointController(SCHEDULES[schedule])
 
     async def client(client_id: str) -> None:
@@ -124,11 +197,7 @@ async def execute(variant: Variant, schedule: Schedule) -> dict:
         # A stalled gate is evidence of an incomplete experiment, not a bug.
         pass
 
-    state = {
-        "initial_stock": FIXTURE["initial_stock"],
-        "remaining_stock": fixture.stock,
-        "confirmed_count": fixture.confirmed_count,
-    }
+    state = fixture.final_state()
     verdict = check_invariant(state, complete=complete)
     evidence = {
         "target_id": TARGET_ID,
@@ -149,6 +218,8 @@ async def execute(variant: Variant, schedule: Schedule) -> dict:
         "complete": complete,
         "verdict": verdict,
     }
+    if backend != "memory":
+        evidence["execution_backend"] = backend
     encoded = json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
     digest = sha256(encoded).hexdigest()
     return {**evidence, "evidence_sha256": digest, "scope": "SYNTHETIC_ONLY"}

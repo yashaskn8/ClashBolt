@@ -6,6 +6,7 @@ This module deliberately does not connect to or execute an external target.
 
 import hashlib
 import json
+import os
 from uuid import UUID, uuid4
 
 import psycopg
@@ -13,6 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from clashbolt.experiment import ORACLE_HASH, SCHEDULES, TARGET_REVISION
+from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 _SCHEMA = (
@@ -49,6 +51,9 @@ _SCHEMA = (
     """,
     "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
     "consumed_steps INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "execution_backend TEXT NOT NULL DEFAULT 'memory' "
+    "CHECK (execution_backend IN ('memory', 'native-postgresql'))",
     """
     CREATE INDEX IF NOT EXISTS experiment_claim_idx
     ON experiment_run (status, created_at)
@@ -66,7 +71,9 @@ _SCHEMA = (
 )
 
 
-def _request_hash(variant: str, schedule: str, budget: int, approval_id: UUID) -> str:
+def _request_hash(
+    variant: str, schedule: str, budget: int, approval_id: UUID, execution_backend: str
+) -> str:
     request = {
         "variant": variant,
         "schedule": schedule,
@@ -74,6 +81,8 @@ def _request_hash(variant: str, schedule: str, budget: int, approval_id: UUID) -
         "oracle_hash": ORACLE_HASH,
         "approved_oracle_id": str(approval_id),
     }
+    if execution_backend != "memory":
+        request["execution_backend"] = execution_backend
     return hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
 
 
@@ -90,6 +99,7 @@ def _public(row: dict) -> dict:
         ),
         "step_budget": row["step_budget"],
         "consumed_steps": row["consumed_steps"],
+        "execution_backend": row["execution_backend"],
         "status": row["status"],
         "version": row["version"],
         "lease_generation": row["lease_generation"],
@@ -131,6 +141,7 @@ class Ledger:
         schedule: str,
         step_budget: int = 4,
         approved_oracle_id: UUID | None = None,
+        execution_backend: str = "memory",
     ) -> dict:
         """A retry with the same key+request returns the same run; conflicts reject."""
         if variant not in ("racy", "locked") or schedule not in SCHEDULES:
@@ -142,8 +153,15 @@ class Ledger:
 
         if not isinstance(approved_oracle_id, UUID):
             raise ValueError("Durable runs require an approved oracle version")
+        if execution_backend not in ("memory", "native-postgresql"):
+            raise ValueError("Unsupported execution backend")
+        if execution_backend == "native-postgresql":
+            target_admin = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+            if not target_admin:
+                raise ValueError("Separate native target cluster is not configured")
+            validate_target_cluster(target_admin, self.dsn)
         request_hash = _request_hash(
-            variant, schedule, step_budget, approved_oracle_id
+            variant, schedule, step_budget, approved_oracle_id, execution_backend
         )
         with self.connect() as conn:
             # The quota row serializes admission for this local workspace.
@@ -193,14 +211,15 @@ class Ledger:
                 """
                 INSERT INTO experiment_run (
                     id, project_id, client_key, request_hash,
-                    variant, schedule, oracle_hash, step_budget, approved_oracle_id
+                    variant, schedule, oracle_hash, step_budget, approved_oracle_id,
+                    execution_backend
                 )
-                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
                 """,
                 (
                     uuid4(), client_key, request_hash, variant, schedule,
-                    ORACLE_HASH, step_budget, approved_oracle_id,
+                    ORACLE_HASH, step_budget, approved_oracle_id, execution_backend,
                 ),
             ).fetchone()
             _event(conn, row, "admitted")
@@ -331,6 +350,8 @@ class Ledger:
                 witness.get("oracle", {}).get("sha256") != current["oracle_hash"]
                 or witness.get("variant") != current["variant"]
                 or witness.get("schedule") != current["schedule"]
+                or witness.get("execution_backend", "memory")
+                    != current["execution_backend"]
                 or validate_contract(witness) is not None
             ):
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "invalid or mismatched witness"

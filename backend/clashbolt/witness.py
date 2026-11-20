@@ -20,7 +20,9 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     check_invariant,
     execute,
+    execute_postgres,
 )
+from clashbolt.target_db import disposable_target
 
 
 def evidence_digest(witness: dict) -> str:
@@ -112,7 +114,9 @@ def validate_contract(witness: dict) -> str | None:
     if not isinstance(oracle, dict):
         return "Missing immutable oracle binding"
     if (
-        witness.get("scope") != "SYNTHETIC_ONLY"
+        witness.get("execution_backend", "memory")
+        not in ("memory", "native-postgresql")
+        or witness.get("scope") != "SYNTHETIC_ONLY"
         or witness.get("target_id") != TARGET_ID
         or witness.get("target_revision") != TARGET_REVISION
         or witness.get("fixture") != FIXTURE
@@ -146,7 +150,26 @@ async def verify(witness: dict) -> dict:
     if not witness.get("complete"):
         return {"status": "UNCONFIRMED", "reason": "Original controlled run was incomplete"}
 
-    replay = await execute(witness["variant"], witness["schedule"])
+    if witness.get("execution_backend") == "native-postgresql":
+        import os
+        from uuid import uuid4
+
+        admin_url = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+        control_url = os.getenv("CLASHBOLT_DATABASE_URL")
+        if not admin_url or not control_url:
+            return {
+                "status": "UNCONFIRMED",
+                "reason": "Independent native target database is not configured",
+            }
+        try:
+            with disposable_target(admin_url, control_url, uuid4()) as target:
+                replay = await execute_postgres(
+                    witness["variant"], witness["schedule"], target.url
+                )
+        except (OSError, ValueError, RuntimeError):
+            return {"status": "UNCONFIRMED", "reason": "Native target replay failed"}
+    else:
+        replay = await execute(witness["variant"], witness["schedule"])
     matched = (
         replay["complete"]
         and replay["evidence_sha256"] == witness["evidence_sha256"]
