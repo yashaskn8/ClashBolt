@@ -23,6 +23,7 @@ from clashbolt.experiment import (
     TARGET_REVISION,
     execute,
 )
+from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import Ledger
 from clashbolt.witness import verify
@@ -232,6 +233,39 @@ def create_app() -> FastAPI:
         if result["witness"] is None:
             raise HTTPException(409, "No complete witness exists yet")
         return result["witness"]
+
+    @app.post("/api/runs/{run_id}/reduce")
+    async def minimize_witness(
+        run_id: UUID, x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token)
+        current = require_ledger().get(run_id)
+        if not current or current["status"] != "COMPLETE" or current["verdict"] != "FAIL":
+            raise HTTPException(409, "Only current approved failures can be reduced")
+        cached = require_ledger().get_reduction(run_id)
+        if cached:
+            return cached
+        report = await asyncio.to_thread(
+            reduce_witness,
+            current["witness"],
+            os.getenv("CLASHBOLT_TARGET_ADMIN_URL"),
+            dsn,
+        )
+        if report["status"] not in ("MINIMAL", "BOUNDED"):
+            raise HTTPException(409, report.get("reason", "Reduction not confirmed"))
+        saved = require_ledger().record_reduction(
+            run_id, current["version"], report
+        )
+        if not saved:
+            raise HTTPException(409, "Run verdict changed during reduction")
+        return saved
+
+    @app.get("/api/runs/{run_id}/reduction")
+    def read_reduction(run_id: UUID) -> dict:
+        saved = require_ledger().get_reduction(run_id)
+        if not saved:
+            raise HTTPException(404, "No current reduction report")
+        return saved
 
     @app.post("/api/runs/{run_id}/replay")
     async def replay_durable_run(

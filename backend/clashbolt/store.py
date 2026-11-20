@@ -68,6 +68,15 @@ _SCHEMA = (
         PRIMARY KEY (run_id, version)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS run_reduction (
+        run_id UUID NOT NULL REFERENCES experiment_run(id),
+        run_version BIGINT NOT NULL,
+        report JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (run_id, run_version)
+    )
+    """,
 )
 
 
@@ -373,6 +382,49 @@ class Ledger:
             ).fetchone()
             _event(conn, updated, note)
             return True
+
+    def record_reduction(
+        self, run_id: UUID, version: int, report: dict
+    ) -> dict | None:
+        """Version-fenced report: never attach it to a revoked finding."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT status, verdict, version, witness FROM experiment_run "
+                "WHERE id = %s AND project_id = 'local' FOR UPDATE",
+                (run_id,),
+            ).fetchone()
+            if (
+                not row
+                or row["status"] != "COMPLETE"
+                or row["verdict"] != "FAIL"
+                or row["version"] != version
+                or report.get("original_evidence_sha256")
+                != row["witness"]["evidence_sha256"]
+            ):
+                return None
+            conn.execute(
+                """
+                INSERT INTO run_reduction(run_id, run_version, report)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (run_id, run_version) DO NOTHING
+                """,
+                (run_id, version, Jsonb(report)),
+            )
+            return report
+
+    def get_reduction(self, run_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT r.report FROM run_reduction r
+                JOIN experiment_run e ON e.id = r.run_id
+                    AND e.version = r.run_version
+                WHERE r.run_id = %s AND e.project_id = 'local'
+                    AND e.status = 'COMPLETE' AND e.verdict = 'FAIL'
+                """,
+                (run_id,),
+            ).fetchone()
+            return row["report"] if row else None
 
     def cancel(self, run_id: UUID) -> dict | None:
         with self.connect() as conn:

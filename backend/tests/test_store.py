@@ -307,3 +307,23 @@ def test_revocation_race_never_leaves_certified_verdict(ledger):
     assert current["status"] == "UNKNOWN"
     assert current["verdict"] == "UNKNOWN"
     assert current["witness"] is not None
+
+
+def test_reduction_report_is_bound_to_current_verdict(ledger):
+    from clashbolt.reducer import reduce_witness
+
+    run = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claim = ledger.claim("reducer-worker")
+    assert claim and claim["run_id"] == run["run_id"]
+    witness = asyncio.run(execute("racy", "overlap"))
+    assert ledger.finish(
+        UUID(run["run_id"]), "reducer-worker", claim["lease_generation"], witness
+    )
+    after = ledger.get(UUID(run["run_id"]))
+    report = reduce_witness(witness)
+    run_id = UUID(run["run_id"])
+    assert ledger.record_reduction(run_id, after["version"], report)
+    assert ledger.get_reduction(run_id)["status"] == "MINIMAL"
+    assert ledger.revoke_rule(ledger.approval_id)
+    assert ledger.get_reduction(run_id) is None
+    assert ledger.record_reduction(run_id, after["version"], report) is None
