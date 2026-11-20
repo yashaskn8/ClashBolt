@@ -17,6 +17,7 @@ TimeoutStopSec=20
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=yes
+CapabilityBoundingSet=
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
