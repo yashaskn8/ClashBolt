@@ -410,9 +410,10 @@ def test_migrations_are_atomic_and_serialize_competing_starts(ledger):
             None, None, None, None
         ]
     with ledger.connect() as conn:
-        revisions = dict(conn.execute(
+        rows = conn.execute(
             "SELECT component, version FROM schema_revision ORDER BY component"
-        ).fetchall())
+        ).fetchall()
+        revisions = {row["component"]: row["version"] for row in rows}
     assert revisions == {
         "control": BASE_SCHEMA_VERSION,
         "policy": POLICY_SCHEMA_VERSION,
