@@ -436,3 +436,34 @@ def test_migration_refuses_unknown_future_schema(ledger):
                 "UPDATE schema_revision SET version = %s WHERE component = 'policy'",
                 (POLICY_SCHEMA_VERSION,),
             )
+
+
+
+def test_certified_run_can_export_bounded_bundle(ledger, monkeypatch):
+    import asyncio
+    import io
+    import zipfile
+
+    from clashbolt.api import create_app
+    from clashbolt.experiment import execute
+    from fastapi.testclient import TestClient
+
+    queued = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
+    claim = ledger.claim("zip-worker")
+    assert claim
+    witness = asyncio.run(execute("racy", "overlap"))
+    assert ledger.finish(
+        UUID(queued["run_id"]), "zip-worker", claim["lease_generation"], witness
+    )
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    with TestClient(create_app()) as client:
+        response = client.get(f"/api/runs/{queued['run_id']}/bundle")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert len(response.content) < 100_000
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "witness.json" in archive.namelist()
+        assert ledger.revoke_rule(ledger.approval_id)
+        assert client.get(
+            f"/api/runs/{queued['run_id']}/bundle"
+        ).status_code == 409

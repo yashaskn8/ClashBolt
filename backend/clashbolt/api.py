@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from clashbolt.experiment import (
@@ -31,6 +31,7 @@ from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import Ledger
 from clashbolt.witness import verify
+from clashbolt.witness_bundle import create_bundle
 
 
 def _signed_session(secret: str) -> str:
@@ -331,6 +332,33 @@ def create_app() -> FastAPI:
         if result is None:
             raise HTTPException(404, "Run not found")
         return result
+
+    @app.get("/api/runs/{run_id}/bundle")
+    def download_witness_bundle(run_id: UUID):
+        current = require_ledger().get(run_id)
+        if not current:
+            raise HTTPException(404, "Run not found")
+        if (
+            current["status"] != "COMPLETE"
+            or current["verdict"] not in ("PASS", "FAIL")
+            or not current["witness"]
+        ):
+            raise HTTPException(409, "No currently certified witness to package")
+        try:
+            data = create_bundle(current["witness"])
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        # Read-only evidence package; no new execution or side effects.
+        return Response(
+            content=data,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="clashbolt-witness-{run_id}.zip"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/api/runs/{run_id}/witness")
     def download_witness(run_id: UUID) -> dict:

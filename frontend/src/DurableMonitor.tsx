@@ -115,6 +115,23 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
     }
   }
 
+  async function exportBundle() {
+    if (!initial.witness || initial.status !== 'COMPLETE') return
+    try {
+      const response = await fetch(`/api/runs/${runId}/bundle`)
+      if (!response.ok) throw new Error('Bundle export rejected')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `clashbolt-witness-${runId}.zip`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('Portable witness package could not be exported.')
+    }
+  }
+
   async function exportEvidence() {
     if (!initial.witness) return
     const bytes = JSON.stringify(initial.witness, null, 2)
@@ -162,6 +179,13 @@ export default function DurableMonitor({ initial, onUpdate, operatorToken }: Pro
           onClick={() => void exportEvidence()} disabled={!initial.witness}
         >
           Export synthetic evidence (JSON)
+        </button>
+        <button
+          type="button" className="secondary-button"
+          onClick={() => void exportBundle()}
+          disabled={!initial.witness || initial.status !== 'COMPLETE'}
+        >
+          Export verifier bundle (ZIP)
         </button>
       </div>
       {error && <p className="error" role="alert">{error}</p>}
