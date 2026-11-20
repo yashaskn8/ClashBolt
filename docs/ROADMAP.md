@@ -6,7 +6,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission and events, idempotency, version-CAS drafts, serialized atomic migrations, verified private native backup archive | Restore drills, multi-node failover, recovery and schema rollback tests |
-| B2 Fenced Worker Claims | Run and verification claim generations, stale-result rejection, generation-tied targets and worker heartbeats | Database failover, crash-point matrix and target-effect readback |
+| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections | Actual process suspension/crash and network-partition tests, database failover and target-effect readback |
 | B3 Disposable Target Isolation | Fresh per-run native PostgreSQL database and role, orphan cleanup, bounded child resources, hardened API/worker systemd templates | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |

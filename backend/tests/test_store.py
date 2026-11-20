@@ -563,3 +563,59 @@ def test_readiness_can_require_fresh_separate_worker_heartbeat(ledger, monkeypat
         response = client.get("/api/ready?require_worker=true")
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
+
+
+
+def test_120_crash_and_duplicate_injections_fence_every_terminal_result(ledger):
+    """Deterministic 120-case local crash matrix; no real host failure is claimed."""
+    witness = asyncio.run(execute("locked", "serial"))
+    outcomes = {"COMPLETE": 0, "UNKNOWN": 0}
+    for index in range(120):
+        created = admit(
+            ledger, client_key=str(uuid4()), variant="locked", schedule="serial"
+        )
+        run_id = UUID(created["run_id"])
+        owner = f"crash-injection-{index}"
+        first = ledger.claim(owner, lease_seconds=5)
+        assert first and first["run_id"] == created["run_id"]
+        generation = first["lease_generation"]
+
+        if index % 3 == 0:
+            # The original worker missed its lease, then resumed too late.
+            with ledger.connect() as conn:
+                conn.execute(
+                    "UPDATE experiment_run SET lease_until = now() - interval "
+                    "'1 second' WHERE id = %s",
+                    (run_id,),
+                )
+            second = ledger.claim(f"{owner}-replacement", lease_seconds=5)
+            assert second and second["run_id"] == created["run_id"]
+            assert not ledger.finish(run_id, owner, generation, witness)
+            assert ledger.finish(
+                run_id, f"{owner}-replacement", second["lease_generation"], witness
+            )
+            expected = ["PENDING", "RUNNING", "RUNNING", "COMPLETE"]
+        elif index % 3 == 1:
+            # Cancellation after claim never pretends the target was rolled back.
+            assert ledger.cancel(run_id)["status"] == "CANCELLING"
+            with ledger.connect() as conn:
+                conn.execute(
+                    "UPDATE experiment_run SET lease_until = now() - interval "
+                    "'1 second' WHERE id = %s",
+                    (run_id,),
+                )
+            assert ledger.reconcile_expired_cancelled() == 1
+            assert not ledger.finish(run_id, owner, generation, witness)
+            expected = ["PENDING", "RUNNING", "CANCELLING", "UNKNOWN"]
+        else:
+            assert ledger.finish(run_id, owner, generation, witness)
+            assert not ledger.finish(run_id, owner, generation, witness)
+            expected = ["PENDING", "RUNNING", "COMPLETE"]
+
+        final = ledger.get(run_id)
+        outcomes[final["status"]] += 1
+        assert [event["status"] for event in ledger.transitions(run_id)] == expected
+        assert final["verdict"] == (
+            "UNKNOWN" if final["status"] == "UNKNOWN" else "PASS"
+        )
+    assert outcomes == {"COMPLETE": 80, "UNKNOWN": 40}
