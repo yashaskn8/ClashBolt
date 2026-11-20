@@ -261,3 +261,65 @@ def test_private_reviewer_is_independent_of_operator_session(
     )
     assert revoke.status_code == 200
     assert revoke.json()["state"] == "REVOKED"
+
+
+def test_private_mode_scoped_tool_dispatch_is_not_operator_privilege(
+    policy_client, monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    from clashbolt.api import create_app
+
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "planner"}
+    ).json()
+    rule_id = proposal["id"]
+    operator_headers = {"X-Operator-Token": "ci-local-only-secret"}
+    assert policy_client.post(
+        f"/api/oracle/proposals/{rule_id}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "reviewer"},
+        headers=operator_headers,
+    ).status_code == 200
+    planned = policy_client.post(
+        "/api/agent/plans",
+        json={
+            "proposal_id": rule_id, "strategy": "semantic",
+            "variant": "racy", "seed": 0,
+        },
+    ).json()
+    plan_id = planned["id"]
+    issued = policy_client.post(
+        "/api/tool-capabilities",
+        json={
+            "proposal_id": rule_id, "variant": "racy",
+            "schedule": "overlap", "plan_id": plan_id,
+        },
+        headers=operator_headers,
+    )
+    assert issued.status_code == 201
+    token = issued.json()["token"]
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "private")
+    with TestClient(create_app()) as guest:
+        requested = {
+            "variant": "racy", "schedule": "overlap", "plan_id": plan_id,
+        }
+        assert guest.get("/api/oracle/proposals").status_code == 401
+        assert guest.post(
+            "/api/agent/tools/run", json=requested,
+        ).status_code == 403
+        rejected = guest.post(
+            "/api/agent/tools/run",
+            json={**requested, "schedule": "serial"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert rejected.status_code == 403
+        result = guest.post(
+            "/api/agent/tools/run", json=requested,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert result.status_code == 200, result.text
+        assert result.json()["verdict"] == "FAIL"
+        assert guest.post(
+            "/api/agent/tools/run", json=requested,
+            headers={"Authorization": f"Bearer {token}"},
+        ).status_code == 403

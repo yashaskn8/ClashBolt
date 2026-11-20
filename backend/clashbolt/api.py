@@ -164,9 +164,13 @@ def create_app() -> FastAPI:
             or request.url.path in ("/api/health", "/api/ready", "/api/catalog", "/api/session")
         ):
             return await call_next(request)
+        # Capability-only tool dispatch is independently authorized by the
+        # broker. It must not also require an operator session or token.
+        path = request.url.path
+        if path == "/api/agent/tools/run" and request.method == "POST":
+            return await call_next(request)
         # Review authority is independent: a reviewer must not need an
         # operator cookie or execution secret to approve or revoke a rule.
-        path = request.url.path
         reviewing = (
             request.method == "POST"
             and path.startswith("/api/oracle/proposals/")
