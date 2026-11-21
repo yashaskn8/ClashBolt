@@ -582,22 +582,25 @@ class Policy(Ledger):
             return True
 
     @staticmethod
-    def _issuer_has_local_operator_grant(conn, account_id: UUID) -> bool:
-        """Lock both role records while authorizing a named issuer.
+    def _issuer_has_project_operator_grant(
+        conn, account_id: UUID, project_id: str,
+    ) -> bool:
+        """Lock global identity and grant before any project capability debit.
 
-        Role removal/changes take an account row FOR UPDATE, preventing
-        a racing grant revocation from committing between this check and
-        the capability debit. No account grants exist in legacy local mode.
+        A tenant connection has no public search_path fallback: explicitly
+        qualify the authoritative identity/grant tables. Role changes lock the
+        same account row before revoking tenant capabilities.
         """
         row = conn.execute(
             """
-            SELECT a.id FROM local_account a
-            JOIN project_membership m ON m.account_id = a.id
+            SELECT a.id FROM public.local_account a
+            JOIN public.project_membership m ON m.account_id = a.id
+            JOIN public.project_workspace w ON w.project_id = m.project_id
             WHERE a.id = %s AND a.active = TRUE AND a.role = 'operator'
-              AND m.project_id = 'local' AND m.role = 'operator'
+              AND m.project_id = %s AND m.role = 'operator'
             FOR SHARE OF a, m
             """,
-            (account_id,),
+            (account_id, project_id),
         ).fetchone()
         return row is not None
 
@@ -645,8 +648,8 @@ class Policy(Ledger):
                         != "VERIFIED"
                 ):
                     raise ValueError("Capability must match one pending approved plan")
-            if issuer_account_id is not None and not self._issuer_has_local_operator_grant(
-                conn, issuer_account_id
+            if issuer_account_id is not None and not self._issuer_has_project_operator_grant(
+                conn, issuer_account_id, self.project_id
             ):
                 raise ValueError("Issuer no longer has local operator authority")
             cap = conn.execute(
@@ -672,10 +675,10 @@ class Policy(Ledger):
                 conn.execute(
                     """
                     UPDATE tool_capability
-                    SET issuer_account_id = %s, issuer_project_id = 'local'
+                    SET issuer_account_id = %s, issuer_project_id = %s
                     WHERE id = %s
                     """,
-                    (issuer_account_id, cap["id"]),
+                    (issuer_account_id, self.project_id, cap["id"]),
                 )
             # The secret is returned exactly once, never stored or recorded in audit.
             return {
@@ -732,8 +735,10 @@ class Policy(Ledger):
             if accounts_mode:
                 issuer_ok = bool(
                     issuer is not None
-                    and candidate.get("issuer_project_id") == "local"
-                    and self._issuer_has_local_operator_grant(conn, issuer)
+                    and candidate.get("issuer_project_id") == self.project_id
+                    and self._issuer_has_project_operator_grant(
+                        conn, issuer, self.project_id
+                    )
                 )
             else:
                 issuer_ok = issuer is None
