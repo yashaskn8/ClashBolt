@@ -179,9 +179,15 @@ def policy_router(dsn: str | None) -> APIRouter:
     ):
         require_operator(x_operator_token, http_request)
         try:
+            issuer = (
+                UUID(http_request.state.account["id"])
+                if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
+                else None
+            )
             return require_policy().issue(
                 request.proposal_id, request.variant, request.schedule,
                 request.max_calls, request.lifetime_seconds, request.plan_id,
+                issuer_account_id=issuer,
             )
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
@@ -290,7 +296,8 @@ def policy_router(dsn: str | None) -> APIRouter:
         secret = authorization.removeprefix("Bearer ")
         policy = require_policy()
         if len(secret) > 256 or not policy.authorize(
-            secret, request.variant, request.schedule, request.plan_id
+            secret, request.variant, request.schedule, request.plan_id,
+            accounts_mode=os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts",
         ):
             raise HTTPException(403, "Tool action denied by policy")
         # This is the only allowed tool and only uses the shipped fixture.
