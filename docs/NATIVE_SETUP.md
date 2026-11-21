@@ -525,3 +525,32 @@ The runner gets at most two sessions, read access to inventory, and update
 access to the two counters. Cluster setup requiring a client private key for
 the administrator must separately allow the disposable password-authenticated
 roles. The provisioner does not delegate the administrator's client key.
+
+## Ungated native fixture measurement (trusted local research only)
+
+After configuring separate native local PostgreSQL control and target clusters,
+the fixed synthetic inventory fixture can be sampled **without the four
+application checkpoint release gates**. Run this only on a trusted,
+disposable machine with the target administrator credential in the
+administrator's terminal, not inside an API process:
+
+```powershell
+python -m clashbolt.ungated --variant racy --trials 3
+python -m clashbolt.ungated --variant locked --trials 3
+```
+
+The first command may report any mixture of PASS and FAIL depending on
+natural concurrency timing; do not claim reproduction unless an actual
+failure occurred. The fixed corrected variant should pass. The tool
+creates and drops a fresh PostgreSQL database and restricted user for each
+trial. It reports only per-client observations, the final state, wall time
+and invariant result. It deliberately does **not** infer a global execution
+order, issue a durable verified witness, perform general-target fuzzing,
+or claim an independent vulnerability finding.
+
+CI also runs a separate guarded test that force-stops the **ephemeral
+control** PostgreSQL cluster after it acknowledges a run and reclaims
+its worker lease after restart. That crash drill refuses execution outside
+GitHub Actions or on a non-`clashbolt_test` database. It validates only
+local primary recovery, not HA failover, replication, or external restore
+SLAs. No Docker or network-supplied target is involved.
