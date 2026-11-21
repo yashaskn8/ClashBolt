@@ -8,6 +8,7 @@ import asyncio
 import json
 from hashlib import sha256
 from pathlib import Path
+from typing import Callable, ContextManager
 
 import psycopg
 
@@ -24,7 +25,7 @@ from clashbolt.experiment import (
     execute,
     execute_postgres,
 )
-from clashbolt.target_db import disposable_target
+from clashbolt.target_db import TargetLease, disposable_target
 from clashbolt.target_service import request_fixture, service_enabled
 
 
@@ -145,7 +146,10 @@ def validate_contract(witness: dict) -> str | None:
     return _history_error(witness)
 
 
-async def verify(witness: dict) -> dict:
+async def verify(
+    witness: dict,
+    target_factory: Callable[[], ContextManager[TargetLease]] | None = None,
+) -> dict:
     """Three states: INVALID, REPRODUCED, or UNCONFIRMED."""
     rejected = validate_contract(witness)
     if rejected:
@@ -165,7 +169,11 @@ async def verify(witness: dict) -> dict:
                 "reason": "Independent native target database is not configured",
             }
         try:
-            with disposable_target(admin_url, control_url, uuid4()) as target:
+            target_context = (
+                target_factory() if target_factory
+                else disposable_target(admin_url, control_url, uuid4())
+            )
+            with target_context as target:
                 if service_enabled():
                     replay = await asyncio.to_thread(
                         request_fixture, witness["variant"], witness["schedule"], target.url
