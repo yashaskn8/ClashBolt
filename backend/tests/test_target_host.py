@@ -64,7 +64,19 @@ def test_live_instances_have_distinct_uids_and_kernel_resource_limits():
             assert int((group / "pids.max").read_text()) == 8
             quota, period = map(int, (group / "cpu.max").read_text().split())
             assert quota * 2 == period
-            pid = int((group / "cgroup.procs").read_text().strip())
+            # cgroup.procs can temporarily contain the root-owned
+            # ExecStartPre helper. Verify the actual fixture MainPID instead.
+            pid = 0
+            startup_deadline = monotonic() + 5
+            while monotonic() < startup_deadline:
+                pid = int(subprocess.check_output([
+                    "systemctl", "show", "-p", "MainPID", "--value", unit,
+                ], text=True).strip())
+                if pid > 0:
+                    break
+                sleep(0.05)
+            assert pid > 0
+            assert str(pid) in (group / "cgroup.procs").read_text().split()
             uids.add(Path(f"/proc/{pid}").stat().st_uid)
         assert len(uids) == 2 and not uids.intersection({0, os.getuid()})
     finally:
