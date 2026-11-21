@@ -372,10 +372,43 @@ class AccountStore(Policy):
                 else None
             )
 
-    def grant_local_role(self, username: str, role: str) -> bool:
-        """Trusted CLI-only grant; cannot expand the account's role ceiling."""
-        if not USERNAME.fullmatch(username) or role not in ROLES:
-            raise ValueError("Invalid local username or project role")
+    @staticmethod
+    def _revoke_issued_capabilities(
+        conn, account_id: UUID, project_id: str | None = None
+    ) -> None:
+        """Permanently revoke account bearers across trusted workspace schemas.
+
+        Called only while holding the account row FOR UPDATE, matching the
+        broker's account-then-capability lock order. All changes commit atomically
+        with the account or membership mutation.
+        """
+        if project_id is None:
+            workspaces = conn.execute(
+                "SELECT project_id, schema_name FROM project_workspace "
+                "ORDER BY project_id"
+            ).fetchall()
+        else:
+            workspaces = conn.execute(
+                "SELECT project_id, schema_name FROM project_workspace "
+                "WHERE project_id = %s", (project_id,),
+            ).fetchall()
+        for workspace in workspaces:
+            conn.execute(
+                sql.SQL(
+                    "UPDATE {}.tool_capability SET revoked = TRUE "
+                    "WHERE issuer_account_id = %s AND issuer_project_id = %s"
+                ).format(sql.Identifier(workspace["schema_name"])),
+                (account_id, workspace["project_id"]),
+            )
+
+    def grant_project_role(self, username: str, role: str, project_id: str) -> bool:
+        """Trusted CLI-only grant within the account's global role ceiling."""
+        if (
+            not USERNAME.fullmatch(username)
+            or not USERNAME.fullmatch(project_id)
+            or role not in ROLES
+        ):
+            raise ValueError("Invalid account, project or grant role")
         with self.connect() as conn:
             account = conn.execute(
                 """
@@ -386,53 +419,56 @@ class AccountStore(Policy):
             ).fetchone()
             if not account:
                 return False
+            workspace = conn.execute(
+                "SELECT project_id FROM project_workspace WHERE project_id = %s",
+                (project_id,),
+            ).fetchone()
+            if not workspace:
+                raise ValueError("Project does not exist")
             if role not in ("viewer", account["role"]):
                 raise ValueError("A project grant cannot elevate the account's role")
             previous = conn.execute(
                 """
                 SELECT role FROM project_membership
-                WHERE project_id = 'local' AND account_id = %s FOR UPDATE
+                WHERE project_id = %s AND account_id = %s FOR UPDATE
                 """,
-                (account["id"],),
+                (project_id, account["id"]),
             ).fetchone()
             if previous and previous["role"] == role:
                 return True
             if previous and previous["role"] == "operator":
-                # A downgraded operator cannot keep a previously issued
-                # bearer token and regain it after a later re-grant.
-                conn.execute(
-                    """
-                    UPDATE tool_capability SET revoked = TRUE
-                    WHERE issuer_account_id = %s AND issuer_project_id = 'local'
-                    """,
-                    (account["id"],),
+                # Downgrades permanently revoke tokens; later re-grants must
+                # never revive the original bearer.
+                self._revoke_issued_capabilities(
+                    conn, account["id"], project_id
                 )
             conn.execute(
                 """
                 INSERT INTO project_membership(project_id, account_id, role)
-                VALUES ('local', %s, %s)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (project_id, account_id)
                 DO UPDATE SET role = EXCLUDED.role
                 """,
-                (account["id"], role),
+                (project_id, account["id"], role),
             )
             conn.execute(
                 """
                 INSERT INTO project_role_audit(
                     project_id, account_id, action, previous_role, new_role, actor
-                ) VALUES ('local', %s, %s, %s, %s, 'trusted-local-cli')
+                ) VALUES (%s, %s, %s, %s, %s, 'trusted-local-cli')
                 """,
                 (
-                    account["id"], "CHANGED" if previous else "GRANTED",
+                    project_id, account["id"],
+                    "CHANGED" if previous else "GRANTED",
                     previous["role"] if previous else None, role,
                 ),
             )
             return True
 
-    def revoke_local_role(self, username: str) -> bool:
-        """Removal immediately denies all local resource requests, even with a cookie."""
-        if not USERNAME.fullmatch(username):
-            raise ValueError("Invalid local username")
+    def revoke_project_role(self, username: str, project_id: str) -> bool:
+        """Remove exactly one grant; active sessions lose project access."""
+        if not USERNAME.fullmatch(username) or not USERNAME.fullmatch(project_id):
+            raise ValueError("Invalid account or project identifier")
         with self.connect() as conn:
             account = conn.execute(
                 "SELECT id FROM local_account WHERE username = %s FOR UPDATE",
@@ -443,28 +479,30 @@ class AccountStore(Policy):
             previous = conn.execute(
                 """
                 DELETE FROM project_membership
-                WHERE project_id = 'local' AND account_id = %s RETURNING role
+                WHERE project_id = %s AND account_id = %s RETURNING role
                 """,
-                (account["id"],),
+                (project_id, account["id"]),
             ).fetchone()
             if not previous:
                 return False
-            conn.execute(
-                """
-                UPDATE tool_capability SET revoked = TRUE
-                WHERE issuer_account_id = %s AND issuer_project_id = 'local'
-                """,
-                (account["id"],),
+            self._revoke_issued_capabilities(
+                conn, account["id"], project_id
             )
             conn.execute(
                 """
                 INSERT INTO project_role_audit(
                     project_id, account_id, action, previous_role, new_role, actor
-                ) VALUES ('local', %s, 'REVOKED', %s, NULL, 'trusted-local-cli')
+                ) VALUES (%s, %s, 'REVOKED', %s, NULL, 'trusted-local-cli')
                 """,
-                (account["id"], previous["role"]),
+                (project_id, account["id"], previous["role"]),
             )
             return True
+
+    def grant_local_role(self, username: str, role: str) -> bool:
+        return self.grant_project_role(username, role, "local")
+
+    def revoke_local_role(self, username: str) -> bool:
+        return self.revoke_project_role(username, "local")
 
     def get_account_draft(self, account_id: UUID) -> dict | None:
         with self.connect() as conn:
