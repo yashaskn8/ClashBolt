@@ -358,10 +358,25 @@ def create_app() -> FastAPI:
     ledger = Ledger(dsn) if dsn else None
     app.include_router(policy_router(dsn))
 
-    def require_ledger() -> Ledger:
+    def require_ledger(http_request: Request | None = None) -> Ledger:
         if ledger is None:
             raise HTTPException(503, "Set CLASHBOLT_DATABASE_URL for durable runs")
-        return ledger
+        if access_mode != "accounts":
+            return ledger
+        account = (
+            getattr(http_request.state, "account", None) if http_request else None
+        )
+        if account is None or not account.get("schema"):
+            raise HTTPException(403, "An authorized project context is required")
+        return Ledger(
+            dsn, schema=account["schema"], project_id=account["project_id"]
+        )
+
+    def require_verifications(http_request: Request) -> VerificationJobs:
+        scoped = require_ledger(http_request)
+        return VerificationJobs(
+            scoped.dsn, schema=scoped.schema, project_id=scoped.project_id
+        )
 
     @app.get("/api/health")
     def health() -> dict:
@@ -494,7 +509,7 @@ def create_app() -> FastAPI:
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        snapshot = require_ledger().operations()
+        snapshot = require_ledger(http_request).operations()
         return {**snapshot, "diagnostics": diagnose_operations(snapshot)}
 
     @app.get("/api/metrics")
@@ -503,7 +518,7 @@ def create_app() -> FastAPI:
     ):
         require_operator(x_operator_token, http_request)
         return Response(
-            operational_metrics(require_ledger().operations()),
+            operational_metrics(require_ledger(http_request).operations()),
             media_type="text/plain; version=0.0.4; charset=utf-8",
             headers={"Cache-Control": "no-store"},
         )
@@ -513,7 +528,7 @@ def create_app() -> FastAPI:
         if access_mode == "accounts":
             account_id = UUID(http_request.state.account["id"])
             return {"saved": account_store.get_account_draft(account_id)}
-        return {"saved": require_ledger().get_draft()}
+        return {"saved": require_ledger(http_request).get_draft()}
 
     @app.post("/api/experiment-draft")
     def save_experiment_draft(
@@ -532,14 +547,14 @@ def create_app() -> FastAPI:
                 return account_store.save_account_draft(
                     account_id, draft, request.expected_version
                 )
-            return require_ledger().save_draft(draft, request.expected_version)
+            return require_ledger(http_request).save_draft(draft, request.expected_version)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
     @app.get("/api/runs")
-    def list_runs(limit: int = 20) -> dict:
+    def list_runs(http_request: Request, limit: int = 20) -> dict:
         try:
-            return {"runs": require_ledger().recent(limit)}
+            return {"runs": require_ledger(http_request).recent(limit)}
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
@@ -549,7 +564,7 @@ def create_app() -> FastAPI:
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        store = require_ledger()
+        store = require_ledger(http_request)
         try:
             return store.admit(
                 client_key=request.client_key,
@@ -564,17 +579,19 @@ def create_app() -> FastAPI:
             raise HTTPException(status, str(error)) from error
 
     @app.get("/api/runs/{run_id}")
-    def get_run(run_id: UUID) -> dict:
-        run = require_ledger().get(run_id)
+    def get_run(run_id: UUID, http_request: Request) -> dict:
+        run = require_ledger(http_request).get(run_id)
         if not run:
             raise HTTPException(404, "Run not found")
         return run
 
     @app.get("/api/runs/{run_id}/events")
-    def get_events(run_id: UUID, after: int = 0, limit: int = 100) -> dict:
+    def get_events(
+        run_id: UUID, http_request: Request, after: int = 0, limit: int = 100
+    ) -> dict:
         if after < 0 or not 1 <= limit <= 100:
             raise HTTPException(422, "Invalid event cursor or limit")
-        store = require_ledger()
+        store = require_ledger(http_request)
         if not store.get(run_id):
             raise HTTPException(404, "Run not found")
         return {
@@ -584,7 +601,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_events(request: Request, run_id: UUID, after: int = 0):
-        store = require_ledger()
+        store = require_ledger(request)
         if not store.get(run_id):
             raise HTTPException(404, "Run not found")
         resume = request.headers.get("Last-Event-ID")
@@ -623,14 +640,14 @@ def create_app() -> FastAPI:
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        result = require_ledger().cancel(run_id)
+        result = require_ledger(http_request).cancel(run_id)
         if result is None:
             raise HTTPException(404, "Run not found")
         return result
 
     @app.get("/api/runs/{run_id}/bundle")
-    def download_witness_bundle(run_id: UUID):
-        current = require_ledger().get(run_id)
+    def download_witness_bundle(run_id: UUID, http_request: Request):
+        current = require_ledger(http_request).get(run_id)
         if not current:
             raise HTTPException(404, "Run not found")
         if (
@@ -656,8 +673,8 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/runs/{run_id}/witness")
-    def download_witness(run_id: UUID) -> dict:
-        result = require_ledger().get(run_id)
+    def download_witness(run_id: UUID, http_request: Request) -> dict:
+        result = require_ledger(http_request).get(run_id)
         if result is None:
             raise HTTPException(404, "Run not found")
         if result["witness"] is None:
@@ -671,13 +688,13 @@ def create_app() -> FastAPI:
     ) -> dict:
         require_operator(x_operator_token, http_request)
         try:
-            return VerificationJobs(require_ledger().dsn).submit(run_id, body.kind)
+            return require_verifications(http_request).submit(run_id, body.kind)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
     @app.get("/api/verification-jobs/{job_id}")
-    def read_verification(job_id: UUID) -> dict:
-        record = VerificationJobs(require_ledger().dsn).get(job_id)
+    def read_verification(job_id: UUID, http_request: Request) -> dict:
+        record = require_verifications(http_request).get(job_id)
         if record is None:
             raise HTTPException(404, "Verification job not found")
         return record
@@ -688,12 +705,12 @@ def create_app() -> FastAPI:
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        current = require_ledger().get(run_id)
+        current = require_ledger(http_request).get(run_id)
         if not current or current["status"] != "COMPLETE" or current["verdict"] != "FAIL":
             raise HTTPException(409, "Only current approved failures can be reduced")
         if current["execution_backend"] == "native-postgresql":
             raise HTTPException(409, "Native reductions require a worker verification job")
-        cached = require_ledger().get_reduction(run_id)
+        cached = require_ledger(http_request).get_reduction(run_id)
         if cached:
             return cached
         report = await asyncio.to_thread(
@@ -704,7 +721,7 @@ def create_app() -> FastAPI:
         )
         if report["status"] not in ("MINIMAL", "BOUNDED"):
             raise HTTPException(409, report.get("reason", "Reduction not confirmed"))
-        saved = require_ledger().record_reduction(
+        saved = require_ledger(http_request).record_reduction(
             run_id, current["version"], report
         )
         if not saved:
@@ -712,8 +729,8 @@ def create_app() -> FastAPI:
         return saved
 
     @app.get("/api/runs/{run_id}/reduction")
-    def read_reduction(run_id: UUID) -> dict:
-        saved = require_ledger().get_reduction(run_id)
+    def read_reduction(run_id: UUID, http_request: Request) -> dict:
+        saved = require_ledger(http_request).get_reduction(run_id)
         if not saved:
             raise HTTPException(404, "No current reduction report")
         return saved
@@ -724,7 +741,7 @@ def create_app() -> FastAPI:
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        original = require_ledger().get(run_id)
+        original = require_ledger(http_request).get(run_id)
         if original is None:
             raise HTTPException(404, "Run not found")
         if original["execution_backend"] == "native-postgresql":
@@ -733,7 +750,7 @@ def create_app() -> FastAPI:
         if witness is None:
             raise HTTPException(409, "Run has no replayable witness")
         proof = await verify(witness)
-        latest = require_ledger().get(run_id)
+        latest = require_ledger(http_request).get(run_id)
         same = (
             proof["status"] == "REPRODUCED"
             and latest is not None
