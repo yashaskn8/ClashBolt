@@ -128,6 +128,21 @@ validation remain blocked pending independent infrastructure. Per-target
 limits exclude the separate PostgreSQL server. External targets stay disabled.
 
 
+## B3 native host acceptance and dynamic UID correction (21 November 2026)
+
+The first native Linux systemd host drill exposed shared dynamic UIDs across
+simultaneous socket-activated template instances. The fixture service now
+declares `User=cb-%i` with `DynamicUser=yes`, which assigns a distinct
+per-connection identity for the existing Unix socket. Its acceptance test
+checks actual service MainPIDs (not short-lived startup helper PIDs), distinct
+non-root UIDs, cgroup CPU/memory/task limits and a negative IP-socket /
+filesystem-visibility probe. The CI host launcher also uses a runner-safe
+group switch. The checked native Linux workflow passed **172 backend tests,
+2 host acceptance tests, the frontend build and Chromium browser coverage**.
+This proves only the stated ephemeral GitHub runner configuration; production
+host enforcement, power-loss recovery and an independent security assessment
+remain open.
+
 ## B3 durable verification target lifecycle (21 November 2026)
 
 The native replay/reduction worker now registers each disposable PostgreSQL
