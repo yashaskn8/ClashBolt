@@ -244,34 +244,45 @@ async def main() -> None:
     registry = AccountStore(dsn) if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts" else None
     worker_id = f"worker-{uuid4()}"
     next_project = 0
+    deadlock_streak = 0
     while True:
-        # A trusted registry discovers new workspaces without a restart.
-        # Rotate the starting project to avoid permanent local-first starvation.
-        projects = (
-            registry.worker_projects() if registry is not None
-            else [{"project_id": "local", "schema_name": "public"}]
-        )
-        if not projects:
-            raise RuntimeError("No initialized worker project schemas")
-        start = next_project % len(projects)
-        next_project += 1
-        ordered = projects[start:] + projects[:start]
-        accepted = False
-        checked = False
-        for project in ordered:
-            ledger = Policy(
-                dsn, schema=project["schema_name"], project_id=project["project_id"]
+        try:
+            # A trusted registry discovers new workspaces without a restart.
+            # Rotate the starting project to avoid permanent local-first starvation.
+            projects = (
+                registry.worker_projects() if registry is not None
+                else [{"project_id": "local", "schema_name": "public"}]
             )
-            ledger.heartbeat(worker_id)
-            ledger.reconcile_corrupt_plans()
-            ledger.reconcile_stalled_plans()
-            ledger.reconcile_stalled_model_calls()
-            # Process at most one execution and one verification per cycle;
-            # all work remains lease-fenced in its own project schema.
-            if not accepted:
-                accepted = await process_one(ledger, worker_id)
-            if not checked and (not args.once or not accepted):
-                checked = await process_verification_one(ledger, worker_id)
+            if not projects:
+                raise RuntimeError("No initialized worker project schemas")
+            start = next_project % len(projects)
+            next_project += 1
+            ordered = projects[start:] + projects[:start]
+            accepted = False
+            checked = False
+            for project in ordered:
+                ledger = Policy(
+                    dsn, schema=project["schema_name"], project_id=project["project_id"]
+                )
+                ledger.heartbeat(worker_id)
+                ledger.reconcile_corrupt_plans()
+                ledger.reconcile_stalled_plans()
+                ledger.reconcile_stalled_model_calls()
+                # Process at most one execution and one verification per cycle;
+                # all work remains lease-fenced in its own project schema.
+                if not accepted:
+                    accepted = await process_one(ledger, worker_id)
+                if not checked and (not args.once or not accepted):
+                    checked = await process_verification_one(ledger, worker_id)
+        except psycopg.errors.DeadlockDetected as error:
+            # PostgreSQL aborts the deadlocked transaction. Try a fresh cycle
+            # after bounded backoff; never infer a successful worker receipt.
+            deadlock_streak += 1
+            if args.once or deadlock_streak >= 3:
+                raise RuntimeError("Worker database deadlock persisted") from error
+            await asyncio.sleep(args.interval)
+            continue
+        deadlock_streak = 0
         if args.once:
             break
         if not accepted and not checked:
