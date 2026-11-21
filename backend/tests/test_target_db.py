@@ -225,7 +225,25 @@ def test_native_target_worker_and_replay_end_to_end(cluster, monkeypatch):
         assert minimized["status"] == "COMPLETE", minimized
         assert minimized["result"]["status"] == "MINIMAL"
         assert minimized["result"]["minimal_gate_count"] == 4
+
+    # Every native replay/reduction scratch target is registered before
+    # provisioning and must be marked cleaned by the independent worker.
+    with ledger.connect() as conn:
+        verification_targets = conn.execute(
+            """
+            SELECT id, status FROM verification_target_instance
+            WHERE job_id IN (%s, %s)
+            """,
+            (UUID(replay_job.json()["job_id"]), UUID(reduction_job.json()["job_id"])),
+        ).fetchall()
+    assert len(verification_targets) >= 2
+    assert all(row["status"] == "CLEANED" for row in verification_targets)
     with psycopg.connect(admin, autocommit=True) as connection:
+        for row in verification_targets:
+            assert connection.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = %s",
+                (f"cb_target_{row['id'].hex}",),
+            ).fetchone()[0] == 0
         assert connection.execute(
             "SELECT count(*) FROM pg_database WHERE datname = %s",
             (
@@ -341,3 +359,69 @@ def test_runner_credential_and_database_privileges(cluster):
                 with psycopg.connect(first.url):
                     with pytest.raises(psycopg.OperationalError, match="too many connections"):
                         psycopg.connect(first.url)
+
+
+def test_expired_verification_target_is_removed_from_real_cluster(cluster, monkeypatch):
+    import asyncio
+
+    from clashbolt.experiment import ORACLE_HASH, execute
+    from clashbolt.policy import Policy
+    from clashbolt.verification_jobs import VerificationJobs
+    from clashbolt.worker import reconcile_verification_targets
+
+    admin, control = cluster
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
+    ledger = Policy(control)
+    ledger.migrate()
+    with ledger.connect() as conn:
+        conn.execute(
+            "TRUNCATE tool_audit, agent_plan, tool_capability, oracle_proposal, "
+            "run_transition, experiment_run, project_quota CASCADE"
+        )
+    proposal = ledger.propose("abandoned-verification")
+    approved = ledger.approve(UUID(proposal["id"]), ORACLE_HASH, "reviewer")
+    run = ledger.admit(
+        client_key=str(uuid4()), variant="racy", schedule="overlap",
+        approved_oracle_id=UUID(approved["id"]),
+    )
+    claimed = ledger.claim("fixture-worker")
+    assert claimed
+    assert ledger.finish(
+        UUID(run["run_id"]), "fixture-worker", claimed["lease_generation"],
+        asyncio.run(execute("racy", "overlap")),
+    )
+    queue = VerificationJobs(control)
+    queue.submit(UUID(run["run_id"]), "REPLAY")
+    job = queue.claim("crashed-verifier")
+    assert job
+    instance = uuid5(
+        NAMESPACE_URL,
+        f"clashbolt:verification:{job['job_id']}:{job['lease_generation']}:1",
+    )
+    assert queue.track_target(
+        UUID(job["job_id"]), "crashed-verifier", job["lease_generation"], instance
+    )
+    with disposable_target(admin, control, instance) as target:
+        queue.mark_target(instance, "ACTIVE")
+        with ledger.connect() as conn:
+            conn.execute(
+                "UPDATE verification_job "
+                "SET lease_until = now() - interval '1 second' WHERE id = %s",
+                (UUID(job["job_id"]),),
+            )
+            conn.execute(
+                "UPDATE verification_target_instance "
+                "SET updated_at = now() - interval '10 seconds' WHERE id = %s",
+                (instance,),
+            )
+        assert reconcile_verification_targets(queue, ledger) == 1
+        with psycopg.connect(admin, autocommit=True) as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = %s",
+                (target.database,),
+            ).fetchone()[0] == 0
+    with ledger.connect() as conn:
+        assert conn.execute(
+            "SELECT status FROM verification_target_instance WHERE id = %s",
+            (instance,),
+        ).fetchone()["status"] == "CLEANED"
