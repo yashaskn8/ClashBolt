@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/start P95, real PostgreSQL concurrent admission, rotating project queue selection | Global multi-project resource caps, sustained fair-load trials, real provider CPU/token cost and retry storms |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, atomic global two-native-target claim cap across projects (runs plus verifications), oldest queue age/start P95, concurrent admission and rotating project worker | Sustained multi-project fair-load trials, measured real CPU/provider cost, retry storms and host-wide resource benchmarks |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
@@ -26,6 +26,26 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## B7 host-wide native target admission (21 November 2026)
+
+Under named-account project mode, all durable native target **run claims and
+verification claims** now acquire one PostgreSQL transaction-scoped advisory
+lock before any project quota lock. Within that transaction the worker
+counts unexpired RUNNING/CANCELLING native experiment leases and unexpired
+RUNNING verification leases across every trusted project schema, then
+admits only when fewer than **two** host-wide slots are occupied. Memory
+runs remain claimable even when the native host is full. This closes the
+previous per-project-only capacity hole when several independent worker
+processes claim different workspaces concurrently.
+
+The integration regression races claims across three real schemas, checks
+the two-slot invariant, blocks verification until a lease expires, and
+checks that a waiting memory run is not starved by native capacity. This
+is conservative admission based on the coordinator's current lease state,
+not a cgroup resource controller: already executing external effects,
+ambiguous expired leases, administrator bypass, multiple separate control
+clusters, and host-level recovery behavior still need independent tests.
 
 ## P4 multi-project storage and transaction authorization (21 November 2026)
 
@@ -60,7 +80,7 @@ on role/credential changes.
 do not protect against a compromised database superuser, do not supply
 independent per-tenant OS sandboxes or target behavior, and do not certify
 independent external real-application reproduction. The worker rotates
-projects but global cross-project native-resource limits, measured fair
+projects but measured global host CPU/memory budgets, sustained fair
 load tests and multi-node failover are still outstanding. The 20-track
 PDF is **not complete** merely because this release gate passes.
 
