@@ -6,6 +6,8 @@ control-plane recovery, not external exactly-once target effects.
 
 import asyncio
 import os
+import subprocess
+import sys
 from uuid import UUID, uuid4
 
 import pytest
@@ -152,6 +154,45 @@ def test_timeout_keeps_unresolved_request_with_no_phantom_receipt(policy):
     assert history["entries"][-1]["event"] == "TIMEOUT"
     assert history["entries"][-1]["payload"]["tool_request_id"] == requested
     assert not restarted.record_outcome(
+        plan_id, asyncio.run(execute("racy", "overlap"))
+    )
+
+
+def test_child_process_crash_after_dispatch_leaves_recoverable_unknown(policy):
+    oracle_id, plan_id = _ready(policy)
+    token = policy.issue(oracle_id, "racy", "overlap", plan_id=plan_id)["token"]
+    # A separate interpreter durably authorizes the exact tool request, then
+    # exits without running the fixture or saving a receipt.
+    script = (
+        "import os,sys;"
+        "from uuid import UUID;"
+        "from clashbolt.policy import Policy;"
+        "p=Policy(os.environ['CLASHBOLT_TEST_DATABASE_URL']);"
+        "ok=p.authorize(sys.argv[1],'racy','overlap',UUID(sys.argv[2]));"
+        "os._exit(23 if ok else 24)"
+    )
+    crashed = subprocess.run(
+        [sys.executable, "-c", script, token, str(plan_id)],
+        env={**os.environ, "CLASHBOLT_TEST_DATABASE_URL": policy.dsn},
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert crashed.returncode == 23, crashed.stderr
+    pending = Policy(policy.dsn).get_plan(plan_id)
+    assert pending["state"] == "IN_FLIGHT"
+    assert pending["obligation"]["state"] == "IN_FLIGHT"
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE agent_plan SET deadline_at = now() - interval '1 second' "
+            "WHERE id = %s", (plan_id,),
+        )
+    recovered = Policy(policy.dsn)
+    assert recovered.reconcile_stalled_plans() == 1
+    assert recovered.get_plan(plan_id)["obligation"]["state"] == "UNKNOWN"
+    assert recovered.plan_history(plan_id)["integrity"]["status"] == "VERIFIED"
+    # A second dispatch or late receipt must never manufacture a confirmed
+    # event from the already consumed capability.
+    assert not recovered.authorize(token, "racy", "overlap", plan_id)
+    assert not recovered.record_outcome(
         plan_id, asyncio.run(execute("racy", "overlap"))
     )
 
