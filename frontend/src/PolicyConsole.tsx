@@ -22,7 +22,19 @@ type Feedback = {
   next_plan_id: string | null
 }
 type Capability = { capability_id: string; token: string; max_calls: number }
-type Plan = { id: string; plan: { variant: Variant; schedule: Schedule } }
+type Plan = {
+  id: string
+  plan: { variant: Variant; schedule: Schedule }
+  obligation: {
+    question_id: string
+    context_version: number
+    tool_schema_version: string
+    model_identifier: string
+    state: 'PENDING' | 'IN_FLIGHT' | 'FULFILLED' | 'UNKNOWN'
+    tool_request_id: string | null
+    receipt_id: string | null
+  } | null
+}
 type Props = {
   variant: Variant
   schedule: Schedule
@@ -208,6 +220,7 @@ export default function PolicyConsole({
       )
       setToolFinished(true)
       setCapability(null)
+      setPlan(await request<Plan>(`/api/agent/plans/${plan.id}`))
       return result
     })
   }
@@ -355,6 +368,15 @@ export default function PolicyConsole({
         {plan ? ` ${plan.plan.variant} / ${plan.plan.schedule}` : ' none'}.
         The broker only executes the exact saved plan bound to its capability.
       </p>
+      {plan?.obligation && (
+        <p className="help-text" aria-label="Persisted agent obligation">
+          Outstanding question {plan.obligation.question_id.slice(0, 12)}… ·
+          {' '}{plan.obligation.state} · context v{plan.obligation.context_version} ·
+          {' '}{plan.obligation.tool_schema_version} ·
+          {' '}{plan.obligation.model_identifier}.
+          {' '}Receipt {plan.obligation.receipt_id ? 'recorded' : 'not yet recorded'}.
+        </p>
+      )}
       {rule && <div className="policy-reference">
         <span>RULE STATUS: {rule.state}</span>
         <code title={rule.rule_hash}>{rule.rule_hash.slice(0, 24)}…</code>
