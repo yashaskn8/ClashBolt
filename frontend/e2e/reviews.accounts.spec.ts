@@ -20,10 +20,15 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
   await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
 
   await signIn(page, 'operator')
+  // Another account-mode browser test persists a locked/serial draft. Never
+  // inherit its PASS fixture: only a reproduced FAIL can be supported here.
+  await page.getByLabel('Implementation').selectOption('racy')
+  await page.getByLabel('Checkpoint release order').selectOption('overlap')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
     timeout: 20_000,
   })
+  await expect(page.locator('.verdict-fail')).toBeVisible()
   const runs = await page.request.get('/api/runs')
   expect(runs.ok()).toBe(true)
   const runId = ((await runs.json()) as { runs: { run_id: string }[] }).runs[0].run_id
