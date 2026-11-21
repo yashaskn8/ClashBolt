@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations with expiring durable obligations, native claim slots, oldest queue age and first-start P95 | Measured CPU/provider cost, multi-project fair scheduling and load-tested SLOs |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/first-start P95, real PostgreSQL concurrent admission/queue-drain regression | Real CPU/provider cost, multi-project fair scheduling, sustained load-tested SLOs and retry storms |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived scope-limited tokens, plan-history integrity check, oracle-first row locking against concurrent revocation, single-action audit and budgets | Project-specific identity, external fault testing of revocation races, and multitenant limits |
@@ -234,3 +234,21 @@ HTTP endpoints until every associated database query, resource reference,
 background worker, capability and browser projection has been scoped and
 cross-tenant tested. B2 process suspension demonstrates control-plane receipt
 fencing only, not containment of any already-in-flight external effect.
+
+
+## B7 bounded concurrent admission regression (21 November 2026)
+
+A disposable-native-PostgreSQL CI test starts 36 concurrent admissions
+against a 24-open-run quota, asserts exactly 24 accepted, then competes
+36 claimant calls across eight workers. It checks unique claim ownership,
+one accepted terminal transition per run and reuse of freed admission capacity.
+It is an integration load boundary, **not** a measured production SLO or
+evidence of indefinite multi-project fairness. Provider, CPU and systemd
+cost accounting remain open. Security-relevant queue tests stay mandatory
+within the fail-closed CI release gate.
+
+The P4 local-project grant tests also inject a run belonging to a different
+project ID and reject local resource GET, evidence export, transition reads
+and cancellation by its UUID. Other-project operations are still disabled;
+a full tenant-aware application needs scoped policy, tool and worker
+relationships rather than this single-project boundary alone.
