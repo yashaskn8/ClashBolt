@@ -195,6 +195,31 @@ _POLICY_SCHEMA = (
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
     """
+    CREATE TABLE IF NOT EXISTS agent_obligation (
+        plan_id UUID PRIMARY KEY REFERENCES agent_plan(id) ON DELETE CASCADE,
+        question_id UUID NOT NULL UNIQUE,
+        context_version INTEGER NOT NULL CHECK (context_version = 1),
+        tool_schema_version TEXT NOT NULL
+            CHECK (tool_schema_version = 'synthetic-tool-v1'),
+        model_identifier TEXT NOT NULL
+            CHECK (length(model_identifier) BETWEEN 1 AND 80),
+        state TEXT NOT NULL CHECK (
+            state IN ('PENDING', 'IN_FLIGHT', 'FULFILLED', 'UNKNOWN')
+        ),
+        tool_request_id UUID UNIQUE,
+        receipt_id UUID UNIQUE,
+        CHECK (
+            state != 'PENDING'
+            OR (tool_request_id IS NULL AND receipt_id IS NULL)
+        ),
+        CHECK (
+            state != 'IN_FLIGHT'
+            OR (tool_request_id IS NOT NULL AND receipt_id IS NULL)
+        ),
+        CHECK (receipt_id IS NULL OR tool_request_id IS NOT NULL)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS model_budget (
         project_id TEXT NOT NULL REFERENCES project_quota(project_id),
         window_date DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -250,7 +275,9 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 10
+CONTEXT_VERSION = 1
+TOOL_SCHEMA_VERSION = "synthetic-tool-v1"
+POLICY_SCHEMA_VERSION = 11
 
 
 class Policy(Ledger):
