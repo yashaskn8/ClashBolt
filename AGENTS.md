@@ -21,6 +21,11 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
   frontend, Chromium, dependency-security and native host job must pass, as
   must the aggregate release-gate, on the exact commit being reported.
   Diagnose legitimate failures and add regression coverage before fixing.
+- **No dormant functionality.** New helpers, routes, schema fields and UI
+  controls must be reachable from a supported workflow and covered by tests.
+  Remove obsolete placeholders instead of creating unused scaffolding.
+  CI enforces Ruff, high-confidence Vulture and TypeScript unused-symbol
+  checks; investigate findings rather than adding blanket exclusions.
 - **Reproducible frontend.** Keep the npm lockfile in version control; use
   `npm ci` in CI. Keep separate PostgreSQL target and control clusters native.
 - **Do not lie about completion.** Note exact implemented features, test
