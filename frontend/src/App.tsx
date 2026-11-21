@@ -149,6 +149,7 @@ export default function App() {
   }, [
     catalog?.storage, catalog?.access_mode, account?.role, account?.project_id,
     operatorToken, sessionReady, approvedOracleId, variant, schedule, executionBackend,
+    durable?.run_id, durable?.status,
   ])
 
   useEffect(() => {
