@@ -82,6 +82,7 @@ def test_native_worker_crash_reclaims_target_and_fences_stale_receipt(
         )
     proposal = ledger.propose("worker-crash-boundary")
     approved = ledger.approve(UUID(proposal["id"]), ORACLE_HASH, "reviewer")
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
     run = ledger.admit(
         client_key=str(uuid4()), variant="locked", schedule="serial",
         execution_backend="native-postgresql",
