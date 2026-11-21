@@ -107,6 +107,16 @@ def test_native_preview_reports_configuration_not_security_certification(preview
         assert result["resource_bound"]["disposable_databases"] == 1
         assert result["resource_bound"]["cpu_seconds_estimate"] is None
         assert "Separate native target cluster is not configured" in result["blockers"]
+        # A configured URL that aliases the control cluster is also refused.
+        os.environ["CLASHBOLT_TARGET_CLUSTER_URL"] = preview_lab.dsn
+        try:
+            invalid_target = _preview(
+                client, execution_backend="native-postgresql"
+            ).json()
+            assert invalid_target["backend_configured"] is False
+            assert invalid_target["preflight_ok"] is False
+        finally:
+            del os.environ["CLASHBOLT_TARGET_CLUSTER_URL"]
         malformed = client.post(
             "/api/runs/preview",
             json={"variant": "racy", "schedule": "invalid"},
