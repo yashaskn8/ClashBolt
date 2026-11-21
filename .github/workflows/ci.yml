@@ -42,6 +42,7 @@ jobs:
       - name: Check Python syntax and imports
         run: |
           python -m compileall -q backend/clashbolt
+          python -m ruff check --select I --diff .
           python -m ruff check .
       - name: Reject high-confidence unreachable or unused Python code
         run: vulture backend/clashbolt --min-confidence 100
