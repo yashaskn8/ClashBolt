@@ -7,6 +7,9 @@ type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
 type ExecutionBackend = 'memory' | 'native-postgresql'
 type Verdict = 'PASS' | 'FAIL' | 'UNKNOWN'
+type Role = 'viewer' | 'operator' | 'reviewer'
+type AccountIdentity = { username: string; role: Role; project_id: string }
+type ProjectGrant = { id: string; role: Role }
 
 type Step = {
   sequence: number
@@ -74,10 +77,8 @@ export default function App() {
   const [sessionReady, setSessionReady] = useState(false)
   const [accountName, setAccountName] = useState('')
   const [accountPassword, setAccountPassword] = useState('')
-  const [account, setAccount] = useState<{
-    username: string
-    role: 'viewer' | 'operator' | 'reviewer'
-  } | null>(null)
+  const [account, setAccount] = useState<AccountIdentity | null>(null)
+  const [accountProjects, setAccountProjects] = useState<ProjectGrant[]>([])
   const [result, setResult] = useState<Experiment | null>(null)
   const [durable, setDurable] = useState<DurableRun | null>(null)
   const [replayStatus, setReplayStatus] = useState('NOT_RUN')
@@ -97,10 +98,7 @@ export default function App() {
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts') return
     fetch('/api/auth/me')
-      .then((response) => parseResponse<{
-        username: string
-        role: 'viewer' | 'operator' | 'reviewer'
-      }>(response))
+      .then((response) => parseResponse<AccountIdentity>(response))
       .then(setAccount)
       .catch(() => setAccount(null))
   }, [catalog?.access_mode])
@@ -108,6 +106,7 @@ export default function App() {
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts' || !account?.username) return
     const username = account.username
+    const selectedProject = account.project_id
     let mounted = true
 
     async function refreshProjectRole() {
@@ -128,13 +127,18 @@ export default function App() {
           return
         }
         if (!response.ok) return // transient outage: backend still rejects writes
-        const identity = (await response.json()) as {
-          username: string
-          role: 'viewer' | 'operator' | 'reviewer'
-        }
+        const identity = (await response.json()) as AccountIdentity
         if (!mounted || identity.username !== username) return
+        if (identity.project_id !== selectedProject) {
+          setDurable(null)
+          setResult(null)
+          setApprovedOracleId(null)
+          setDraftVersion(0)
+          setDraftReady(false)
+        }
         setAccount((current) => (
-          current?.username === username && current.role !== identity.role
+          current?.username === username &&
+          (current.role !== identity.role || current.project_id !== identity.project_id)
             ? identity : current
         ))
       } catch {
@@ -145,7 +149,24 @@ export default function App() {
 
     const timer = window.setInterval(() => void refreshProjectRole(), 2000)
     return () => { mounted = false; window.clearInterval(timer) }
-  }, [catalog?.access_mode, account?.username])
+  }, [catalog?.access_mode, account?.username, account?.project_id])
+
+  useEffect(() => {
+    if (catalog?.access_mode !== 'accounts' || !account) {
+      setAccountProjects([])
+      return
+    }
+    let cancelled = false
+    fetch('/api/auth/projects', { cache: 'no-store' })
+      .then((response) => parseResponse<{ projects: ProjectGrant[] }>(response))
+      .then((payload) => {
+        if (!cancelled) setAccountProjects(payload.projects)
+      })
+      .catch(() => {
+        if (!cancelled) setAccountProjects([])
+      })
+    return () => { cancelled = true }
+  }, [catalog?.access_mode, account?.username, account?.project_id, account?.role])
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
@@ -157,7 +178,7 @@ export default function App() {
         setApprovedOracleId(data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null)
       })
       .catch(() => setApprovedOracleId(null))
-  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username, account?.project_id])
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
@@ -200,7 +221,7 @@ export default function App() {
         if (!cancelled) setDraftReady(true)
       })
     return () => { cancelled = true }
-  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username, account?.project_id])
 
   async function saveDraft() {
     setDraftMessage('')
@@ -237,12 +258,9 @@ export default function App() {
           password: accountPassword,
         }),
       })
-      const identity = await parseResponse<{
-        username: string
-        role: 'viewer' | 'operator' | 'reviewer'
-      }>(response)
+      const identity = await parseResponse<AccountIdentity>(response)
       setDraftReady(false)
-      setAccount({ username: identity.username, role: identity.role })
+      setAccount(identity)
       setAccountPassword('')
       setDraftVersion(0)
       setDraftMessage('')
@@ -257,11 +275,40 @@ export default function App() {
     }
   }
 
+  async function selectAccountProject(projectId: string) {
+    if (!account || account.project_id === projectId) return
+    setError('')
+    setDraftReady(false)
+    try {
+      const response = await fetch('/api/auth/select-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId }),
+      })
+      const identity = await parseResponse<AccountIdentity>(response)
+      setApprovedOracleId(null)
+      setDurable(null)
+      setResult(null)
+      setDraftVersion(0)
+      setDraftMessage('')
+      setVariant('racy')
+      setSchedule('overlap')
+      setExecutionBackend('memory')
+      setReplayStatus('NOT_RUN')
+      setReduction(null)
+      setAccount(identity)
+    } catch {
+      setError('Project selection was denied. Refresh the current project grants.')
+      setDraftReady(true)
+    }
+  }
+
   async function logoutAccount() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
       setAccount(null)
+      setAccountProjects([])
       setDraftReady(false)
       setDraftVersion(0)
       setDraftMessage('')
@@ -540,6 +587,24 @@ export default function App() {
                   {account ? `Signed in: ${account.username} (${account.role})`
                     : 'Sign in with a locally provisioned account.'}
                 </p>
+                {account && accountProjects.length > 1 && (
+                  <>
+                    <label className="field-label" htmlFor="project-selector">
+                      Workspace project
+                    </label>
+                    <select
+                      id="project-selector"
+                      value={account.project_id}
+                      onChange={(event) => void selectAccountProject(event.target.value)}
+                    >
+                      {accountProjects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.id} ({project.role})
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )
                 <label className="field-label" htmlFor="account-name">Account name</label>
                 <input
                   id="account-name" autoComplete="username"
@@ -640,6 +705,7 @@ export default function App() {
           (catalog.access_mode === 'private' && sessionReady) ||
           (catalog.access_mode === 'accounts' && account !== null)) && (
           <RecentRuns
+            key={catalog.access_mode === 'accounts' ? account?.project_id : 'local'}
             operatorReady={operatorReady}
             accountMode={catalog.access_mode === 'accounts'}
             operatorToken={operatorToken}
@@ -659,7 +725,7 @@ export default function App() {
           (catalog.access_mode === 'private' && sessionReady) ||
           (catalog.access_mode === 'accounts' && account !== null)) && <PolicyConsole
           key={catalog.access_mode === 'accounts'
-            ? `${account?.username}:${account?.role}` : catalog.access_mode}
+            ? `${account?.username}:${account?.project_id}:${account?.role}` : catalog.access_mode}
           variant={variant} schedule={schedule}
           onApproved={(id) => setApprovedOracleId(id)}
           operator={operatorToken}
