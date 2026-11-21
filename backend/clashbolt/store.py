@@ -1003,6 +1003,22 @@ class Ledger:
     def transitions(self, run_id: UUID, after: int = 0) -> list[dict]:
         return self.transition_page(run_id, after)["events"]
 
+    def _local_native_active(self, conn) -> int:
+        """Count leased native run and verification work in this project schema."""
+        row = conn.execute(
+            """
+            SELECT
+                (SELECT count(*) FROM experiment_run
+                 WHERE execution_backend = 'native-postgresql'
+                   AND status IN ('RUNNING', 'CANCELLING')
+                   AND lease_until > now())
+              + (SELECT count(*) FROM verification_job
+                 WHERE status = 'RUNNING' AND lease_until > now())
+                AS occupied
+            """
+        ).fetchone()
+        return row["occupied"]
+
     def _global_native_active(self, conn) -> int:
         """Count all live native run and verification claims in trusted schemas.
 
@@ -1060,6 +1076,9 @@ class Ledger:
                 WHERE project_id = 'local' FOR UPDATE
                 """
             ).fetchone()
+            local_budget_available = (
+                self._local_native_active(conn) < quota["max_native_active"]
+            )
             row = conn.execute(
                 """
                 SELECT * FROM experiment_run
@@ -1071,21 +1090,12 @@ class Ledger:
                   )
                   AND (
                     execution_backend = 'memory'
-                    OR (
-                        (
-                            SELECT count(*) FROM experiment_run AS active
-                            WHERE active.project_id = 'local'
-                              AND active.execution_backend = 'native-postgresql'
-                              AND active.status IN ('RUNNING', 'CANCELLING')
-                              AND active.lease_until > now()
-                        ) < %s
-                        AND %s
-                    )
+                    OR (%s AND %s)
                   )
                 ORDER BY created_at, id
                 LIMIT 1 FOR UPDATE SKIP LOCKED
                 """,
-                (quota["max_native_active"], global_budget_available),
+                (local_budget_available, global_budget_available),
             ).fetchone()
             if not row:
                 return None
