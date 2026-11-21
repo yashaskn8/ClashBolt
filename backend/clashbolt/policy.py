@@ -832,6 +832,18 @@ class Policy(Ledger):
                     (row["id"],),
                 )
                 if plan_id is not None:
+                    tool_request_id = uuid4()
+                    obligation = conn.execute(
+                        """
+                        UPDATE agent_obligation
+                        SET state = 'IN_FLIGHT', tool_request_id = %s
+                        WHERE plan_id = %s AND state = 'PENDING'
+                        RETURNING question_id
+                        """,
+                        (tool_request_id, plan_id),
+                    ).fetchone()
+                    if not obligation:
+                        raise ValueError("Agent context changed during tool authorization")
                     conn.execute(
                         """
                         UPDATE agent_plan SET state = 'IN_FLIGHT',
@@ -845,6 +857,9 @@ class Policy(Ledger):
                         "capability_id": str(row["id"]),
                         "variant": variant,
                         "schedule": schedule,
+                        "question_id": str(obligation["question_id"]),
+                        "tool_request_id": str(tool_request_id),
+                        "tool_schema_version": TOOL_SCHEMA_VERSION,
                     })
             return allowed
 
