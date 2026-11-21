@@ -166,7 +166,7 @@ export default function DurableMonitor({
   const finished = ['COMPLETE', 'UNKNOWN', 'CANCELLED'].includes(initial.status)
 
   return (
-    <section className="panel operations" aria-labelledby="operations-title">
+    <section id="run-timeline" className="panel operations" aria-labelledby="operations-title">
       <div className="panel-kicker">03 / DURABLE RUN OPERATIONS</div>
       <h2 id="operations-title">PostgreSQL run timeline</h2>
       <p className="panel-description">
