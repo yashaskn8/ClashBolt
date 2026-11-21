@@ -17,7 +17,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
 | A4 Evidence-Calibrated Abstention | Structured persisted missing-receipt, withdrawn-oracle, incomplete and conflict gaps; UNKNOWN never becomes a finding | Evidence-calibrated confidence and independently reviewed bounded probes |
-| A5 Agent Decision Record | Typed plans, bounded model/tool deadlines, UNKNOWN recovery without budget refunds, hash-chained history, bounded worker-integrity sweeps with durable quarantine, no feedback from corrupt context | Full context/schema obligations, independently authenticated signatures, external crash-point matrix and recovery validation |
+| A5 Agent Decision Record | Typed plans, bounded model/tool deadlines, UNKNOWN recovery without budget refunds, hash-chained history, bounded worker-integrity sweeps with durable quarantine, versioned question/request/receipt obligations in PostgreSQL, and child-crash recovery tests | General multi-tool/schema migration semantics, independently authenticated signatures, external crash-point matrix and recovery validation |
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
 | P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression, read-only project quota/approval/resource preview | Real general-target contracts, measured CPU/provider cost estimates and wider browser fault matrix |
@@ -26,6 +26,37 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## A5 versioned agent obligation lifecycle (21 November 2026)
+
+Policy schema **revision 11** adds `agent_obligation`: one durable,
+versioned question per synthetic investigation plan with an explicitly
+recorded model identifier and fixed tool schema version. Each new proposed
+plan writes the question and its hash-chained PROPOSED event atomically.
+The capability broker creates a unique tool request ID in the same
+transaction as the one-call debit, IN_FLIGHT state transition and
+DISPATCHED event. Receipt acceptance binds a unique receipt ID to that
+request; timeout, review revocation or integrity quarantine never
+manufactures a successful receipt and instead records UNKNOWN.
+
+Every attempted authorization rechecks the persisted question, tool
+request and version against immutable agent history. Modified or legacy
+context without an authenticated history binding cannot gain tool
+authority. A fresh process can read the outstanding question and
+reconcile expired dispatches without retrying the ambiguous target
+effect. The React agent console displays its context version,
+fixed tool schema, model label, durable state and receipt presence.
+
+**Upgrade:** run the existing `python -m clashbolt.policy` or
+`python -m clashbolt.accounts migrate` command before starting updated
+API and worker processes. Pre-revision-11 plans lack the new context
+binding and must be treated as unconfirmed, rather than silently gaining
+new authority. The safety boundary still protects only this fixed
+synthetic tool and PostgreSQL control-plane records. Hash chaining is not
+independently authenticated signing; a privileged database administrator
+can rewrite data and signatures. Real external application crash points,
+model schema evolution, multiple outstanding dependent tools and
+production restoration are **not** validated by these tests.
 
 ## P1 non-reserving run preview (21 November 2026)
 
