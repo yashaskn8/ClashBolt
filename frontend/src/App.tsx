@@ -55,6 +55,21 @@ type Catalog = {
   oracle: { id: string; version: string; sha256: string; rule: string; authority: string }
 }
 
+type RunPreview = {
+  project_id: string
+  step_budget: number
+  open_runs: number
+  max_open: number
+  preflight_ok: boolean
+  blockers: string[]
+  reservation_made: boolean
+  resource_bound: {
+    checkpoint_limit: number
+    disposable_databases: number
+    cpu_seconds_estimate: number | null
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     throw new Error(`API request failed (${response.status}). Check that the local backend is running.`)
@@ -69,6 +84,8 @@ export default function App() {
   const [schedule, setSchedule] = useState<Schedule>('overlap')
   const [executionBackend, setExecutionBackend] = useState<ExecutionBackend>('memory')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
+  const [runPreview, setRunPreview] = useState<RunPreview | null>(null)
+  const [previewUnavailable, setPreviewUnavailable] = useState(false)
   const [approvedOracleId, setApprovedOracleId] = useState<string | null>(null)
   const [draftVersion, setDraftVersion] = useState(0)
   const [draftReady, setDraftReady] = useState(true)
@@ -94,6 +111,45 @@ export default function App() {
       .then(setCatalog)
       .catch(() => setError('Cannot connect to the local API. Start uvicorn on 127.0.0.1:8000.'))
   }, [])
+
+  useEffect(() => {
+    if (
+      catalog?.storage !== 'postgresql' ||
+      (catalog.access_mode === 'accounts' && account?.role !== 'operator') ||
+      (catalog.access_mode !== 'accounts' && !operatorToken) ||
+      (catalog.access_mode === 'private' && !sessionReady)
+    ) {
+      setRunPreview(null)
+      setPreviewUnavailable(false)
+      return
+    }
+    let cancelled = false
+    setRunPreview(null)
+    setPreviewUnavailable(false)
+    fetch('/api/runs/preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(catalog.access_mode !== 'accounts'
+          ? { 'X-Operator-Token': operatorToken } : {}),
+      },
+      body: JSON.stringify({
+        target_id: 'synthetic-inventory',
+        variant,
+        schedule,
+        step_budget: 4,
+        approved_oracle_id: approvedOracleId,
+        execution_backend: executionBackend,
+      }),
+    })
+      .then((response) => parseResponse<RunPreview>(response))
+      .then((data) => { if (!cancelled) setRunPreview(data) })
+      .catch(() => { if (!cancelled) setPreviewUnavailable(true) })
+    return () => { cancelled = true }
+  }, [
+    catalog?.storage, catalog?.access_mode, account?.role, account?.project_id,
+    operatorToken, sessionReady, approvedOracleId, variant, schedule, executionBackend,
+  ])
 
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts') return
@@ -647,6 +703,37 @@ export default function App() {
                 </button>
                 {draftMessage && <p className="help-text">{draftMessage}</p>}
               </>
+            )}
+            {catalog?.storage === 'postgresql' && (
+              <div className="rule-info" role="status" aria-label="Run resource preview">
+                <span>RESOURCE &amp; ADMISSION PREVIEW / NOT A RESERVATION</span>
+                {runPreview && (
+                  <>
+                    <strong>
+                      {runPreview.open_runs}/{runPreview.max_open} active run slots ·
+                      {runPreview.resource_bound.checkpoint_limit} checkpoint budget
+                    </strong>
+                    <small>
+                      {runPreview.resource_bound.disposable_databases === 1
+                        ? 'One disposable native database requested. '
+                        : 'Fresh in-memory fixture requested. '}
+                      CPU/provider cost is not measured.
+                    </small>
+                    <small>
+                      {runPreview.preflight_ok
+                        ? 'No known blockers now; submission still rechecks all permissions and quotas.'
+                        : runPreview.blockers.join('; ')}
+                    </small>
+                  </>
+                )}
+                {!runPreview && (
+                  <small>
+                    {previewUnavailable
+                      ? 'Preview unavailable; submission will still be validated by the server.'
+                      : 'Unlock an operator session to check current quota and approval.'}
+                  </small>
+                )}
+              </div>
             )}
             <button
               className="primary-button" type="button" onClick={run}
