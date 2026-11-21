@@ -283,7 +283,8 @@ class VerificationJobs:
             row = conn.execute(
                 """
                 SELECT j.*, r.version AS current_version,
-                    r.status AS run_status
+                    r.status AS run_status,
+                    (j.status = 'RUNNING' AND j.lease_until < now()) AS lease_expired
                 FROM verification_job j
                 JOIN experiment_run r ON r.id = j.run_id
                 WHERE j.id = %s AND r.project_id = 'local'
@@ -301,5 +302,13 @@ class VerificationJobs:
                 result["result"] = {
                     "status": "UNCONFIRMED",
                     "reason": "The oracle adjudication has changed",
+                }
+            elif row["lease_expired"]:
+                # A timed-out claimant has no receipt authority even before
+                # the next worker atomically persists the UNKNOWN transition.
+                result["status"] = "UNKNOWN"
+                result["result"] = {
+                    "status": "UNCONFIRMED",
+                    "reason": "Worker receipt was missing after lease expiry",
                 }
             return result
