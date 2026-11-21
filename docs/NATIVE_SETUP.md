@@ -598,6 +598,13 @@ and operators cannot approve their own rules.
 not separate database clusters, Unix security identities, or a hard
 isolation boundary against a compromised database administrator.
 All projects currently use only the fixed, allowlisted synthetic
-inventory target. Global resource reservation, independent project
-backups, network segmentation and external-target instrumentation
-still need separate security and recovery validation.
+inventory target. Named-account workers now share an **atomic admission
+limit of two native target claims** across all resource schemas, counting
+both run workers and native replay/reduction verifiers. Claims serialize
+on a PostgreSQL transaction advisory lock before checking live lease
+occupancy; memory-only runs remain eligible while native slots are full.
+Expired leases are not proof of target cleanup, and this coordinator
+limit is not an operating-system CPU, memory or egress security boundary.
+Independent project backups, host-global measured resource budgets,
+network segmentation and external-target instrumentation still need
+separate security and recovery validation.
