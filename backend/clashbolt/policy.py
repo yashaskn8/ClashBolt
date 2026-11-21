@@ -573,6 +573,26 @@ class Policy(Ledger):
                 })
             return True
 
+    @staticmethod
+    def _issuer_has_local_operator_grant(conn, account_id: UUID) -> bool:
+        """Lock both role records while authorizing a named issuer.
+
+        Role removal/changes take an account row FOR UPDATE, preventing
+        a racing grant revocation from committing between this check and
+        the capability debit. No account grants exist in legacy local mode.
+        """
+        row = conn.execute(
+            """
+            SELECT a.id FROM local_account a
+            JOIN project_membership m ON m.account_id = a.id
+            WHERE a.id = %s AND a.active = TRUE AND a.role = 'operator'
+              AND m.project_id = 'local' AND m.role = 'operator'
+            FOR SHARE OF a, m
+            """,
+            (account_id,),
+        ).fetchone()
+        return row is not None
+
     def issue(
         self,
         proposal_id: UUID,
@@ -581,7 +601,10 @@ class Policy(Ledger):
         max_calls: int = 1,
         lifetime_seconds: int = 600,
         plan_id: UUID | None = None,
+        issuer_account_id: UUID | None = None,
     ) -> dict:
+        if issuer_account_id is not None and not isinstance(issuer_account_id, UUID):
+            raise ValueError("Capability issuer must be an authenticated account UUID")
         if variant not in ("racy", "locked") or schedule not in SCHEDULES:
             raise ValueError("Unsupported fixture action")
         if not 1 <= max_calls <= 10 or not 60 <= lifetime_seconds <= 3600:
@@ -614,6 +637,10 @@ class Policy(Ledger):
                         != "VERIFIED"
                 ):
                     raise ValueError("Capability must match one pending approved plan")
+            if issuer_account_id is not None and not self._issuer_has_local_operator_grant(
+                conn, issuer_account_id
+            ):
+                raise ValueError("Issuer no longer has local operator authority")
             cap = conn.execute(
                 """
                 INSERT INTO tool_capability (
@@ -631,6 +658,17 @@ class Policy(Ledger):
                     variant, schedule, max_calls, lifetime_seconds, plan_id,
                 ),
             ).fetchone()
+            if issuer_account_id is not None:
+                # Account schema adds these columns with foreign keys. Legacy
+                # policy-only installations never write or depend on them.
+                conn.execute(
+                    """
+                    UPDATE tool_capability
+                    SET issuer_account_id = %s, issuer_project_id = 'local'
+                    WHERE id = %s
+                    """,
+                    (issuer_account_id, cap["id"]),
+                )
             # The secret is returned exactly once, never stored or recorded in audit.
             return {
                 "capability_id": str(cap["id"]),
@@ -655,7 +693,8 @@ class Policy(Ledger):
             return changed is not None
 
     def authorize(
-        self, token: str, variant: str, schedule: str, plan_id: UUID | None = None
+        self, token: str, variant: str, schedule: str, plan_id: UUID | None = None,
+        *, accounts_mode: bool = False,
     ) -> bool:
         """Serialize oracle approval, capability debit and plan dispatch.
 
@@ -697,8 +736,21 @@ class Policy(Ledger):
                 )
             elif row and row["plan_id"] is not None:
                 plan_ok = False
+            # A token is not a substitute for the current membership.
+            # In account mode reject old legacy bearer tokens as well as
+            # disabled, downgraded or revoked account-bound issuers.
+            issuer = row.get("issuer_account_id") if row else None
+            if accounts_mode:
+                issuer_ok = bool(
+                    issuer is not None
+                    and row.get("issuer_project_id") == "local"
+                    and self._issuer_has_local_operator_grant(conn, issuer)
+                )
+            else:
+                issuer_ok = issuer is None
             allowed = bool(
                 row
+                and issuer_ok
                 and plan_ok
                 and oracle is not None
                 and oracle["state"] == "APPROVED"
