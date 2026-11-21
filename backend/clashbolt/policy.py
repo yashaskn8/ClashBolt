@@ -698,13 +698,14 @@ class Policy(Ledger):
     ) -> bool:
         """Serialize oracle approval, capability debit and plan dispatch.
 
-        Lock oracle first: a committed revocation cannot race a tool ALLOW.
-        Then lock the capability and plan to fence concurrent dispatches.
+        Lock oracle, then the issuing account and membership, then the
+        capability and plan. Account revocation locks the account before
+        revoking capabilities; preserving that order prevents deadlocks.
         """
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with self.connect() as conn:
             candidate = conn.execute(
-                "SELECT proposal_id FROM tool_capability WHERE token_hash = %s",
+                "SELECT * FROM tool_capability WHERE token_hash = %s",
                 (token_hash,),
             ).fetchone()
             oracle = None
@@ -716,10 +717,30 @@ class Policy(Ledger):
                     """,
                     (candidate["proposal_id"],),
                 ).fetchone()
+            # Lock issuer identity *before* locking the capability row.
+            # All account mutations take the account row FOR UPDATE before
+            # revoking tokens. This closes a cap/account lock inversion.
+            issuer = candidate.get("issuer_account_id") if candidate else None
+            if accounts_mode:
+                issuer_ok = bool(
+                    issuer is not None
+                    and candidate.get("issuer_project_id") == "local"
+                    and self._issuer_has_local_operator_grant(conn, issuer)
+                )
+            else:
+                issuer_ok = issuer is None
             row = conn.execute(
                 "SELECT * FROM tool_capability WHERE token_hash = %s FOR UPDATE",
                 (token_hash,),
             ).fetchone() if candidate else None
+            # A privileged actor must not be able to swap capability
+            # ownership between the initial read and the locked re-read.
+            issuer_ok = bool(
+                issuer_ok and row
+                and row.get("issuer_account_id") == issuer
+                and row.get("issuer_project_id")
+                    == candidate.get("issuer_project_id")
+            )
             plan_ok = plan_id is None
             if row and row["plan_id"] is not None and plan_id == row["plan_id"]:
                 planned = conn.execute(
@@ -736,18 +757,8 @@ class Policy(Ledger):
                 )
             elif row and row["plan_id"] is not None:
                 plan_ok = False
-            # A token is not a substitute for the current membership.
-            # In account mode reject old legacy bearer tokens as well as
-            # disabled, downgraded or revoked account-bound issuers.
-            issuer = row.get("issuer_account_id") if row else None
-            if accounts_mode:
-                issuer_ok = bool(
-                    issuer is not None
-                    and row.get("issuer_project_id") == "local"
-                    and self._issuer_has_local_operator_grant(conn, issuer)
-                )
-            else:
-                issuer_ok = issuer is None
+            # The current issuer/role is verified while its database row
+            # locks are held; even a copied token cannot outlive revocation.
             allowed = bool(
                 row
                 and issuer_ok
