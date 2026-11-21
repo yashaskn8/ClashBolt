@@ -746,11 +746,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Manage locally provisioned ClashBolt accounts")
     parser.add_argument(
         "command", choices=(
-            "migrate", "create", "disable", "reset", "grant-local", "revoke-local"
+            "migrate", "create", "disable", "reset", "grant-local",
+            "revoke-local", "create-project", "grant-project", "revoke-project",
         )
     )
     parser.add_argument("username", nargs="?")
     parser.add_argument("role", nargs="?", choices=ROLES)
+    parser.add_argument("--project", default="local")
     args = parser.parse_args()
     dsn = os.getenv("CLASHBOLT_DATABASE_URL")
     if not dsn:
@@ -761,18 +763,30 @@ def main() -> None:
         print("Local account schema ready")
         return
     if not args.username or not USERNAME.fullmatch(args.username):
-        parser.error("Specify a lowercase username (3-48 characters)")
+        parser.error("Specify a lowercase account or project ID (3-48 characters)")
+    if args.command == "create-project":
+        try:
+            store.create_project(args.username)
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"create-project completed for {args.username}")
+        return
     if args.command == "disable":
         if not store.disable_account(args.username):
             parser.error("Account not found or already disabled")
-    elif args.command == "revoke-local":
-        if not store.revoke_local_role(args.username):
-            parser.error("Local project grant not found")
-    elif args.command == "grant-local":
+    elif args.command in ("revoke-local", "revoke-project"):
+        project_id = "local" if args.command == "revoke-local" else args.project
+        try:
+            if not store.revoke_project_role(args.username, project_id):
+                parser.error("Project grant not found")
+        except ValueError as error:
+            parser.error(str(error))
+    elif args.command in ("grant-local", "grant-project"):
+        project_id = "local" if args.command == "grant-local" else args.project
         if not args.role:
             parser.error("Project grant requires viewer, operator or reviewer role")
         try:
-            if not store.grant_local_role(args.username, args.role):
+            if not store.grant_project_role(args.username, args.role, project_id):
                 parser.error("Active account not found")
         except ValueError as error:
             parser.error(str(error))
