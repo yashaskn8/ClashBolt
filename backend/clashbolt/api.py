@@ -539,7 +539,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/experiments", status_code=201)
     async def create_experiment(request: ExperimentRequest) -> dict:
-        # Scratch-mode compatibility endpoint; not a durable queue or production API.
+        # A process-global scratch cache cannot enforce project isolation.
+        if access_mode == "accounts":
+            raise HTTPException(404, "Use durable project-scoped runs")
         witness = await execute(request.variant, request.schedule)
         run_id = str(uuid4())
         result = {"run_id": run_id, "witness": witness, "replay_status": "NOT_RUN"}
@@ -550,12 +552,16 @@ def create_app() -> FastAPI:
 
     @app.get("/api/experiments/{run_id}")
     def get_experiment(run_id: str) -> dict:
+        if access_mode == "accounts":
+            raise HTTPException(404, "Use durable project-scoped runs")
         if run_id not in runs:
             raise HTTPException(404, "Experiment not found (state is in-memory)")
         return runs[run_id]
 
     @app.post("/api/experiments/{run_id}/replay")
     async def replay_experiment(run_id: str) -> dict:
+        if access_mode == "accounts":
+            raise HTTPException(404, "Use durable project-scoped runs")
         original = runs.get(run_id)
         if original is None:
             raise HTTPException(404, "Experiment not found (state is in-memory)")
