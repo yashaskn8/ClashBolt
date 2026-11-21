@@ -27,7 +27,7 @@ def test_per_request_target_protects_kernel_and_system_controls():
     for restriction in (
         "PrivateNetwork=yes",
         "RestrictAddressFamilies=AF_UNIX",
-        "ProtectKernelTunables=yes",
+        "InaccessiblePaths=-/proc -/sys",
         "ProtectKernelModules=yes",
         "ProtectControlGroups=yes",
         "RestrictRealtime=yes",
