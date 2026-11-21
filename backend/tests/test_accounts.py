@@ -1,7 +1,9 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+import psycopg
 import pytest
+from uuid import UUID
 from clashbolt.accounts import (
     LOGIN_ATTEMPTS_PER_MINUTE,
     AccountStore,
@@ -131,3 +133,85 @@ def test_login_budget_renews_after_fixed_window(accounts):
 
 def test_login_budget_rejects_untrusted_peer(accounts):
     assert not accounts.reserve_login_attempt("198.51.100.5")
+
+
+def test_local_project_role_grants_never_elevate_global_authority(accounts):
+    operator = UUID(accounts.create_account(
+        "tenant.operator", "operator", "strong-operator-password-123"
+    ))
+    reviewer = UUID(accounts.create_account(
+        "tenant.reviewer", "reviewer", "strong-reviewer-password-123"
+    ))
+    assert accounts.project_role(operator) == "operator"
+    assert accounts.project_role(reviewer) == "reviewer"
+    with pytest.raises(ValueError, match="cannot elevate"):
+        accounts.grant_local_role("tenant.operator", "reviewer")
+    with pytest.raises(ValueError, match="cannot elevate"):
+        accounts.grant_local_role("tenant.reviewer", "operator")
+    assert accounts.grant_local_role("tenant.operator", "viewer")
+    assert accounts.project_role(operator) == "viewer"
+    assert accounts.project_role(reviewer) == "reviewer"
+    assert accounts.grant_local_role("tenant.operator", "viewer")
+    assert accounts.revoke_local_role("tenant.operator")
+    assert not accounts.revoke_local_role("tenant.operator")
+    assert accounts.project_role(operator) is None
+    assert accounts.grant_local_role("tenant.operator", "operator")
+    assert accounts.project_role(operator) == "operator"
+    with accounts.connect() as conn:
+        audit = conn.execute(
+            "SELECT action, previous_role, new_role FROM project_role_audit "
+            "WHERE account_id = %s ORDER BY id", (operator,),
+        ).fetchall()
+    assert [(row["action"], row["previous_role"], row["new_role"])
+            for row in audit] == [
+        ("GRANTED", None, "operator"),
+        ("CHANGED", "operator", "viewer"),
+        ("REVOKED", "viewer", None),
+        ("GRANTED", None, "operator"),
+    ]
+
+
+def test_account_v3_backfill_occurs_once_and_does_not_restore_revoked_grants(accounts):
+    account_id = UUID(accounts.create_account(
+        "legacy.operator", "operator", "legacy-password-that-is-long"
+    ))
+    with accounts.connect() as conn:
+        conn.execute(
+            "DELETE FROM project_membership WHERE account_id = %s",
+            (account_id,),
+        )
+        conn.execute("UPDATE schema_revision SET version = 3 WHERE component = 'accounts'")
+    # Simulate one migration of pre-project membership accounts.
+    accounts.migrate()
+    assert accounts.project_role(account_id) == "operator"
+    assert accounts.revoke_local_role("legacy.operator")
+    # Idempotent re-migrate must not recreate revoked access.
+    accounts.migrate()
+    assert accounts.project_role(account_id) is None
+
+
+def test_project_role_audit_is_database_append_only(accounts):
+    account_id = UUID(accounts.create_account(
+        "audit.viewer", "viewer", "really-long-password-123456"
+    ))
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with accounts.connect() as conn:
+            conn.execute(
+                "DELETE FROM project_role_audit WHERE account_id = %s",
+                (account_id,),
+            )
+    with accounts.connect() as conn:
+        audit = conn.execute(
+            "SELECT action FROM project_role_audit WHERE account_id = %s",
+            (account_id,),
+        ).fetchall()
+    assert [row["action"] for row in audit] == ["GRANTED"]
+
+
+def test_project_grant_requires_active_account(accounts):
+    accounts.create_account("disabled.operator", "operator", "long-password-123456789")
+    assert accounts.disable_account("disabled.operator")
+    assert not accounts.grant_local_role("disabled.operator", "operator")
+    assert not accounts.grant_local_role("unknown.operator", "operator")
+    with pytest.raises(ValueError, match="username"):
+        accounts.revoke_local_role("../invalid")
