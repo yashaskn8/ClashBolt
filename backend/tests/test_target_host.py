@@ -54,6 +54,10 @@ def test_live_instances_have_distinct_uids_and_kernel_resource_limits():
             sleep(0.1)
         assert len(groups) == 2
         uids = set()
+        network_namespaces = set()
+        mount_namespaces = set()
+        host_network = os.readlink("/proc/self/ns/net")
+        host_mount = os.readlink("/proc/self/ns/mnt")
         for unit in groups:
             path = subprocess.check_output([
                 "systemctl", "show", "-p", "ControlGroup", "--value", unit,
@@ -90,7 +94,30 @@ def test_live_instances_have_distinct_uids_and_kernel_resource_limits():
                 f"Fixture never became a distinct non-root cgroup process: {unit}"
             )
             uids.add(fixture_uid)
+            # Inspect the live process, not only the unit text. The CI host
+            # runner has passwordless sudo for reading another UID's /proc.
+            status = subprocess.check_output([
+                "sudo", "-n", "cat", f"/proc/{pid}/status",
+            ], text=True)
+            fields = dict(
+                line.split(":", 1) for line in status.splitlines() if ":" in line
+            )
+            assert fields["NoNewPrivs"].strip() == "1"
+            assert fields["Seccomp"].strip() == "2"
+            assert int(fields["CapEff"].strip(), 16) == 0
+            assert int(fields["CapBnd"].strip(), 16) == 0
+            for namespace, destination, host in (
+                ("net", network_namespaces, host_network),
+                ("mnt", mount_namespaces, host_mount),
+            ):
+                actual = subprocess.check_output([
+                    "sudo", "-n", "readlink", f"/proc/{pid}/ns/{namespace}",
+                ], text=True).strip()
+                assert actual != host, f"{unit} shares the host {namespace} namespace"
+                destination.add(actual)
         assert len(uids) == 2 and not uids.intersection({0, os.getuid()})
+        assert len(network_namespaces) == 2
+        assert len(mount_namespaces) == 2
     finally:
         for client in clients:
             client.close()
