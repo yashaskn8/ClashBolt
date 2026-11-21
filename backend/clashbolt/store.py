@@ -691,6 +691,162 @@ class Ledger:
             ).fetchone()
             return _public(row, self.project_id) if row else None
 
+    @staticmethod
+    def _current_replay(conn, run: dict) -> dict | None:
+        """Only a worker-certified, current synthetic replay is reviewable."""
+        if (
+            run["status"] != "COMPLETE"
+            or run["verdict"] != "FAIL"
+            or not isinstance(run["witness"], dict)
+            or validate_contract(run["witness"]) is not None
+        ):
+            return None
+        replay = conn.execute(
+            """
+            SELECT id, status, result FROM verification_job
+            WHERE run_id = %s AND run_version = %s AND kind = 'REPLAY'
+            """,
+            (run["id"], run["version"]),
+        ).fetchone()
+        if not replay or replay["status"] != "COMPLETE":
+            return None
+        report = replay["result"] or {}
+        digest = run["witness"]["evidence_sha256"]
+        if (
+            report.get("status") != "REPRODUCED"
+            or report.get("scope") != "SYNTHETIC_ONLY"
+            or report.get("original_sha256") != digest
+            or report.get("replay_sha256") != digest
+            or report.get("verdict") != "FAIL"
+        ):
+            return None
+        return replay
+
+    def witness_reviews(self, run_id: UUID) -> dict | None:
+        """Display evidence-bound history; expired reviews never stay current."""
+        with self.connect() as conn:
+            run = conn.execute(
+                "SELECT * FROM experiment_run WHERE id = %s AND project_id = 'local'",
+                (run_id,),
+            ).fetchone()
+            if not run:
+                return None
+            replay = self._current_replay(conn, run)
+            evidence_hash = (
+                run["witness"].get("evidence_sha256")
+                if isinstance(run["witness"], dict) else None
+            )
+            rows = conn.execute(
+                """
+                SELECT id, run_version, evidence_sha256, reviewer_account_id,
+                    decision, reason, replay_job_id, created_at
+                FROM witness_review WHERE run_id = %s
+                ORDER BY created_at, id
+                """,
+                (run_id,),
+            ).fetchall()
+            return {
+                "run_id": str(run_id),
+                "project_id": self.project_id,
+                "run_version": run["version"],
+                "evidence_sha256": evidence_hash,
+                "replay_job_id": str(replay["id"]) if replay else None,
+                "replay_verified": replay is not None,
+                "scope": "SYNTHETIC_ONLY",
+                "independent_external_reproduction": False,
+                "reviews": [
+                    {
+                        "review_id": str(row["id"]),
+                        "decision": row["decision"],
+                        "reason": row["reason"],
+                        "reviewer_account_id": str(row["reviewer_account_id"]),
+                        "run_version": row["run_version"],
+                        "evidence_sha256": row["evidence_sha256"],
+                        "replay_job_id": (
+                            str(row["replay_job_id"]) if row["replay_job_id"] else None
+                        ),
+                        "current": (
+                            run["status"] == "COMPLETE"
+                            and row["run_version"] == run["version"]
+                            and row["evidence_sha256"] == evidence_hash
+                            and (
+                                row["decision"] == "WITHHELD"
+                                or (replay is not None
+                                    and row["replay_job_id"] == replay["id"])
+                            )
+                        ),
+                        "created_at": row["created_at"].isoformat(),
+                    }
+                    for row in rows
+                ],
+            }
+
+    def review_witness(
+        self, run_id: UUID, *, expected_version: int,
+        expected_evidence_sha256: str, decision: str, reason: str,
+    ) -> dict:
+        """One reviewer-only, immutable synthetic replay decision per version."""
+        if (
+            self.actor_account_id is None or self.required_role != "reviewer"
+        ):
+            raise PermissionError("A named independent project reviewer is required")
+        if decision not in ("SUPPORTED", "WITHHELD"):
+            raise ValueError("Unsupported reviewer decision")
+        if not 12 <= len(reason) <= 400:
+            raise ValueError("Review reason must be 12-400 characters")
+        with self.connect() as conn:
+            run = conn.execute(
+                """
+                SELECT * FROM experiment_run
+                WHERE id = %s AND project_id = 'local' FOR UPDATE
+                """,
+                (run_id,),
+            ).fetchone()
+            if not run:
+                raise ValueError("Run was not found in this project")
+            if (
+                run["status"] != "COMPLETE" or run["verdict"] != "FAIL"
+                or not isinstance(run["witness"], dict)
+                or validate_contract(run["witness"]) is not None
+                or run["version"] != expected_version
+                or run["witness"]["evidence_sha256"] != expected_evidence_sha256
+            ):
+                raise ValueError("Witness or review version is no longer current")
+            replay = self._current_replay(conn, run)
+            if decision == "SUPPORTED" and replay is None:
+                raise ValueError("A current independently replayed synthetic witness is required")
+            existing = conn.execute(
+                """
+                SELECT id, decision, reason, replay_job_id FROM witness_review
+                WHERE run_id = %s AND run_version = %s AND reviewer_account_id = %s
+                FOR UPDATE
+                """,
+                (run_id, expected_version, self.actor_account_id),
+            ).fetchone()
+            replay_id = replay["id"] if decision == "SUPPORTED" else None
+            if existing:
+                if (
+                    existing["decision"] != decision
+                    or existing["reason"] != reason
+                    or existing["replay_job_id"] != replay_id
+                ):
+                    raise ValueError("The review decision is immutable")
+                return {"review_id": str(existing["id"]), "recorded": True}
+            row = conn.execute(
+                """
+                INSERT INTO witness_review(
+                    id, run_id, run_version, evidence_sha256,
+                    reviewer_account_id, decision, reason, replay_job_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    uuid4(), run_id, expected_version, expected_evidence_sha256,
+                    self.actor_account_id, decision, reason, replay_id,
+                ),
+            ).fetchone()
+            return {"review_id": str(row["id"]), "recorded": True}
+
     def transition_page(
         self, run_id: UUID, after: int = 0, limit: int = 100
     ) -> dict:
