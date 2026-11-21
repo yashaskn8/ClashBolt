@@ -172,12 +172,18 @@ export default function App() {
     if (catalog?.storage !== 'postgresql') return
     if (catalog.access_mode === 'accounts' && !account) return
     if (catalog.access_mode === 'private' && !sessionReady) return
+    let cancelled = false
     fetch('/api/oracle/proposals')
       .then((response) => parseResponse<{ proposals: { id: string; state: string }[] }>(response))
       .then((data) => {
-        setApprovedOracleId(data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null)
+        if (!cancelled) {
+          setApprovedOracleId(
+            data.proposals.find((rule) => rule.state === 'APPROVED')?.id ?? null
+          )
+        }
       })
-      .catch(() => setApprovedOracleId(null))
+      .catch(() => { if (!cancelled) setApprovedOracleId(null) })
+    return () => { cancelled = true }
   }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username, account?.project_id])
 
   useEffect(() => {
@@ -260,6 +266,7 @@ export default function App() {
       })
       const identity = await parseResponse<AccountIdentity>(response)
       setDraftReady(false)
+      setAccountProjects([])
       setAccount(identity)
       setAccountPassword('')
       setDraftVersion(0)
