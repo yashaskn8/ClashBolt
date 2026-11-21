@@ -285,3 +285,28 @@ def test_foreign_project_run_references_are_not_visible_through_local_api(
             "SELECT status FROM experiment_run WHERE id = %s", (foreign_id,),
         ).fetchone()["status"]
     assert status == "PENDING"
+
+
+def test_downgraded_reviewer_cannot_approve_with_existing_signed_session(
+    named_accounts,
+):
+    with TestClient(create_app()) as client:
+        _login(client, "operator")
+        proposal = client.post(
+            "/api/oracle/proposals", json={"proposed_by": "operator"}
+        ).json()
+        approve_path = f"/api/oracle/proposals/{proposal['id']}/approve"
+        payload = {"expected_hash": ORACLE_HASH, "reviewer": "reviewer"}
+        _login(client, "reviewer")
+        assert named_accounts.grant_local_role("sample.reviewer", "viewer")
+        assert client.get("/api/auth/me").json()["role"] == "viewer"
+        assert client.post(approve_path, json=payload).status_code == 403
+        with named_accounts.connect() as conn:
+            state = conn.execute(
+                "SELECT state FROM oracle_proposal WHERE id = %s",
+                (UUID(proposal["id"]),),
+            ).fetchone()["state"]
+        assert state == "PROPOSED"
+        assert named_accounts.grant_local_role("sample.reviewer", "reviewer")
+        approved = client.post(approve_path, json=payload)
+        assert approved.status_code == 200, approved.text
