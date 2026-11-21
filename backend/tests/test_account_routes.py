@@ -172,3 +172,65 @@ def test_login_throttle_denies_expensive_password_checks(named_accounts, monkeyp
             )
         assert client.post("/api/auth/login", json=payload).status_code == 401
         assert len(authenticated) == LOGIN_ATTEMPTS_PER_MINUTE + 1
+
+
+def test_project_grants_rechecked_on_each_request(named_accounts):
+    with TestClient(create_app()) as client:
+        _login(client, "operator")
+        assert client.get("/api/auth/me").json()["role"] == "operator"
+        assert client.get("/api/operations").status_code == 200
+        assert named_accounts.grant_local_role("sample.operator", "viewer")
+        assert client.get("/api/auth/me").json()["role"] == "viewer"
+        assert client.get("/api/oracle/proposals").status_code == 200
+        assert client.get("/api/operations").status_code == 403
+        assert client.post("/api/oracle/proposals", json={}).status_code == 403
+
+        assert named_accounts.revoke_local_role("sample.operator")
+        assert client.get("/api/auth/me").status_code == 403
+        assert client.get("/api/runs").status_code == 403
+        assert client.get("/api/oracle/proposals").status_code == 403
+        assert client.post("/api/auth/logout").status_code == 200
+        denied = client.post(
+            "/api/auth/login",
+            json={
+                "username": "sample.operator",
+                "password": "sample-long-local-password-555",
+            },
+        )
+        assert denied.status_code == 403
+        assert not client.cookies.get("clashbolt_identity")
+        # CLI-only regrant restores the scoped permission, not any old session.
+        assert named_accounts.grant_local_role("sample.operator", "operator")
+        assert client.get("/api/runs").status_code == 401
+        _login(client, "operator")
+        assert client.get("/api/operations").status_code == 200
+
+
+def test_membership_in_another_project_never_grants_local_resource_access(named_accounts):
+    with named_accounts.connect() as conn:
+        conn.execute(
+            "INSERT INTO project_quota(project_id) VALUES ('other') ON CONFLICT DO NOTHING"
+        )
+        account = conn.execute(
+            "SELECT id FROM local_account WHERE username = 'sample.viewer'"
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO project_membership(project_id, account_id, role)
+            VALUES ('other', %s, 'viewer')
+            """,
+            (account["id"],),
+        )
+    assert named_accounts.revoke_local_role("sample.viewer")
+    with TestClient(create_app()) as client:
+        denied = client.post(
+            "/api/auth/login",
+            json={
+                "username": "sample.viewer",
+                "password": "sample-long-local-password-555",
+            },
+        )
+        assert denied.status_code == 403
+        assert client.get("/api/runs").status_code == 401
+    # Merely existing as a member of another project never opens the local
+    # project's API. The other project's resources are not exposed yet.
