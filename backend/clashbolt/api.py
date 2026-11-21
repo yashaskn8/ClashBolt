@@ -260,7 +260,16 @@ def create_app() -> FastAPI:
             return JSONResponse(
                 status_code=401, content={"detail": "Named account session required"},
             )
-        request.state.account = identity
+        # Account-wide role alone is insufficient. A local-project grant
+        # is mandatory for *all* protected reads and writes, and is checked
+        # on every request so an existing cookie cannot outlive revocation.
+        effective_role = account_store.project_role(UUID(identity["id"]))
+        if effective_role is None and path != "/api/auth/logout":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "No permission for the local project"},
+            )
+        request.state.account = {**identity, "role": effective_role}
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             reviewing = (
                 request.method == "POST"
@@ -295,8 +304,11 @@ def create_app() -> FastAPI:
         )
         if identity is None:
             raise HTTPException(401, "Invalid account credentials")
+        role = account_store.project_role(UUID(identity["id"]))
+        if role is None:
+            raise HTTPException(403, "No permission for the local project")
         response = JSONResponse(content={
-            "username": identity["username"], "role": identity["role"],
+            "username": identity["username"], "role": role,
             "expires_in": 3600,
         })
         response.set_cookie(
