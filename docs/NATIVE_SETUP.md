@@ -305,6 +305,15 @@ expire after one hour, and are revalidated against the active account on each
 request. Password-derived hashes, failed-login lockout, and revocable account
 sessions are persisted in PostgreSQL.
 
+Account login now reserves a PostgreSQL-backed, one-minute request budget of
+20 attempts per direct loopback peer before performing a password hash check.
+Requests exceeding this limit return HTTP 429 and a Retry-After header. This is
+**not** an Internet-facing per-user or proxy-aware rate limiter: do not trust
+`X-Forwarded-For`, enable proxy exposure, or assume separate clients behind a
+shared gateway are independently limited. Existing username lockout remains.
+After updating the application, run `python -m clashbolt.accounts migrate`
+to apply account schema revision 3 before restarting the API.
+
 A reviewer can select a pending proposal in the React console after signing in
 without possessing an operator credential. An operator can then sign back in
 to execute the separately approved proposal.
