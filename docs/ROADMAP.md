@@ -6,9 +6,9 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
-| B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive, disposable restore drill and a CI immediate-primary-crash restart/acknowledged-run check | Multi-node failover, external recovery objectives and schema rollback drills |
-| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic fault injections, killed claimant recovery and a live POSIX claimant SIGSTOP/SIGCONT takeover regression | Whole worker/target process mid-effect recovery, network partitions, PostgreSQL failover and target-effect readback |
-| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction, SIGKILL native verifier recovery drill | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss, wider crash-point and multi-host recovery drills |
+| B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive, disposable restore drill, CI primary-crash restart check, and injected migration DDL/DML rollback test | Multi-node failover, external recovery objectives and production upgrade/downgrade rollback validation |
+| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic fault injections, live POSIX claimant suspension and SIGKILL native-run crash-point recovery | Network partitions, PostgreSQL failover, arbitrary external target-effect readback and broader mid-effect crash validation |
+| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound orphan cleanup, per-request systemd target, verifier SIGKILL and two native worker SIGKILL target-stage recovery tests | Independent deployment validation of UID, egress and resource enforcement; power-loss, multi-host and wider crash-point recovery drills |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
@@ -339,6 +339,26 @@ Standalone CLI replay/reduction still provisions temporary databases without
 a durable cleanup record and must run on trusted disposable test systems.
 A database lease does not fence already-running external effects, and neither
 power failure nor production-host systemd containment is certified.
+
+## B1 and B2/B3 additional bounded fault checks (21 November 2026)
+
+A disposable PostgreSQL test injects failure after migration SQL has created
+a table and inserted a quota row. The migration transaction must roll back
+**both** changes, leave the previous control schema usable, and permit a
+subsequent idempotent migration. This checks atomic failure handling on a
+single initialized CI database, not production downgrade or rollback of
+previously committed revisions.
+
+Two real POSIX native-worker tests cover crash points while a target is
+PROVISIONING (before database creation) and ACTIVE (after database creation).
+Each kills the separate claimant process, expires only its CI test lease,
+reconciles the registered target (including database and role if present),
+rejects the stale result, and requires the replacement lease generation to
+produce the sole certified synthetic PASS. The target cleanup invariant is
+checked before and after replacement. These are controlled SIGKILL tests,
+not host power loss, distributed failover or external application effect
+containment. Existing tests continue to enforce global native slots and
+strict host isolation.
 
 ## B3 native verifier crash-point recovery drill (21 November 2026)
 
