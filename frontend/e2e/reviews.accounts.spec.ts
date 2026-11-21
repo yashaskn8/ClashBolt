@@ -1,0 +1,60 @@
+import { expect, test, type Page } from '@playwright/test'
+
+async function signIn(page: Page, role: 'operator' | 'reviewer') {
+  await page.getByLabel('Account name').fill(`browser.${role}`)
+  await page.getByLabel('Account password').fill('browser-local-password-000')
+  await page.getByRole('button', { name: /Sign in|Switch named account/ }).click()
+  await expect(page.getByText(`Signed in: browser.${role} (${role})`))
+    .toBeVisible()
+}
+
+test('reviewer records only worker-reproduced synthetic evidence', async ({ page }) => {
+  test.setTimeout(100_000)
+  await page.goto('/')
+  await signIn(page, 'operator')
+  await page.getByRole('button', { name: /Validate candidate rule/ }).click()
+  await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
+
+  await signIn(page, 'reviewer')
+  await page.getByRole('button', { name: /Approve exact hash/ }).click()
+  await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
+
+  await signIn(page, 'operator')
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
+    timeout: 20_000,
+  })
+  const runs = await page.request.get('/api/runs')
+  expect(runs.ok()).toBe(true)
+  const runId = ((await runs.json()) as { runs: { run_id: string }[] }).runs[0].run_id
+
+  const queued = await page.request.post(`/api/runs/${runId}/verification-jobs`, {
+    data: { kind: 'REPLAY' },
+  })
+  expect(queued.status()).toBe(202)
+  const jobId = ((await queued.json()) as { job_id: string }).job_id
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/verification-jobs/${jobId}`)
+    return ((await response.json()) as { status: string }).status
+  }, { timeout: 25_000 }).toBe('COMPLETE')
+
+  await signIn(page, 'reviewer')
+  await page.locator('.recent-list button').filter({
+    hasText: runId.slice(0, 13),
+  }).click()
+  const panel = page.getByRole('region', { name: 'Independent synthetic witness review' })
+  await expect(panel.getByLabel('Synthetic replay readiness'))
+    .toContainText('VERIFIED SYNTHETIC REPLAY')
+  await expect(panel.getByLabel('Synthetic replay readiness'))
+    .toContainText('External reproduction: NOT ESTABLISHED')
+  await panel.getByLabel('Your review reason').fill(
+    'This exact synthetic replay was inspected against the bound witness.',
+  )
+  await panel.getByRole('button', { name: 'Support verified synthetic replay' }).click()
+  await expect(panel.getByText('SUPPORTED · CURRENT', { exact: false })).toBeVisible()
+  const reviewResult = await page.request.get(`/api/runs/${runId}/reviews`)
+  expect(reviewResult.ok()).toBe(true)
+  const data = await reviewResult.json() as { reviews: { decision: string }[] }
+  expect(data.reviews).toHaveLength(1)
+  expect(data.reviews[0].decision).toBe('SUPPORTED')
+})
