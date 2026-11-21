@@ -473,6 +473,17 @@ A `VERIFIED` history confirms internal event-chain consistency, **not**
 external application behavior or resistance to the PostgreSQL administrator.
 Older pre-migration plans without full history report `UNCONFIRMED`.
 
+After applying policy schema revision **9** through the usual
+`python -m clashbolt.policy` or account migration, the worker periodically
+checks each active plan's stored context against its history. A missing or
+inconsistent history is quarantined as terminal `UNKNOWN`, with a persistent
+evidence gap. The worker never repeats an uncertain tool call. Once
+quarantined, a plan cannot mint another scoped capability or propose an
+adaptive follow-up. Review the original record with
+`GET /api/agent/plans/PLAN_UUID/history` and inspect
+`GET /api/agent/plans/PLAN_UUID/gaps`; create a new independently approved
+plan rather than editing the corrupt record.
+
 
 ## Named-account draft boundaries
 
