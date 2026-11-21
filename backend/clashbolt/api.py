@@ -108,6 +108,13 @@ class RunRequest(ExperimentRequest):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ClashBolt Synthetic Lab", version="0.3.0")
+
+    @app.exception_handler(PermissionError)
+    async def permission_revoked(_request: Request, _error: PermissionError):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Project access changed before transaction"},
+        )
     dist_path = os.getenv("CLASHBOLT_FRONTEND_DIST")
     frontend_dir = Path(dist_path).resolve() if dist_path else None
     if frontend_dir and (
@@ -439,8 +446,16 @@ def create_app() -> FastAPI:
         )
         if account is None or not account.get("schema"):
             raise HTTPException(403, "An authorized project context is required")
+        operator_read = http_request.url.path in ("/api/operations", "/api/metrics")
         return Ledger(
-            dsn, schema=account["schema"], project_id=account["project_id"]
+            dsn, schema=account["schema"], project_id=account["project_id"],
+            actor_account_id=UUID(account["id"]),
+            required_role=(
+                "operator"
+                if http_request.method not in ("GET", "HEAD", "OPTIONS")
+                    or operator_read
+                else "viewer"
+            ),
         )
 
     def require_verifications(http_request: Request) -> VerificationJobs:
