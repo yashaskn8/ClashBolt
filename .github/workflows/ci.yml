@@ -2,12 +2,17 @@ name: checks
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: clashbolt-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,12 +35,19 @@ jobs:
           sudo -u postgres psql -p 5433 -c "ALTER USER postgres PASSWORD 'ci-target-only'"
           echo 'CLASHBOLT_TEST_TARGET_ADMIN_URL=postgresql://postgres:ci-target-only@127.0.0.1:5433/postgres' >> "$GITHUB_ENV"
       - run: python -m pip install -e '.[dev]'
-      - run: python -m ruff check .
-      - run: python -m pytest -q
+      - name: Verify installed Python dependencies
+        run: python -m pip check
+      - name: Check Python syntax and imports
+        run: |
+          python -m compileall -q backend/clashbolt
+          python -m ruff check .
+      - name: Strict PostgreSQL integration tests and branch coverage
+        run: python -m pytest -q --cov=clashbolt --cov-branch --cov-report=term-missing --cov-fail-under=75
       - name: Verify deployed fixture isolation on the native host
         run: bash ci/check-target-service.sh
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     defaults:
       run:
         working-directory: frontend
@@ -51,6 +63,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -112,3 +125,50 @@ jobs:
       - name: Verify named roles and durable execution in Chromium
         working-directory: frontend
         run: CLASHBOLT_BROWSER_MODE=accounts npm run test:e2e
+
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve and audit Python runtime and test dependencies
+        run: |
+          python -m pip install -e '.[dev]' 'pip-audit>=2,<3'
+          python -m pip check
+          python -m pip_audit --strict
+      - name: Audit frontend runtime and build dependencies
+        working-directory: frontend
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm audit --audit-level=high
+
+  release-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs: [backend, frontend, browser, security]
+    steps:
+      - name: Require every quality, security, native-host, and browser job
+        env:
+          BACKEND: ${{ needs.backend.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          BROWSER: ${{ needs.browser.result }}
+          SECURITY: ${{ needs.security.result }}
+        run: |
+          set -euo pipefail
+          for result in "$BACKEND" "$FRONTEND" "$BROWSER" "$SECURITY"; do
+            if [[ "$result" != "success" ]]; then
+              echo "::error::ClashBolt release blocked: a required CI job returned $result"
+              exit 1
+            fi
+          done
+          echo "All required CI jobs passed for this commit."
