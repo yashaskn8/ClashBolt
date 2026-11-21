@@ -1,7 +1,13 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-from clashbolt.accounts import AccountStore, sign_session, verify_session
+from clashbolt.accounts import (
+    LOGIN_ATTEMPTS_PER_MINUTE,
+    AccountStore,
+    sign_session,
+    verify_session,
+)
 
 
 @pytest.fixture
@@ -82,3 +88,46 @@ def test_account_migration_fails_atomically_on_invalid_new_schema(accounts, monk
             ).fetchall()
         }
     assert after == before
+
+
+def test_login_budget_is_atomic_under_concurrent_requests(accounts):
+    """Parallel attempts consume a fixed KDF budget, never exceeding it."""
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        allowed = list(
+            pool.map(
+                lambda _: accounts.reserve_login_attempt("127.0.0.1"),
+                range(LOGIN_ATTEMPTS_PER_MINUTE + 15),
+            )
+        )
+    assert sum(allowed) == LOGIN_ATTEMPTS_PER_MINUTE
+    assert accounts.reserve_login_attempt("127.0.0.1") is False
+    with accounts.connect() as conn:
+        recorded = conn.execute(
+            "SELECT attempts FROM account_login_throttle WHERE peer = %s",
+            ("127.0.0.1",),
+        ).fetchone()["attempts"]
+    assert recorded == LOGIN_ATTEMPTS_PER_MINUTE + 1
+
+
+def test_login_budget_renews_after_fixed_window(accounts):
+    for _ in range(LOGIN_ATTEMPTS_PER_MINUTE):
+        assert accounts.reserve_login_attempt("::1")
+    assert not accounts.reserve_login_attempt("::1")
+    with accounts.connect() as conn:
+        conn.execute(
+            "UPDATE account_login_throttle "
+            "SET window_started = now() - interval '61 seconds' "
+            "WHERE peer = %s",
+            ("::1",),
+        )
+    assert accounts.reserve_login_attempt("::1")
+    with accounts.connect() as conn:
+        count = conn.execute(
+            "SELECT attempts FROM account_login_throttle WHERE peer = %s",
+            ("::1",),
+        ).fetchone()["attempts"]
+    assert count == 1
+
+
+def test_login_budget_rejects_untrusted_peer(accounts):
+    assert not accounts.reserve_login_attempt("198.51.100.5")
