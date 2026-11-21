@@ -601,6 +601,13 @@ class Policy(Ledger):
                         plan["id"],
                     ),
                 )
+                conn.execute(
+                    """
+                    UPDATE agent_obligation SET state = 'UNKNOWN'
+                    WHERE plan_id = %s
+                    """,
+                    (plan["id"],),
+                )
                 self._record_gap(conn, plan["id"], "Oracle approval revoked")
                 append_history(conn, plan["id"], "ORACLE_REVOKED", {
                     "historical_evidence_sha256": receipt.get("evidence_sha256"),
@@ -1159,6 +1166,13 @@ class Policy(Ledger):
                         "quarantined": True,
                     }), planned["id"]),
                 )
+                conn.execute(
+                    """
+                    UPDATE agent_obligation SET state = 'UNKNOWN'
+                    WHERE plan_id = %s
+                    """,
+                    (planned["id"],),
+                )
                 self._record_gap(conn, planned["id"], reason)
                 quarantined += 1
             return quarantined
@@ -1437,12 +1451,27 @@ class Policy(Ledger):
                         item["id"],
                     ),
                 )
+                obligation = conn.execute(
+                    """
+                    UPDATE agent_obligation SET state = 'UNKNOWN'
+                    WHERE plan_id = %s
+                    RETURNING question_id, tool_request_id
+                    """,
+                    (item["id"],),
+                ).fetchone()
                 self._record_gap(
                     conn, item["id"], "Tool receipt missing after deadline"
                 )
                 append_history(conn, item["id"], "TIMEOUT", {
                     "state": "UNKNOWN",
                     "reason": "Tool receipt missing after deadline",
+                    "question_id": (
+                        str(obligation["question_id"]) if obligation else None
+                    ),
+                    "tool_request_id": (
+                        str(obligation["tool_request_id"])
+                        if obligation and obligation["tool_request_id"] else None
+                    ),
                 })
             return len(expired)
 
