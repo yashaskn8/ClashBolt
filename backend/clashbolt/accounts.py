@@ -1,8 +1,9 @@
-"""Named local accounts with an explicit, fail-closed local project grant.
+"""Trusted named accounts and independently scoped native project workspaces.
 
-Accounts are provisioned from the trusted local CLI, not HTTP signup.
-Only the shipped local project has scoped resources; there is no general
-multi-project API, SSO, or Internet-facing authentication.
+All identities and grants are stored in the public control schema. Each
+project's experiments, rules, agent plans, capabilities, jobs and evidence
+use a separate native PostgreSQL schema selected by server-side registry,
+never by untrusted SQL identifiers. No public signup, SSO or arbitrary targets.
 """
 
 import argparse
@@ -16,6 +17,7 @@ import time
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from clashbolt.policy import Policy
@@ -24,7 +26,7 @@ from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
 KDF_ITERATIONS = 450_000
-ACCOUNT_SCHEMA_VERSION = 5
+ACCOUNT_SCHEMA_VERSION = 6
 LOGIN_ATTEMPTS_PER_MINUTE = 20
 
 _ACCOUNT_SCHEMA = (
@@ -44,11 +46,21 @@ _ACCOUNT_SCHEMA = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS project_workspace (
+        project_id TEXT PRIMARY KEY REFERENCES project_quota(project_id),
+        schema_name TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS account_experiment_draft (
-        account_id UUID PRIMARY KEY REFERENCES local_account(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL DEFAULT 'local'
+            REFERENCES project_workspace(project_id),
+        account_id UUID NOT NULL REFERENCES local_account(id) ON DELETE CASCADE,
         version BIGINT NOT NULL DEFAULT 1,
         draft JSONB NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (project_id, account_id)
     )
     """,
     """
@@ -128,6 +140,40 @@ class AccountStore(Policy):
             conn.execute(
                 "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
             )
+            conn.execute(
+                """
+                INSERT INTO project_workspace(project_id, schema_name)
+                VALUES ('local', 'public') ON CONFLICT (project_id) DO NOTHING
+                """
+            )
+            if previous is not None and previous["version"] < 6:
+                # Upgrade the original account-wide draft key exactly once,
+                # retaining the existing draft as the local project's draft.
+                conn.execute(
+                    """
+                    ALTER TABLE account_experiment_draft
+                    ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'local'
+                    """
+                )
+                conn.execute(
+                    """
+                    ALTER TABLE account_experiment_draft
+                    DROP CONSTRAINT IF EXISTS account_experiment_draft_pkey
+                    """
+                )
+                conn.execute(
+                    """
+                    ALTER TABLE account_experiment_draft
+                    ADD PRIMARY KEY(project_id, account_id)
+                    """
+                )
+                conn.execute(
+                    """
+                    ALTER TABLE account_experiment_draft
+                    ADD CONSTRAINT account_draft_project_reference
+                    FOREIGN KEY(project_id) REFERENCES project_workspace(project_id)
+                    """
+                )
             if previous is None or previous["version"] < 4:
                 # One-time migration of existing named accounts. Never repeat
                 # this backfill or it would silently restore revoked grants.
@@ -139,6 +185,95 @@ class AccountStore(Policy):
                     """
                 )
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)
+
+    def create_project(self, project_id: str) -> str:
+        """Atomically create a fresh isolated project with its complete policy.
+
+        Trusted local administrator only. Never accept arbitrary schema names,
+        target URLs or SQL from the HTTP client. PostgreSQL DDL rolls back with
+        the registry record if any policy migration fails.
+        """
+        if project_id == "local" or not USERNAME.fullmatch(project_id):
+            raise ValueError("Invalid new project identifier")
+        schema = "cbp_" + hashlib.sha256(project_id.encode()).hexdigest()[:24]
+        with self.connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
+            existing = conn.execute(
+                "SELECT schema_name FROM project_workspace WHERE project_id = %s",
+                (project_id,),
+            ).fetchone()
+            if existing:
+                raise ValueError("Project already exists")
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (project_id,),
+            )
+            conn.execute(
+                sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema))
+            )
+            conn.execute(
+                """
+                INSERT INTO project_workspace(project_id, schema_name)
+                VALUES (%s, %s)
+                """,
+                (project_id, schema),
+            )
+            conn.execute(
+                sql.SQL("SET LOCAL search_path TO {}").format(sql.Identifier(schema))
+            )
+            self._apply_policy_schema(conn)
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local')"
+            )
+            # Tenant capability records live in this schema, but their issuing
+            # accounts are authoritative in public. The foreign key is explicit.
+            conn.execute(
+                """
+                ALTER TABLE tool_capability
+                ADD CONSTRAINT project_capability_issuer_account_fk
+                FOREIGN KEY(issuer_account_id) REFERENCES public.local_account(id)
+                """
+            )
+        return schema
+
+    def project_schema(self, project_id: str) -> str | None:
+        if not USERNAME.fullmatch(project_id):
+            return None
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT schema_name FROM project_workspace WHERE project_id = %s
+                """,
+                (project_id,),
+            ).fetchone()
+            return row["schema_name"] if row else None
+
+    def worker_projects(self) -> list[dict]:
+        """Trusted registry of resource schemas, shared by CLI and workers."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT project_id, schema_name FROM project_workspace
+                ORDER BY project_id
+                """
+            ).fetchall()
+            return rows
+
+    def accessible_projects(self, account_id: UUID) -> list[dict]:
+        """Return only currently active, role-ceiling-valid project grants."""
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT m.project_id AS id, m.role
+                FROM project_membership m
+                JOIN project_workspace w ON w.project_id = m.project_id
+                JOIN local_account a ON a.id = m.account_id
+                WHERE m.account_id = %s AND a.active
+                  AND (m.role = 'viewer' OR m.role = a.role)
+                ORDER BY m.project_id
+                """,
+                (account_id,),
+            ).fetchall()
 
     def reserve_login_attempt(self, peer: str) -> bool:
         """Atomically bound password KDF work per direct local peer.
@@ -183,7 +318,9 @@ class AccountStore(Policy):
             row = conn.execute(
                 """
                 SELECT m.role AS project_role, a.role AS account_role
-                FROM project_membership m JOIN local_account a ON a.id = m.account_id
+                FROM project_membership m
+                JOIN local_account a ON a.id = m.account_id
+                JOIN project_workspace w ON w.project_id = m.project_id
                 WHERE m.account_id = %s AND m.project_id = %s AND a.active = TRUE
                 """,
                 (account_id, project_id),
