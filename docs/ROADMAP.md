@@ -20,12 +20,32 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A5 Agent Decision Record | Typed plans, bounded model/tool deadlines, UNKNOWN recovery without budget refunds, hash-chained history, bounded worker-integrity sweeps with durable quarantine, no feedback from corrupt context | Full context/schema obligations, independently authenticated signatures, external crash-point matrix and recovery validation |
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
-| P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression | Real general-target contracts, cost preview and wider browser fault matrix |
+| P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression, read-only project quota/approval/resource preview | Real general-target contracts, measured CPU/provider cost estimates and wider browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P1 non-reserving run preview (21 November 2026)
+
+The experiment composer now calls an authorized `POST /api/runs/preview`
+endpoint before submitting a durable synthetic experiment. Its project-scoped
+PostgreSQL read checks the current approved-oracle binding and active/open-run
+quota, validates that a configured native target endpoint is distinct from
+the control endpoint, and reports the bounded checkpoint budget. React shows
+the current known blockers and whether a disposable native database would be
+requested. It refreshes when the selected run state or project changes.
+
+**The preview is advisory, not an admission or capacity reservation.**
+The actual run admission rechecks approval and quota transactionally. Native
+slot claims are a distinct worker-time constraint; host CPU use, external
+provider cost, execution duration and independent sandbox enforcement are
+**not measured or promised** by the preview. A `preflight_ok` snapshot
+cannot guarantee that a future submission or worker claim will succeed.
+Regression coverage checks authorization, no quota consumption, exhaustion,
+native/control alias rejection and differing quotas across two projects.
+This remains partial P1 implementation under the source PDF.
 
 ## B7 host-wide native target admission (21 November 2026)
 
