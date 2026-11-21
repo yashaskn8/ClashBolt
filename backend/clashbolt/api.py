@@ -284,6 +284,12 @@ def create_app() -> FastAPI:
     def account_login(request: Request, credentials: AccountLogin):
         if account_store is None:
             raise HTTPException(404, "Named accounts are not enabled")
+        peer = request.client.host if request.client else ""
+        if not account_store.reserve_login_attempt(peer):
+            raise HTTPException(
+                429, "Too many login attempts; retry later",
+                headers={"Retry-After": "60"},
+            )
         identity = account_store.authenticate(
             credentials.username, credentials.password
         )
