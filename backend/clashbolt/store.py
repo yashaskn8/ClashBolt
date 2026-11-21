@@ -18,7 +18,7 @@ from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
-BASE_SCHEMA_VERSION = 5
+BASE_SCHEMA_VERSION = 6
 
 _SCHEMA = (
     """
@@ -125,6 +125,22 @@ _SCHEMA = (
     """
     CREATE INDEX IF NOT EXISTS verification_job_claim_idx
     ON verification_job(status, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS verification_target_instance (
+        id UUID PRIMARY KEY,
+        job_id UUID NOT NULL REFERENCES verification_job(id),
+        lease_generation BIGINT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('PROVISIONING', 'ACTIVE', 'CLEANING', 'CLEANED', 'UNKNOWN')
+        ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS verification_target_cleanup_idx
+    ON verification_target_instance (status, updated_at)
     """,
     """
     CREATE TABLE IF NOT EXISTS worker_heartbeat (
