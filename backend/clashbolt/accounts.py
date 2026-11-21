@@ -504,42 +504,49 @@ class AccountStore(Policy):
     def revoke_local_role(self, username: str) -> bool:
         return self.revoke_project_role(username, "local")
 
-    def get_account_draft(self, account_id: UUID) -> dict | None:
+    def get_account_draft(
+        self, account_id: UUID, project_id: str = "local"
+    ) -> dict | None:
         with self.connect() as conn:
             row = conn.execute(
                 """
                 SELECT version, draft, updated_at
-                FROM account_experiment_draft WHERE account_id = %s
+                FROM account_experiment_draft
+                WHERE project_id = %s AND account_id = %s
                 """,
-                (account_id,),
+                (project_id, account_id),
             ).fetchone()
             return {**row, "updated_at": row["updated_at"].isoformat()} if row else None
 
     def save_account_draft(
-        self, account_id: UUID, draft: dict, expected_version: int
+        self, account_id: UUID, draft: dict, expected_version: int,
+        project_id: str = "local",
     ) -> dict:
-        """One optimistic-versioned draft per named account, never shared."""
+        """One CAS draft per account *and* project, without stale-form leakage."""
+        if not USERNAME.fullmatch(project_id):
+            raise ValueError("Invalid draft project identifier")
         self._validate_draft(draft, expected_version)
         with self.connect() as conn:
             if expected_version == 0:
                 row = conn.execute(
                     """
-                    INSERT INTO account_experiment_draft(account_id, version, draft)
-                    VALUES (%s, 1, %s)
-                    ON CONFLICT (account_id) DO NOTHING
+                    INSERT INTO account_experiment_draft(
+                        project_id, account_id, version, draft
+                    ) VALUES (%s, %s, 1, %s)
+                    ON CONFLICT (project_id, account_id) DO NOTHING
                     RETURNING version, draft, updated_at
                     """,
-                    (account_id, Jsonb(draft)),
+                    (project_id, account_id, Jsonb(draft)),
                 ).fetchone()
             else:
                 row = conn.execute(
                     """
                     UPDATE account_experiment_draft
                     SET version = version + 1, draft = %s, updated_at = now()
-                    WHERE account_id = %s AND version = %s
+                    WHERE project_id = %s AND account_id = %s AND version = %s
                     RETURNING version, draft, updated_at
                     """,
-                    (Jsonb(draft), account_id, expected_version),
+                    (Jsonb(draft), project_id, account_id, expected_version),
                 ).fetchone()
             if not row:
                 raise ValueError("Stale account experiment draft version")
