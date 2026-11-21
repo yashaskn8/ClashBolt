@@ -9,12 +9,12 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from psycopg.types.json import Jsonb
 from clashbolt.api import create_app
 from clashbolt.experiment import ORACLE_HASH, execute
 from clashbolt.planner import choose_plan
 from clashbolt.policy import Policy
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 
 @pytest.fixture
