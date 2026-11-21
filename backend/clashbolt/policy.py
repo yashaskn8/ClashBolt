@@ -878,6 +878,74 @@ class Policy(Ledger):
                 "promotion_eligible": False,
             }
 
+    @staticmethod
+    def _new_agent_plan(conn, proposal_id: UUID, plan: dict) -> dict:
+        """Write proposal, one outstanding question and history atomically."""
+        model_identifier = plan.get("model_id") or plan.get(
+            "planner_kind", "DETERMINISTIC_BASELINE"
+        )
+        if (
+            not isinstance(model_identifier, str)
+            or not 1 <= len(model_identifier) <= 80
+        ):
+            raise ValueError("Agent model identifier is not bounded")
+        row = conn.execute(
+            """
+            INSERT INTO agent_plan(id, proposal_id, plan, strategy)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, strategy, state
+            """,
+            (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
+        ).fetchone()
+        question_id = uuid4()
+        conn.execute(
+            """
+            INSERT INTO agent_obligation(
+                plan_id, question_id, context_version, tool_schema_version,
+                model_identifier, state
+            ) VALUES (%s, %s, %s, %s, %s, 'PENDING')
+            """,
+            (
+                row["id"], question_id, CONTEXT_VERSION,
+                TOOL_SCHEMA_VERSION, model_identifier,
+            ),
+        )
+        context = {
+            "question_id": str(question_id),
+            "context_version": CONTEXT_VERSION,
+            "tool_schema_version": TOOL_SCHEMA_VERSION,
+            "model_identifier": model_identifier,
+        }
+        append_history(conn, row["id"], "PROPOSED", {
+            "proposal_id": str(proposal_id),
+            "rule_sha256": ORACLE_HASH,
+            "plan": plan,
+            "obligation": context,
+        })
+        return {
+            **row, "id": str(row["id"]), "plan": plan,
+            "obligation": {
+                **context, "state": "PENDING",
+                "tool_request_id": None, "receipt_id": None,
+            },
+        }
+
+    @staticmethod
+    def _public_obligation(row: dict | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "question_id": str(row["question_id"]),
+            "context_version": row["context_version"],
+            "tool_schema_version": row["tool_schema_version"],
+            "model_identifier": row["model_identifier"],
+            "state": row["state"],
+            "tool_request_id": (
+                str(row["tool_request_id"]) if row["tool_request_id"] else None
+            ),
+            "receipt_id": str(row["receipt_id"]) if row["receipt_id"] else None,
+        }
+
     def propose_frontier_plan(self, proposal_id: UUID, variant: str) -> dict:
         if variant not in ("racy", "locked"):
             raise ValueError("Unsupported synthetic fixture variant")
@@ -900,20 +968,7 @@ class Policy(Ledger):
                 (proposal_id,),
             ).fetchall()
             plan = next_frontier_plan(evidence, variant)
-            row = conn.execute(
-                """
-                INSERT INTO agent_plan(id, proposal_id, plan, strategy)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, strategy, state
-                """,
-                (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
-            ).fetchone()
-            append_history(conn, row["id"], "PROPOSED", {
-                "proposal_id": str(proposal_id),
-                "rule_sha256": ORACLE_HASH,
-                "plan": plan,
-            })
-            return {**row, "id": str(row["id"]), "plan": plan}
+            return self._new_agent_plan(conn, proposal_id, plan)
 
     def record_plan(self, proposal_id: UUID, plan: dict) -> dict:
         """Persist typed deterministic planning intent; no tool call is implied."""
@@ -924,20 +979,7 @@ class Policy(Ledger):
             ).fetchone()
             if not rule or rule["state"] != "APPROVED" or rule["rule_hash"] != ORACLE_HASH:
                 raise ValueError("Only approved oracle versions may be planned")
-            row = conn.execute(
-                """
-                INSERT INTO agent_plan(id, proposal_id, plan, strategy)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id, strategy, state
-                """,
-                (uuid4(), proposal_id, Jsonb(plan), plan["strategy"]),
-            ).fetchone()
-            append_history(conn, row["id"], "PROPOSED", {
-                "proposal_id": str(proposal_id),
-                "rule_sha256": ORACLE_HASH,
-                "plan": plan,
-            })
-            return {**row, "id": str(row["id"]), "plan": plan}
+            return self._new_agent_plan(conn, proposal_id, plan)
 
     @staticmethod
     def _validated_plan_history(conn, planned: dict) -> tuple[dict, list[dict]]:
@@ -1124,22 +1166,10 @@ class Policy(Ledger):
                 }
             next_plan_id = None
             if decision["action"] == "REPLAN":
-                next_plan_id = uuid4()
-                conn.execute(
-                    """
-                    INSERT INTO agent_plan(id, proposal_id, plan, strategy)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        next_plan_id, plan["proposal_id"], Jsonb(decision["plan"]),
-                        decision["plan"]["strategy"],
-                    ),
+                created = self._new_agent_plan(
+                    conn, plan["proposal_id"], decision["plan"]
                 )
-                append_history(conn, next_plan_id, "PROPOSED", {
-                    "proposal_id": str(plan["proposal_id"]),
-                    "rule_sha256": ORACLE_HASH,
-                    "plan": decision["plan"],
-                })
+                next_plan_id = UUID(created["id"])
             row = conn.execute(
                 """
                 INSERT INTO search_feedback(
