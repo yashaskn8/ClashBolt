@@ -42,7 +42,7 @@ jobs:
           python -m compileall -q backend/clashbolt
           python -m ruff check .
       - name: Strict PostgreSQL integration tests and branch coverage
-        run: python -m pytest -q --cov=clashbolt --cov-branch --cov-report=term-missing --cov-fail-under=75
+        run: python -m pytest -q --timeout=120 --durations=10 --cov=clashbolt --cov-branch --cov-report=term-missing --cov-fail-under=75
       - name: Verify deployed fixture isolation on the native host
         run: bash ci/check-target-service.sh
   frontend:
