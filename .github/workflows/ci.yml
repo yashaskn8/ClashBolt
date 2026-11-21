@@ -145,7 +145,26 @@ jobs:
             > /tmp/clashbolt-browser-worker.log 2>&1 &
       - name: Verify named roles and durable execution in Chromium
         working-directory: frontend
-        run: CLASHBOLT_BROWSER_MODE=accounts npm run test:e2e
+        run: |
+          set -euo pipefail
+          # Browser test accounts share a single CI loopback peer. Keep each
+          # independent group below the production 20-login/minute throttle.
+          # Backend tests verify the throttle is enforced, never disabled.
+          CLASHBOLT_BROWSER_MODE=accounts npx playwright test --workers=1 \
+            e2e/diagnostics.accounts.spec.ts \
+            e2e/drafts.accounts.spec.ts \
+            e2e/monotonic.accounts.spec.ts \
+            e2e/projects.accounts.spec.ts
+          python - <<'PY'
+          import os
+          import psycopg
+          with psycopg.connect(os.environ["CLASHBOLT_DATABASE_URL"]) as conn:
+              conn.execute("TRUNCATE account_login_throttle")
+          PY
+          CLASHBOLT_BROWSER_MODE=accounts npx playwright test --workers=1 \
+            e2e/roles.accounts.spec.ts \
+            e2e/rolesync.accounts.spec.ts \
+            e2e/sse.accounts.spec.ts
 
 
   security:
