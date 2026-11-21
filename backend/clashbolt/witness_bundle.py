@@ -46,11 +46,20 @@ def create_bundle(witness: dict) -> bytes:
         "witness_file_sha256": hashlib.sha256(packed).hexdigest(),
         "execution_backend": witness.get("execution_backend", "memory"),
     }
+    # Use fixed metadata and uncompressed entries. ZIP defaults to today's
+    # timestamps, which makes the artifact SHA differ across clean machines.
+    # This synthetic bundle is small enough to prefer byte-for-byte stability.
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        bundle.writestr("manifest.json", _json(manifest))
-        bundle.writestr("witness.json", packed)
-        bundle.writestr("README.txt", README)
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as bundle:
+        for name, payload in (
+            ("manifest.json", _json(manifest)),
+            ("witness.json", packed),
+            ("README.txt", README.encode()),
+        ):
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            entry.external_attr = 0o644 << 16
+            bundle.writestr(entry, payload)
     return output.getvalue()
 
 
