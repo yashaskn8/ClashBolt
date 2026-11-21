@@ -2,7 +2,10 @@
 Description=Disposable ClashBolt fixture instance
 
 [Service]
+# DynamicUser alone reuses a UID across template instances. The Unix-socket
+# connection instance supplies a unique name, requiring a distinct UID.
 DynamicUser=yes
+User=cb-%i
 RootDirectory=/var/lib/clashbolt-target-root
 MountAPIVFS=no
 BindReadOnlyPaths=/usr /lib -/lib64 /opt/clashbolt-fixture
