@@ -90,6 +90,12 @@ The unit caps each instance at 50% of one CPU, 3 CPU seconds, 384 MiB memory,
 is outside these cgroups. Local development retains its existing subprocess
 mode. API scratch demos remain trusted in-process code. Native verification
 replay and reduction provision from the worker, and run fixture operations in
-the target unit. A worker crash during verification provisioning can still
-leave an untracked database. Use disposable installations for the CI host drill
-in `ci/check-target-service.sh`; it configures that machine's services and HBA.
+the target unit. Worker-queued replay and reduction now persist each disposable target UUID
+and verification lease generation before provisioning. Expired verification
+claims can be reclaimed by the worker's idempotent native database/role
+cleanup, provided its administrator credential is configured. Standalone
+CLI verifications are not tracked this way. Apply control schema revision 6
+using the normal migration before starting updated workers. This is not a
+power-loss or network-partition certification. Use disposable installations
+for the CI host drill in `ci/check-target-service.sh`; it configures that
+machine's services and HBA.
