@@ -7,9 +7,11 @@ This module deliberately does not connect to or execute an external target.
 import hashlib
 import json
 import os
+import re
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -19,6 +21,7 @@ from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
 BASE_SCHEMA_VERSION = 6
+_PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
 _SCHEMA = (
     """
@@ -167,11 +170,11 @@ def _request_hash(
     return hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
 
 
-def _public(row: dict) -> dict:
+def _public(row: dict, project_id: str = "local") -> dict:
     """Return JSON-safe, explicit fields rather than exposing internal lease secrets."""
     return {
         "run_id": str(row["id"]),
-        "project_id": row["project_id"],
+        "project_id": project_id,
         "variant": row["variant"],
         "schedule": row["schedule"],
         "oracle_hash": row["oracle_hash"],
@@ -230,11 +233,29 @@ def _record_schema_revision(conn, component: str, version: int) -> None:
 
 
 class Ledger:
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, *, schema: str = "public", project_id: str = "local"):
+        # Only the trusted project registry may supply tenant schemas.
+        # One instance has one immutable scope; no request-global context vars.
+        if not _PROJECT_SCHEMA_NAME.fullmatch(schema):
+            raise ValueError("Unrecognized project database schema")
+        if (schema == "public") != (project_id == "local"):
+            raise ValueError("Project identity and database schema disagree")
         self.dsn = dsn
+        self.schema = schema
+        self.project_id = project_id
 
     def connect(self) -> psycopg.Connection:
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        try:
+            # Deliberately do not include public as a fallback for tenant
+            # connections: a missing tenant table must error, not leak data.
+            conn.execute(
+                sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema))
+            )
+            return conn
+        except Exception:
+            conn.close()
+            raise
 
     @staticmethod
     def _apply_base_schema(conn) -> None:
@@ -296,7 +317,7 @@ class Ledger:
             if existing:
                 if existing["request_hash"] != request_hash:
                     raise ValueError("Idempotency key reused for a different experiment")
-                return _public(existing)
+                return _public(existing, self.project_id)
 
             approval = conn.execute(
                 """
@@ -341,7 +362,7 @@ class Ledger:
                 ),
             ).fetchone()
             _event(conn, row, "admitted")
-            return _public(row)
+            return _public(row, self.project_id)
 
     def get_draft(self) -> dict | None:
         with self.connect() as conn:
@@ -518,7 +539,7 @@ class Ledger:
                 """,
                 (limit,),
             ).fetchall()
-            return [_public(row) for row in rows]
+            return [_public(row, self.project_id) for row in rows]
 
     def get(self, run_id: UUID) -> dict | None:
         with self.connect() as conn:
@@ -526,7 +547,7 @@ class Ledger:
                 "SELECT * FROM experiment_run WHERE id = %s AND project_id = 'local'",
                 (run_id,),
             ).fetchone()
-            return _public(row) if row else None
+            return _public(row, self.project_id) if row else None
 
     def transition_page(
         self, run_id: UUID, after: int = 0, limit: int = 100
@@ -612,7 +633,7 @@ class Ledger:
                 (owner, lease_seconds, row["id"]),
             ).fetchone()
             _event(conn, claimed, "worker claimed run")
-            return _public(claimed)
+            return _public(claimed, self.project_id)
 
     def track_target(
         self, run_id: UUID, generation: int, owner: str, instance_id: UUID
@@ -841,7 +862,7 @@ class Ledger:
                     (status, run_id),
                 ).fetchone()
                 _event(conn, row, "operator requested cancellation")
-            return _public(row)
+            return _public(row, self.project_id)
 
     def reconcile_expired_cancelled(self) -> int:
         """An expired in-flight cancellation is UNKNOWN, never a clean cancel."""
