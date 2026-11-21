@@ -4,11 +4,12 @@ The API only queues allowlisted synthetic jobs. Target-cluster credentials are
 held by the worker and never returned to the browser or stored in this table.
 """
 
+import os
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from clashbolt.store import Ledger
+from clashbolt.store import GLOBAL_NATIVE_LOCK_ID, GLOBAL_NATIVE_SLOTS, Ledger
 
 KINDS = ("REPLAY", "REDUCE")
 
@@ -71,6 +72,10 @@ class VerificationJobs:
         if not 1 <= len(owner) <= 100 or not 5 <= lease_seconds <= 300:
             raise ValueError("Invalid verification worker or lease duration")
         with self.ledger.connect() as conn:
+            if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts":
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(%s)", (GLOBAL_NATIVE_LOCK_ID,)
+                )
             conn.execute(
                 """
                 UPDATE verification_job
@@ -83,6 +88,11 @@ class VerificationJobs:
                     "reason": "Worker receipt was missing after lease expiry",
                 }),),
             )
+            if (
+                os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
+                and self.ledger._global_native_active(conn) >= GLOBAL_NATIVE_SLOTS
+            ):
+                return None
             job = conn.execute(
                 """
                 SELECT * FROM verification_job
