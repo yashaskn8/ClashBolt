@@ -7,7 +7,6 @@ import sys
 
 import psycopg
 import pytest
-
 from clashbolt.ungated import measure_ungated, sample_ungated
 
 
