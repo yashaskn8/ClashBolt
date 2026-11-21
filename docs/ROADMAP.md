@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, atomic global two-native-target claim cap across projects (runs plus verifications), oldest queue age/start P95, concurrent admission and rotating project worker | Sustained multi-project fair-load trials, measured real CPU/provider cost, retry storms and host-wide resource benchmarks |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, atomic global two-native-target cap, transactional per-project native cap shared by run and verification claims, queue age/start P95, and bounded three-project worker drain | Sustained external/multi-project fair-load benchmarks, measured CPU/provider cost, retry storms and host-wide resource benchmarks |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
@@ -150,6 +150,26 @@ is conservative admission based on the coordinator's current lease state,
 not a cgroup resource controller: already executing external effects,
 ambiguous expired leases, administrator bypass, multiple separate control
 clusters, and host-level recovery behavior still need independent tests.
+
+## B7 project-native admission and bounded fair-load regression (21 November 2026)
+
+All active native run claims and worker-queued verification claims now share
+each trusted project's existing `max_native_active` quota. Both admission
+paths lock the same local `project_quota` row. Under named-account project
+mode, they first acquire the existing host-wide advisory lock so a native
+claim cannot exceed either the host or project limit. Expired leases do not
+reserve capacity; a stale receipt is still rejected independently. Memory
+execution remains eligible when native capacity is full.
+
+The PostgreSQL regression races separate native and verification claimers
+against a one-slot project, tests both directions of capacity release after
+lease expiry, and proves another project can claim its own slot without
+borrowing the exhausted project's capacity. A separate **bounded 30-run,
+three-project** trial admits overlapping backlogs through real PostgreSQL
+connections, rotates project priority across worker cycles, runs the actual
+fixed-fixture worker entrypoint and checks all ten receipts per project. It
+does not establish general production fairness, provider budget accounting,
+CPU cost, network partition tolerance or durable throughput objectives.
 
 ## P4 multi-project storage and transaction authorization (21 November 2026)
 
