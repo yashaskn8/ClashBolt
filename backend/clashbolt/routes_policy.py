@@ -130,8 +130,32 @@ def policy_router(dsn: str | None) -> APIRouter:
             )
         if not selected or not selected.get("schema"):
             raise HTTPException(403, "Authorized project context is required")
+        if capability_only:
+            return Policy(
+                dsn, schema=selected["schema"], project_id=selected["project_id"]
+            )
+        actor = http_request.state.account
+        path = http_request.url.path
+        reviewer_write = (
+            http_request.method == "POST"
+            and path.startswith("/api/oracle/proposals/")
+            and (path.endswith("/approve") or path.endswith("/revoke"))
+        )
+        operator_only_read = (
+            path in (
+                "/api/oracle/audit", "/api/tool-audit", "/api/agent/model-budget",
+            )
+            or path.endswith("/history")
+        )
         return Policy(
-            dsn, schema=selected["schema"], project_id=selected["project_id"]
+            dsn, schema=selected["schema"], project_id=selected["project_id"],
+            actor_account_id=UUID(actor["id"]),
+            required_role=(
+                "reviewer" if reviewer_write else "operator"
+                if http_request.method not in ("GET", "HEAD", "OPTIONS")
+                    or operator_only_read
+                else "viewer"
+            ),
         )
 
 
