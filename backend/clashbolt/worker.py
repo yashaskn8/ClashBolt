@@ -69,7 +69,17 @@ async def isolated_synthetic_run(
                         process.kill()
                 except ProcessLookupError:
                     pass
-            await process.wait()
+
+            # asyncio.Process.wait() may hang when a PIPE is still full.
+            # After terminating the producer, discard rather than accumulate
+            # any unread output, then reap the process with a cleanup deadline.
+            async def discard_and_reap() -> None:
+                if process.stdout is not None:
+                    while await process.stdout.read(8192):
+                        pass
+                await process.wait()
+
+            await asyncio.wait_for(discard_and_reap(), timeout=2)
             raise
     if process.returncode != 0:
         raise RuntimeError("Fixed fixture subprocess failed")
