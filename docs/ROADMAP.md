@@ -6,10 +6,10 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
-| B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
+| B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive, disposable restore drill and a CI immediate-primary-crash restart/acknowledged-run check | Multi-node failover, external recovery objectives and schema rollback drills |
 | B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic fault injections, killed claimant recovery and a live POSIX claimant SIGSTOP/SIGCONT takeover regression | Whole worker/target process mid-effect recovery, network partitions, PostgreSQL failover and target-effect readback |
 | B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss and verifier-crash drills |
-| B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
+| B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
 | B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/first-start P95, real PostgreSQL concurrent admission/queue-drain regression | Real CPU/provider cost, multi-project fair scheduling, sustained load-tested SLOs and retry storms |
@@ -308,3 +308,33 @@ project ID and reject local resource GET, evidence export, transition reads
 and cancellation by its UUID. Other-project operations are still disabled;
 a full tenant-aware application needs scoped policy, tool and worker
 relationships rather than this single-project boundary alone.
+
+
+## B1 control-primary crash and B4 ungated synthetic measurements (21 November 2026)
+
+The CI-only `ci/check-control-crash-recovery.py` prepares an acknowledged
+run and lease on the disposable `clashbolt_test` control PostgreSQL
+cluster, then the CI workflow performs an immediate PostgreSQL cluster
+stop/restart. The verifier checks persisted run and transition identity,
+artificially expires the previous lease for test speed, claims a new
+generation and rejects the stale as well as duplicate terminal receipt.
+Its CLI refuses non-CI execution and a non-loopback or differently named
+control database. This tests local crash recovery of **one primary**,
+not asynchronous-replica failover, acknowledged-write durability under
+network partitions, or a production recovery-time objective.
+
+The trusted native research CLI `python -m clashbolt.ungated --variant
+racy --trials 3` runs exactly the shipped inventory fixture with two
+competing PostgreSQL clients **without the controlled per-operation
+checkpoint release schedule**. Each trial gets an independent disposable
+target database and least-privilege role; the checker evaluates only the
+observed final state. It reports PASS/FAIL counts but **never assumes a
+race was reproduced**, invents a global causal trace or treats these
+known synthetic samples as external-target evidence. The locked variant
+serves as a known-correct reference. Only 1-20 trials may run per CLI
+invocation. Native CI tests exercise both variants and the real CLI,
+including database cleanup and no emitted credentials.
+
+These additions improve B1/B2/B4 failure and confirmation evidence, but
+do not meet the PDF's general application instrumentation, uncontrolled
+reproduction, or independent deployment certification requirements.
