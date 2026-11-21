@@ -468,7 +468,7 @@ class AccountStore(Policy):
     def revoke_project_role(self, username: str, project_id: str) -> bool:
         """Remove exactly one grant; active sessions lose project access."""
         if not USERNAME.fullmatch(username) or not USERNAME.fullmatch(project_id):
-            raise ValueError("Invalid account or project identifier")
+            raise ValueError("Invalid username or project identifier")
         with self.connect() as conn:
             account = conn.execute(
                 "SELECT id FROM local_account WHERE username = %s FOR UPDATE",
