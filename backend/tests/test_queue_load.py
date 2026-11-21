@@ -49,36 +49,30 @@ def test_concurrent_admission_enforces_quota_and_drains_without_starvation():
 
     # Real independent DB connections compete for queue claims. No job is
     # delivered to two current owners in a healthy primary.
+    def claim(index):
+        owner = f"queue-load-worker-{index}"
+        receipt = ledger.claim(owner)
+        return (owner, receipt) if receipt is not None else None
+
     with ThreadPoolExecutor(max_workers=8) as pool:
-        claims = list(pool.map(
-            lambda i: ledger.claim(f"queue-load-worker-{i}"), range(36)
-        ))
-    claimed = [run for run in claims if run]
+        claims = list(pool.map(claim, range(36)))
+    claimed = [item for item in claims if item]
     assert len(claimed) == 24
-    assert {run["run_id"] for run in claimed} == {
+    assert {receipt["run_id"] for _, receipt in claimed} == {
         run["run_id"] for run in accepted
     }
 
     witness = asyncio.run(execute("locked", "serial"))
 
-    def finish(claim):
+    def finish(item):
+        owner, receipt = item
         return ledger.finish(
-            UUID(claim["run_id"]), claim["lease_owner"],
-            claim["lease_generation"], witness,
+            UUID(receipt["run_id"]), owner,
+            receipt["lease_generation"], witness,
         )
 
-    # Ledger.claim deliberately omits the private owner field from public run
-    # projections; the claiming worker ID is the original request argument.
     with ThreadPoolExecutor(max_workers=8) as pool:
-        outcomes = list(pool.map(
-            lambda index: ledger.finish(
-                UUID(claimed[index]["run_id"]),
-                f"queue-load-worker-{claims.index(claimed[index])}",
-                claimed[index]["lease_generation"],
-                witness,
-            ),
-            range(len(claimed)),
-        ))
+        outcomes = list(pool.map(finish, claimed))
     assert all(outcomes)
     assert all(ledger.get(UUID(row["run_id"]))["status"] == "COMPLETE"
                for row in accepted)
