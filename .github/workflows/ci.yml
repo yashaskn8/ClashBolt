@@ -165,6 +165,14 @@ jobs:
             e2e/roles.accounts.spec.ts \
             e2e/rolesync.accounts.spec.ts \
             e2e/sse.accounts.spec.ts
+          python - <<'PY'
+          import os
+          import psycopg
+          with psycopg.connect(os.environ["CLASHBOLT_DATABASE_URL"]) as conn:
+              conn.execute("TRUNCATE account_login_throttle")
+          PY
+          CLASHBOLT_BROWSER_MODE=accounts npx playwright test --workers=1 \
+            e2e/reviews.accounts.spec.ts
       - name: Diagnose native worker if account browser verification fails
         if: ${{ failure() }}
         run: |
