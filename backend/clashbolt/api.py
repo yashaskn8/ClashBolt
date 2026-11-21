@@ -394,10 +394,15 @@ def create_app() -> FastAPI:
                     )
                 if access_mode == "accounts":
                     active = connection.execute(
-                        "SELECT count(*) AS n FROM local_account WHERE active = TRUE"
+                        """
+                        SELECT count(*) AS n FROM local_account a
+                        JOIN project_membership m ON m.account_id = a.id
+                        WHERE a.active = TRUE AND m.project_id = 'local'
+                          AND (m.role = 'viewer' OR m.role = a.role)
+                        """
                     ).fetchone()["n"]
                     if active == 0:
-                        raise HTTPException(503, "No active named accounts are configured")
+                        raise HTTPException(503, "No active local-project grants are configured")
         except DatabaseError as error:
             raise HTTPException(503, "Control database is unavailable") from error
         if require_worker:
