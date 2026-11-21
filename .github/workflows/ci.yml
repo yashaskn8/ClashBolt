@@ -47,6 +47,18 @@ jobs:
         run: vulture backend/clashbolt --min-confidence 100
       - name: Strict PostgreSQL integration tests and branch coverage
         run: python -m pytest -q --timeout=120 --durations=10 --cov=clashbolt --cov-branch --cov-report=term-missing --cov-fail-under=75
+      - name: Force crash/restart of disposable control PostgreSQL and verify recovery
+        run: |
+          set -euo pipefail
+          EVIDENCE="$(mktemp)"
+          trap 'rm -f "$EVIDENCE"' EXIT
+          python ci/check-control-crash-recovery.py prepare "$EVIDENCE"
+          VERSION="$(pg_lsclusters -h | awk '$2 == "main" { print $1; exit }')"
+          test -n "$VERSION"
+          sudo pg_ctlcluster -m immediate "$VERSION" main stop
+          sudo pg_ctlcluster "$VERSION" main start
+          pg_isready -h 127.0.0.1 -p 5432
+          python ci/check-control-crash-recovery.py verify "$EVIDENCE"
       - name: Verify deployed fixture isolation on the native host
         run: bash ci/check-target-service.sh
   frontend:
