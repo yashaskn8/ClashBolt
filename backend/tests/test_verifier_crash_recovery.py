@@ -20,7 +20,6 @@ from clashbolt.target_db import drop_abandoned_target
 from clashbolt.verification_jobs import VerificationJobs
 from clashbolt.worker import reconcile_verification_targets
 
-
 # This child runs the real verification worker and target provisioning path.
 # Pause only after the real ACTIVE record is committed, then the parent
 # terminates the entire process before any verification receipt can be saved.
