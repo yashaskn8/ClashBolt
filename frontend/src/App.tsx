@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import DurableMonitor, { type DurableRun } from './DurableMonitor'
 import PolicyConsole from './PolicyConsole'
 import RecentRuns from './RecentRuns'
+import WitnessReviews from './WitnessReviews'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
@@ -815,6 +816,12 @@ export default function App() {
           initial={durable} onUpdate={setDurable} operatorToken={operatorToken}
           canOperate={operatorReady} accountMode={catalog?.access_mode === 'accounts'}
         />}
+        {durable && account && catalog?.access_mode === 'accounts' && (
+          <WitnessReviews
+            run={durable} projectId={account.project_id}
+            role={account.role} replayStatus={replayStatus}
+          />
+        )}
         {catalog?.storage === 'postgresql' &&
         (catalog.access_mode === 'local' ||
           (catalog.access_mode === 'private' && sessionReady) ||
