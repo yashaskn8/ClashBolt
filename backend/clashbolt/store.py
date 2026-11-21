@@ -233,25 +233,58 @@ def _record_schema_revision(conn, component: str, version: int) -> None:
 
 
 class Ledger:
-    def __init__(self, dsn: str, *, schema: str = "public", project_id: str = "local"):
-        # Only the trusted project registry may supply tenant schemas.
-        # One instance has one immutable scope; no request-global context vars.
+    def __init__(
+        self, dsn: str, *, schema: str = "public", project_id: str = "local",
+        actor_account_id: UUID | None = None, required_role: str = "viewer",
+    ):
+        # Only trusted project-registry schemas may be used for resources.
+        # One instance holds one immutable scope, not a request-global context.
         if not _PROJECT_SCHEMA_NAME.fullmatch(schema):
             raise ValueError("Unrecognized project database schema")
         if (schema == "public") != (project_id == "local"):
             raise ValueError("Project identity and database schema disagree")
+        if required_role not in ("viewer", "operator", "reviewer"):
+            raise ValueError("Unrecognized required project role")
+        if actor_account_id is not None and not isinstance(actor_account_id, UUID):
+            raise ValueError("Project actor must be an authenticated UUID")
         self.dsn = dsn
         self.schema = schema
         self.project_id = project_id
+        self.actor_account_id = actor_account_id
+        self.required_role = required_role
 
     def connect(self) -> psycopg.Connection:
         conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
         try:
-            # Deliberately do not include public as a fallback for tenant
-            # connections: a missing tenant table must error, not leak data.
+            # Never fall back to public from an isolated project: a missing
+            # project table must error, not silently expose another workspace.
             conn.execute(
                 sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema))
             )
+            if self.actor_account_id is not None:
+                # Database row locks span the entire operation. A concurrent
+                # grant revocation waits for this transaction, or a new
+                # operation observes the revocation and cannot begin.
+                row = conn.execute(
+                    """
+                    SELECT a.role AS account_role, m.role AS project_role
+                    FROM public.local_account a
+                    JOIN public.project_membership m ON m.account_id = a.id
+                    JOIN public.project_workspace w ON w.project_id = m.project_id
+                    WHERE a.id = %s AND m.project_id = %s AND a.active = TRUE
+                    FOR SHARE OF a, m
+                    """,
+                    (self.actor_account_id, self.project_id),
+                ).fetchone()
+                effective = (
+                    row["project_role"]
+                    if row and row["project_role"] in ("viewer", row["account_role"])
+                    else None
+                )
+                if effective is None or (
+                    self.required_role != "viewer" and effective != self.required_role
+                ):
+                    raise PermissionError("Project access changed before transaction")
             return conn
         except Exception:
             conn.close()
