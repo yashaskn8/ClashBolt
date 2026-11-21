@@ -106,6 +106,48 @@ export default function App() {
   }, [catalog?.access_mode])
 
   useEffect(() => {
+    if (catalog?.access_mode !== 'accounts' || !account?.username) return
+    const username = account.username
+    let mounted = true
+
+    async function refreshProjectRole() {
+      try {
+        const response = await fetch('/api/auth/me', { cache: 'no-store' })
+        if (!mounted) return
+        if (response.status === 401 || response.status === 403) {
+          // A revoked project grant or account session makes previous
+          // operator controls and evidence selections obsolete immediately
+          // after the authoritative HTTP response, not after a new login.
+          setAccount(null)
+          setApprovedOracleId(null)
+          setDurable(null)
+          setResult(null)
+          setDraftVersion(0)
+          setDraftReady(false)
+          setError('Account or project access changed. Sign in again.')
+          return
+        }
+        if (!response.ok) return // transient outage: backend still rejects writes
+        const identity = (await response.json()) as {
+          username: string
+          role: 'viewer' | 'operator' | 'reviewer'
+        }
+        if (!mounted || identity.username !== username) return
+        setAccount((current) => (
+          current?.username === username && current.role !== identity.role
+            ? identity : current
+        ))
+      } catch {
+        // Never infer permission from a failed network probe. All writes
+        // are independently authorized against the current database role.
+      }
+    }
+
+    const timer = window.setInterval(() => void refreshProjectRole(), 2000)
+    return () => { mounted = false; window.clearInterval(timer) }
+  }, [catalog?.access_mode, account?.username])
+
+  useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
     if (catalog.access_mode === 'accounts' && !account) return
     if (catalog.access_mode === 'private' && !sessionReady) return
@@ -600,6 +642,8 @@ export default function App() {
         (catalog.access_mode === 'local' ||
           (catalog.access_mode === 'private' && sessionReady) ||
           (catalog.access_mode === 'accounts' && account !== null)) && <PolicyConsole
+          key={catalog.access_mode === 'accounts'
+            ? `${account?.username}:${account?.role}` : catalog.access_mode}
           variant={variant} schedule={schedule}
           onApproved={(id) => setApprovedOracleId(id)}
           operator={operatorToken}
