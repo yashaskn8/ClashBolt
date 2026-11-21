@@ -111,10 +111,28 @@ def policy_router(dsn: str | None) -> APIRouter:
     router = APIRouter(prefix="/api")
     policy = Policy(dsn) if dsn else None
 
-    def require_policy() -> Policy:
+    def require_policy(
+        http_request: Request | None = None, *, capability_only: bool = False
+    ) -> Policy:
         if not policy:
             raise HTTPException(503, "Set CLASHBOLT_DATABASE_URL to enable rule review")
-        return policy
+        if os.getenv("CLASHBOLT_ACCESS_MODE") != "accounts":
+            return policy
+        if http_request is None:
+            raise HTTPException(403, "Project context is required")
+        if capability_only:
+            selected = getattr(http_request.state, "project", None)
+        else:
+            account = getattr(http_request.state, "account", None)
+            selected = (
+                {"project_id": account["project_id"], "schema": account["schema"]}
+                if account else None
+            )
+        if not selected or not selected.get("schema"):
+            raise HTTPException(403, "Authorized project context is required")
+        return Policy(
+            dsn, schema=selected["schema"], project_id=selected["project_id"]
+        )
 
 
     @router.post("/oracle/proposals", status_code=201)
@@ -124,18 +142,18 @@ def policy_router(dsn: str | None) -> APIRouter:
             if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
             else request.proposed_by
         )
-        return require_policy().propose(actor, request.candidate)
+        return require_policy(http_request).propose(actor, request.candidate)
 
     @router.get("/oracle/audit")
     def list_oracle_audit(
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        return {"events": require_policy().oracle_audit()}
+        return {"events": require_policy(http_request).oracle_audit()}
 
     @router.get("/oracle/proposals")
-    def list_rules():
-        return {"proposals": require_policy().list_proposals()}
+    def list_rules(http_request: Request):
+        return {"proposals": require_policy(http_request).list_proposals()}
 
     @router.post("/oracle/proposals/{proposal_id}/approve")
     def approve_rule(
@@ -150,7 +168,7 @@ def policy_router(dsn: str | None) -> APIRouter:
             else request.reviewer
         )
         try:
-            return require_policy().approve(
+            return require_policy(http_request).approve(
                 proposal_id, request.expected_hash, reviewer
             )
         except ValueError as error:
@@ -168,7 +186,7 @@ def policy_router(dsn: str | None) -> APIRouter:
             if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
             else "local-reviewer"
         )
-        if not require_policy().revoke_rule(proposal_id, actor=actor):
+        if not require_policy(http_request).revoke_rule(proposal_id, actor=actor):
             raise HTTPException(409, "Oracle version is not currently approved")
         return {"proposal_id": str(proposal_id), "state": "REVOKED"}
 
@@ -184,7 +202,7 @@ def policy_router(dsn: str | None) -> APIRouter:
                 if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts"
                 else None
             )
-            return require_policy().issue(
+            return require_policy(http_request).issue(
                 request.proposal_id, request.variant, request.schedule,
                 request.max_calls, request.lifetime_seconds, request.plan_id,
                 issuer_account_id=issuer,
@@ -198,7 +216,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        if not require_policy().revoke_capability(capability_id):
+        if not require_policy(http_request).revoke_capability(capability_id):
             raise HTTPException(404, "No active capability with this ID")
         return {"capability_id": str(capability_id), "revoked": True}
 
@@ -207,24 +225,25 @@ def policy_router(dsn: str | None) -> APIRouter:
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        return {"events": require_policy().audit()}
+        return {"events": require_policy(http_request).audit()}
 
     @router.post("/agent/plans", status_code=201)
-    def propose_plan(request: PlanInput):
+    def propose_plan(request: PlanInput, http_request: Request):
         try:
             plan = choose_plan(
                 strategy=request.strategy, variant=request.variant, seed=request.seed
             )
-            return require_policy().record_plan(request.proposal_id, plan)
+            return require_policy(http_request).record_plan(request.proposal_id, plan)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
     @router.get("/agent/frontier/{proposal_id}")
     def get_frontier(
-        proposal_id: UUID, variant: Literal["racy", "locked"] = "racy",
+        proposal_id: UUID, http_request: Request,
+        variant: Literal["racy", "locked"] = "racy",
     ):
         try:
-            return require_policy().frontier(proposal_id, variant)
+            return require_policy(http_request).frontier(proposal_id, variant)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
@@ -237,7 +256,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         if proposal_id != request.proposal_id:
             raise HTTPException(409, "Frontier and oracle proposal IDs differ")
         try:
-            return require_policy().propose_frontier_plan(proposal_id, request.variant)
+            return require_policy(http_request).propose_frontier_plan(proposal_id, request.variant)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
@@ -247,7 +266,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        store = require_policy()
+        store = require_policy(http_request)
         try:
             store.frontier(request.proposal_id, request.variant)
         except ValueError as error:
@@ -289,12 +308,13 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.post("/agent/tools/run")
     async def execute_tool(
-        request: ToolInput, authorization: str | None = Header(default=None),
+        request: ToolInput, http_request: Request,
+        authorization: str | None = Header(default=None),
     ):
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(403, "A scoped tool capability is required")
         secret = authorization.removeprefix("Bearer ")
-        policy = require_policy()
+        policy = require_policy(http_request, capability_only=True)
         if len(secret) > 256 or not policy.authorize(
             secret, request.variant, request.schedule, request.plan_id,
             accounts_mode=os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts",
@@ -310,8 +330,8 @@ def policy_router(dsn: str | None) -> APIRouter:
         return witness
 
     @router.get("/agent/plans/{plan_id}")
-    def get_plan(plan_id: UUID):
-        result = require_policy().get_plan(plan_id)
+    def get_plan(plan_id: UUID, http_request: Request):
+        result = require_policy(http_request).get_plan(plan_id)
         if not result:
             raise HTTPException(404, "Plan not found")
         return result
@@ -322,18 +342,18 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        record = require_policy().plan_history(plan_id)
+        record = require_policy(http_request).plan_history(plan_id)
         if not record:
             raise HTTPException(404, "Plan not found")
         return record
 
     @router.get("/agent/plans/{plan_id}/gaps")
-    def read_evidence_gaps(plan_id: UUID):
-        return {"gaps": require_policy().evidence_gaps(plan_id)}
+    def read_evidence_gaps(plan_id: UUID, http_request: Request):
+        return {"gaps": require_policy(http_request).evidence_gaps(plan_id)}
 
     @router.get("/agent/plans/{plan_id}/feedback")
-    def read_feedback(plan_id: UUID):
-        record = require_policy().get_feedback(plan_id)
+    def read_feedback(plan_id: UUID, http_request: Request):
+        record = require_policy(http_request).get_feedback(plan_id)
         if not record:
             raise HTTPException(404, "No completed feedback for this plan")
         return record
@@ -345,7 +365,7 @@ def policy_router(dsn: str | None) -> APIRouter:
     ):
         require_operator(x_operator_token, http_request)
         try:
-            return require_policy().record_feedback(plan_id, request.remaining_budget)
+            return require_policy(http_request).record_feedback(plan_id, request.remaining_budget)
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
@@ -354,14 +374,14 @@ def policy_router(dsn: str | None) -> APIRouter:
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        return {"reconciled": require_policy().reconcile_stalled_plans()}
+        return {"reconciled": require_policy(http_request).reconcile_stalled_plans()}
 
     @router.get("/agent/model-budget")
     def model_budget(
         http_request: Request, x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        return require_policy().local_model_budget()
+        return require_policy(http_request).local_model_budget()
 
     @router.post("/agent/evaluate")
     async def evaluate(
@@ -369,7 +389,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         x_operator_token: str | None = Header(default=None),
     ):
         require_operator(x_operator_token, http_request)
-        require_policy()
+        require_policy(http_request)
         return await compare_strategies(request.trials)
 
     return router
