@@ -425,8 +425,24 @@ export default function App() {
         <div className="sidebar-caption">CONCURRENCY INTELLIGENCE</div>
         <nav className="navigation" aria-label="Workspace">
           <span className="nav-active">◈ &nbsp; Experiment lab</span>
-          <span className="nav-disabled">◷ &nbsp; Run timeline <em>Later</em></span>
-          <span className="nav-disabled">▣ &nbsp; Agent planning <em>Later</em></span>
+          {durable ? (
+            <a className="nav-link" href="#run-timeline">◷ &nbsp; Run timeline</a>
+          ) : (
+            <span className="nav-disabled">
+              ◷ &nbsp; Run timeline <em>Select a run</em>
+            </span>
+          )}
+          {catalog?.storage === 'postgresql' && (
+            catalog.access_mode === 'local' ||
+            (catalog.access_mode === 'private' && sessionReady) ||
+            (catalog.access_mode === 'accounts' && account !== null)
+          ) ? (
+            <a className="nav-link" href="#agent-planning">▣ &nbsp; Agent planning</a>
+          ) : (
+            <span className="nav-disabled">
+              ▣ &nbsp; Agent planning <em>Unlock workspace</em>
+            </span>
+          )}
         </nav>
         <div className="sidebar-foot"><span className="live-dot" /> Local synthetic mode <small>Stage 2 · PostgreSQL when configured</small></div>
       </aside>
