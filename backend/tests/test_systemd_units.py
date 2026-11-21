@@ -19,3 +19,19 @@ def test_native_units_keep_api_and_worker_separate_and_loopback_only():
         assert "CapabilityBoundingSet=" in unit
         assert "MemoryMax=" in unit
         assert "User=root" not in unit
+
+
+def test_per_request_target_protects_kernel_and_system_controls():
+    root = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
+    target = (root / "clashbolt-target@.service").read_text(encoding="utf-8")
+    for restriction in (
+        "PrivateNetwork=yes",
+        "RestrictAddressFamilies=AF_UNIX",
+        "ProtectKernelTunables=yes",
+        "ProtectKernelModules=yes",
+        "ProtectControlGroups=yes",
+        "RestrictRealtime=yes",
+        "NoNewPrivileges=yes",
+        "MemorySwapMax=0",
+    ):
+        assert restriction in target
