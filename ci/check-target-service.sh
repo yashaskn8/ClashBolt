@@ -25,7 +25,8 @@ sudo install -m 644 deploy/systemd/clashbolt-target{.socket,@.service} /etc/syst
 sudo touch /etc/clashbolt-host-canary
 sudo install -m 644 ci/fixture_preflight.py /opt/clashbolt-fixture/preflight.py
 sudo install -d /run/systemd/system/clashbolt-target@.service.d
-printf '%s\n' '[Service]' 'ExecStartPre=/opt/clashbolt-fixture/bin/python -I /opt/clashbolt-fixture/preflight.py' |
+printf '%s\n' '[Service]' 'StandardError=journal' \
+    'ExecStartPre=/opt/clashbolt-fixture/bin/python -I /opt/clashbolt-fixture/preflight.py' |
     sudo tee /run/systemd/system/clashbolt-target@.service.d/ci.conf >/dev/null
 sudo systemd-analyze verify clashbolt-target.socket clashbolt-target@ci.service
 sudo systemctl daemon-reload
