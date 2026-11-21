@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import select
+import signal
 import subprocess
 import sys
 from uuid import UUID, uuid4
@@ -144,3 +145,73 @@ def test_real_claim_owner_process_crash_is_reclaimed_without_duplicate_verdict(l
     assert [row["status"] for row in store.transitions(run_id)] == [
         "PENDING", "RUNNING", "RUNNING", "COMPLETE",
     ]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX process suspension")
+def test_paused_original_worker_cannot_publish_after_takeover(ledger):
+    """Suspend a live OS claimant, expire its lease and resume it after takeover."""
+    store, approved = ledger
+    run = store.admit(
+        client_key=str(uuid4()), variant="locked", schedule="serial",
+        approved_oracle_id=approved,
+    )
+    run_id = UUID(run["run_id"])
+    script = (
+        "import asyncio, json, os, sys\n"
+        "from uuid import UUID\n"
+        "from clashbolt.store import Ledger\n"
+        "from clashbolt.experiment import execute\n"
+        "store = Ledger(os.environ['CLASHBOLT_TEST_DATABASE_URL'])\n"
+        "claim = store.claim('paused-original', lease_seconds=30)\n"
+        "print(json.dumps(claim), flush=True)\n"
+        "sys.stdin.readline()\n"
+        "receipt = asyncio.run(execute('locked', 'serial'))\n"
+        "accepted = store.finish("
+        "UUID(claim['run_id']), 'paused-original',"
+        " claim['lease_generation'], receipt)\n"
+        "print(json.dumps({'accepted': accepted}), flush=True)\n"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, env=os.environ.copy(),
+    )
+    stopped = False
+    try:
+        ready, _, _ = select.select([child.stdout], [], [], 15)
+        assert ready, "Child failed to claim before suspension"
+        original = json.loads(child.stdout.readline())
+        assert original and original["run_id"] == run["run_id"]
+
+        os.kill(child.pid, signal.SIGSTOP)
+        stopped = True
+        with store.connect() as conn:
+            conn.execute(
+                "UPDATE experiment_run SET lease_until = now() - interval "
+                "'1 second' WHERE id = %s",
+                (run_id,),
+            )
+        newer = store.claim("replacement-after-suspend", lease_seconds=30)
+        assert newer and newer["run_id"] == run["run_id"]
+        assert newer["lease_generation"] == original["lease_generation"] + 1
+        witness = asyncio.run(execute("locked", "serial"))
+        assert store.finish(
+            run_id, "replacement-after-suspend", newer["lease_generation"], witness
+        )
+        os.kill(child.pid, signal.SIGCONT)
+        stopped = False
+        child.stdin.write("\n")
+        child.stdin.flush()
+        stdout, stderr = child.communicate(timeout=10)
+        assert child.returncode == 0, stderr
+        assert json.loads(stdout.strip()) == {"accepted": False}
+        assert store.get(run_id)["verdict"] == "PASS"
+        assert [t["status"] for t in store.transitions(run_id)] == [
+            "PENDING", "RUNNING", "RUNNING", "COMPLETE",
+        ]
+    finally:
+        if stopped and child.poll() is None:
+            os.kill(child.pid, signal.SIGCONT)
+        if child.poll() is None:
+            child.kill()
+        child.communicate(timeout=5)
