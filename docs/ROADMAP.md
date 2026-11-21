@@ -67,7 +67,7 @@ PDF is **not complete** merely because this release gate passes.
 ## Dependency-ordered next gates
 
 1. Restrict target execution with tested OS identities, CPU/memory limits and deny-egress policy; validate untrusted target isolation before allowing any external applications.
-2. Extend named single-project accounts into project-scoped roles and verified independent human review, with multi-tenant isolation tests.
+2. Harden existing project-scoped roles with independently verified reviewer identity, separate database/host tenant credentials, cross-project resource quota limits, and external target authorization tests.
 3. Complete agent obligations and evidence provenance, general approved-rule DSL, real model-guided search and frozen external held-out comparisons.
 4. Verify host-level systemd network denial, multi-node PostgreSQL failover/crash-point recovery, external independent reproduction and sustained load/security reviews before production certification.
 
