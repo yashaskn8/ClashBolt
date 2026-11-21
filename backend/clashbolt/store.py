@@ -346,10 +346,18 @@ class Ledger:
             and approval["target_revision"] == TARGET_REVISION
             and approval["reviewed_by"]
         )
-        backend_configured = execution_backend == "memory" or bool(
-            os.getenv("CLASHBOLT_TARGET_CLUSTER_URL")
-            or os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
-        )
+        backend_configured = execution_backend == "memory"
+        if execution_backend == "native-postgresql":
+            target_location = (
+                os.getenv("CLASHBOLT_TARGET_CLUSTER_URL")
+                or os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+            )
+            if target_location:
+                try:
+                    validate_target_cluster(target_location, self.dsn)
+                    backend_configured = True
+                except ValueError:
+                    backend_configured = False
         blockers = []
         if not approved:
             blockers.append("No current approved oracle for this project")
