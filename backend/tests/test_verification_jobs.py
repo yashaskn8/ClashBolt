@@ -193,3 +193,40 @@ def test_verification_target_registration_rejects_stale_owners(completed_run):
         queue.claim_abandoned_targets(51)
     with pytest.raises(ValueError, match="state"):
         queue.mark_target(uuid4(), "PENDING")
+
+def test_expired_verification_read_is_unconfirmed_before_worker_reconciliation(
+    completed_run,
+):
+    ledger, run_id, _ = completed_run
+    queue = VerificationJobs(ledger.dsn)
+    submitted = queue.submit(run_id, "REPLAY")
+    claim = queue.claim("lost-verifier")
+    assert claim and claim["job_id"] == submitted["job_id"]
+    job_id = UUID(claim["job_id"])
+    assert queue.get(job_id)["status"] == "RUNNING"
+
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE verification_job SET lease_until = now() - interval '1 second' "
+            "WHERE id = %s", (job_id,),
+        )
+    observed = queue.get(job_id)
+    assert observed["status"] == "UNKNOWN"
+    assert observed["result"]["status"] == "UNCONFIRMED"
+    assert "lease expiry" in observed["result"]["reason"]
+    # Reading does not mutate the audit; worker reconciliation persists it.
+    with ledger.connect() as conn:
+        assert conn.execute(
+            "SELECT status FROM verification_job WHERE id = %s", (job_id,),
+        ).fetchone()["status"] == "RUNNING"
+    assert not queue.finish(
+        job_id, "lost-verifier", claim["lease_generation"],
+        {"status": "REPRODUCED"},
+    )
+    assert queue.claim("reconcile-after-expiry") is None
+    assert queue.get(job_id)["status"] == "UNKNOWN"
+    with ledger.connect() as conn:
+        assert conn.execute(
+            "SELECT status FROM verification_job WHERE id = %s", (job_id,),
+        ).fetchone()["status"] == "UNKNOWN"
+
