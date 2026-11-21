@@ -126,6 +126,8 @@ _POLICY_SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    "ALTER TABLE tool_capability ADD COLUMN IF NOT EXISTS issuer_account_id UUID",
+    "ALTER TABLE tool_capability ADD COLUMN IF NOT EXISTS issuer_project_id TEXT",
     """
     CREATE TABLE IF NOT EXISTS tool_audit (
         id BIGSERIAL PRIMARY KEY,
@@ -248,7 +250,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 9
+POLICY_SCHEMA_VERSION = 10
 
 
 class Policy(Ledger):
