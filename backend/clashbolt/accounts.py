@@ -504,10 +504,35 @@ class AccountStore(Policy):
     def revoke_local_role(self, username: str) -> bool:
         return self.revoke_project_role(username, "local")
 
+    @staticmethod
+    def _lock_draft_grant(
+        conn, account_id: UUID, project_id: str, *, operator: bool
+    ) -> None:
+        """Keep the draft's live project authority locked through read/write."""
+        row = conn.execute(
+            """
+            SELECT a.role AS account_role, m.role AS project_role
+            FROM local_account a
+            JOIN project_membership m ON m.account_id = a.id
+            JOIN project_workspace w ON w.project_id = m.project_id
+            WHERE a.id = %s AND m.project_id = %s AND a.active = TRUE
+            FOR SHARE OF a, m
+            """,
+            (account_id, project_id),
+        ).fetchone()
+        effective = (
+            row["project_role"]
+            if row and row["project_role"] in ("viewer", row["account_role"])
+            else None
+        )
+        if effective is None or (operator and effective != "operator"):
+            raise PermissionError("Project access changed before draft transaction")
+
     def get_account_draft(
         self, account_id: UUID, project_id: str = "local"
     ) -> dict | None:
         with self.connect() as conn:
+            self._lock_draft_grant(conn, account_id, project_id, operator=False)
             row = conn.execute(
                 """
                 SELECT version, draft, updated_at
@@ -527,6 +552,7 @@ class AccountStore(Policy):
             raise ValueError("Invalid draft project identifier")
         self._validate_draft(draft, expected_version)
         with self.connect() as conn:
+            self._lock_draft_grant(conn, account_id, project_id, operator=True)
             if expected_version == 0:
                 row = conn.execute(
                     """
