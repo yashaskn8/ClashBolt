@@ -483,13 +483,14 @@ def create_app() -> FastAPI:
                         """
                         SELECT count(*) AS n FROM local_account a
                         JOIN project_membership m ON m.account_id = a.id
-                        WHERE a.active = TRUE AND m.project_id = 'local'
+                        JOIN project_workspace w ON w.project_id = m.project_id
+                        WHERE a.active = TRUE
                           AND (m.role = 'viewer' OR m.role = a.role)
                         """
                     ).fetchone()["n"]
                     if active == 0:
                         raise HTTPException(
-                            503, "No active local-project account grants are configured"
+                            503, "No active project account grants are configured"
                         )
         except DatabaseError as error:
             raise HTTPException(503, "Control database is unavailable") from error
@@ -598,7 +599,9 @@ def create_app() -> FastAPI:
     def get_experiment_draft(http_request: Request) -> dict:
         if access_mode == "accounts":
             account_id = UUID(http_request.state.account["id"])
-            return {"saved": account_store.get_account_draft(account_id)}
+            return {"saved": account_store.get_account_draft(
+                account_id, http_request.state.account["project_id"]
+            )}
         return {"saved": require_ledger(http_request).get_draft()}
 
     @app.post("/api/experiment-draft")
@@ -616,7 +619,8 @@ def create_app() -> FastAPI:
             if access_mode == "accounts":
                 account_id = UUID(http_request.state.account["id"])
                 return account_store.save_account_draft(
-                    account_id, draft, request.expected_version
+                    account_id, draft, request.expected_version,
+                    http_request.state.account["project_id"],
                 )
             return require_ledger(http_request).save_draft(draft, request.expected_version)
         except ValueError as error:
