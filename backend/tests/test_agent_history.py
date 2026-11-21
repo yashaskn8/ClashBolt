@@ -156,6 +156,9 @@ def test_corrupt_persisted_plan_is_quarantined_and_cannot_be_reauthorized(policy
     gaps = policy.evidence_gaps(plan_id)
     assert len(gaps) == 1
     assert gaps[0]["classification"] == "CONFLICTING_EVIDENCE"
+    with pytest.raises(ValueError, match="Quarantined"):
+        policy.record_feedback(plan_id, remaining_budget=4)
+    assert policy.get_feedback(plan_id) is None
     with pytest.raises(ValueError, match="pending approved plan"):
         policy.issue(rule_id, "racy", "serial", plan_id=plan_id)
 
