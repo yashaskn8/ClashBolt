@@ -50,13 +50,16 @@ def test_posix_fixed_runner_sets_cpu_file_and_descriptor_limits():
     assert files <= 64
 
 
-def test_oversized_child_stdout_is_stopped_before_full_capture(monkeypatch):
+@pytest.mark.parametrize("output_size", [262_144, 2_097_152])
+def test_oversized_child_stdout_is_stopped_before_full_capture(
+    monkeypatch, output_size,
+):
     original = asyncio.create_subprocess_exec
 
     async def oversized_spawn(*args, **kwargs):
         return await original(
             sys.executable, "-c",
-            "import sys; sys.stdout.buffer.write(b'X' * 262144)",
+            f"import sys; sys.stdout.buffer.write(b'X' * {output_size})",
             **kwargs,
         )
 
