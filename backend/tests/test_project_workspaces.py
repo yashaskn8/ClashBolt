@@ -286,3 +286,28 @@ def test_transaction_scope_fences_revocation_after_middleware_check(workspace):
         actor_account_id=account_id, required_role="viewer",
     )
     assert viewer.list_proposals() == []
+
+
+def test_per_account_drafts_are_locked_against_grant_changes(workspace):
+    store, project_id, _ = workspace
+    with store.connect() as conn:
+        account_id = conn.execute(
+            "SELECT id FROM local_account WHERE username = 'multi.operator'"
+        ).fetchone()["id"]
+    draft = {
+        "variant": "racy", "schedule": "serial",
+        "execution_backend": "memory",
+    }
+    saved = store.save_account_draft(account_id, draft, 0, project_id)
+    assert saved["version"] == 1
+    assert store.get_account_draft(account_id, project_id)["draft"] == draft
+    assert store.grant_project_role("multi.operator", "viewer", project_id)
+    assert store.get_account_draft(account_id, project_id)["version"] == 1
+    with pytest.raises(PermissionError, match="draft transaction"):
+        store.save_account_draft(account_id, dict(draft, variant="locked"), 1, project_id)
+
+    assert store.revoke_project_role("multi.operator", project_id)
+    with pytest.raises(PermissionError, match="draft transaction"):
+        store.get_account_draft(account_id, project_id)
+    assert store.grant_project_role("multi.operator", "operator", project_id)
+    assert store.get_account_draft(account_id, project_id)["draft"] == draft
