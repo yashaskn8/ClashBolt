@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from uuid import UUID, uuid4
 
 import pytest
@@ -242,3 +244,45 @@ def test_project_role_revocation_rejects_old_tool_and_project_session(workspace)
                 (UUID(issued.json()["capability_id"]),),
             ).fetchone()
         assert row == {"revoked": True, "used_calls": 0}
+
+
+def test_transaction_scope_fences_revocation_after_middleware_check(workspace):
+    store, project_id, schema = workspace
+    with store.connect() as conn:
+        account_id = conn.execute(
+            "SELECT id FROM local_account WHERE username = 'multi.operator'"
+        ).fetchone()["id"]
+    scoped = Policy(
+        store.dsn, schema=schema, project_id=project_id,
+        actor_account_id=account_id, required_role="operator",
+    )
+    assert scoped.list_proposals() == []
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with scoped.connect() as conn:
+            # This is an already-authorized request that has entered its
+            # transaction. A competing grant revocation must wait for it.
+            assert conn.execute(
+                "SELECT count(*) AS count FROM oracle_proposal"
+            ).fetchone()["count"] == 0
+            revoked = pool.submit(
+                store.revoke_project_role, "multi.operator", project_id,
+            )
+            with pytest.raises(FutureTimeout):
+                revoked.result(timeout=0.2)
+        assert revoked.result(timeout=5) is True
+
+    # The previously constructed scoped store cannot reuse a stale
+    # middleware decision after revocation has committed.
+    with pytest.raises(PermissionError, match="access changed"):
+        scoped.propose("operator-with-old-session")
+    with pytest.raises(PermissionError, match="access changed"):
+        scoped.list_proposals()
+
+    assert store.grant_project_role("multi.operator", "viewer", project_id)
+    with pytest.raises(PermissionError, match="access changed"):
+        scoped.propose("downgraded-operator")
+    viewer = Policy(
+        store.dsn, schema=schema, project_id=project_id,
+        actor_account_id=account_id, required_role="viewer",
+    )
+    assert viewer.list_proposals() == []
