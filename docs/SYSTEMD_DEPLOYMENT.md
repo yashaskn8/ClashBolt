@@ -53,9 +53,12 @@ Before considering deployment complete, conduct independent deny-egress
 validation, PostgreSQL backup/restore, crash recovery, identity review, and
 resource-exhaustion tests on the actual host.
 
-These unit files have static CI checks; they have **not** been executed
-inside the target machine's systemd or subjected to a kernel-enforced
-network-denial penetration test.
+The native GitHub Actions runner exercises these units under real systemd,
+including two simultaneously active fixture MainPIDs with different non-root
+UIDs, enforced CPU/memory/task limits and an ExecStartPre negative network
+and filesystem probe. This provides host-level CI evidence on a disposable
+runner, **not** an independently reviewed deployment-host security assessment
+or a penetration test of an external target.
 
 ## Per-request fixed target service
 
@@ -63,6 +66,11 @@ The worker unit requires `clashbolt-target.socket`. Install that socket and
 `clashbolt-target@.service` along with the worker unit on a cgroup-v2 Linux
 host with systemd mount namespaces, seccomp and dynamic users. Each accepted
 connection starts one bounded fixture command under its own dynamic identity.
+The template explicitly sets `User=cb-%i` alongside `DynamicUser=yes`:
+without a per-instance user name, systemd may reuse the same UID for all
+instances of a service template. The `%i` form is intentional for this
+Unix-domain socket and must be reviewed before changing transports. CI checks
+the live service MainPIDs rather than startup helper processes.
 The worker group has access to the root-owned socket. Each target has a private
 network namespace, AF_UNIX only, an empty root directory, read-only runtime
 mounts and a single PostgreSQL socket mount. Keep the bound runtime directories
