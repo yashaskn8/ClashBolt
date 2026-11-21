@@ -7,6 +7,8 @@ import os
 import signal
 import sys
 import tempfile
+from contextlib import contextmanager
+from itertools import count
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import psycopg
@@ -90,6 +92,22 @@ def reconcile_targets(ledger: Ledger) -> int:
     return cleaned
 
 
+def reconcile_verification_targets(queue: VerificationJobs, ledger: Ledger) -> int:
+    """Reclaim abandoned native replay/reduction databases from expired claims."""
+    admin = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+    if not admin:
+        return 0
+    cleaned = 0
+    for instance_id in queue.claim_abandoned_targets():
+        try:
+            drop_abandoned_target(admin, ledger.dsn, instance_id)
+            queue.mark_target(instance_id, "CLEANED")
+            cleaned += 1
+        except (psycopg.Error, OSError, RuntimeError, ValueError):
+            queue.mark_target(instance_id, "UNKNOWN")
+    return cleaned
+
+
 async def process_one(ledger: Ledger, owner: str) -> bool:
     reconcile_targets(ledger)
     ledger.reconcile_expired_cancelled()
@@ -142,9 +160,38 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
 async def process_verification_one(ledger: Ledger, owner: str) -> bool:
     """A separate worker executes verification; the API never needs admin DSNs."""
     queue = VerificationJobs(ledger.dsn)
+    reconcile_verification_targets(queue, ledger)
     claim = queue.claim(owner)
     if claim is None:
         return False
+
+    job_id = UUID(claim["job_id"])
+    generation = claim["lease_generation"]
+    trial_numbers = count(1)
+
+    @contextmanager
+    def tracked_target():
+        """Record each target before creating it, including reduction trial targets."""
+        admin = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+        if not admin:
+            raise ValueError("Native target cluster is not configured")
+        trial = next(trial_numbers)
+        if trial > 17:
+            raise ValueError("Verification target trial budget exceeded")
+        instance_id = uuid5(
+            NAMESPACE_URL, f"clashbolt:verification:{job_id}:{generation}:{trial}"
+        )
+        if not queue.track_target(job_id, owner, generation, instance_id):
+            raise ValueError("Verification claim expired before target provisioning")
+        try:
+            with disposable_target(admin, ledger.dsn, instance_id) as target:
+                queue.mark_target(instance_id, "ACTIVE")
+                yield target
+            queue.mark_target(instance_id, "CLEANED")
+        except Exception:
+            queue.mark_target(instance_id, "UNKNOWN")
+            raise
+
     original = ledger.get(UUID(claim["run_id"]))
     report = {"status": "UNCONFIRMED", "reason": "Run is not currently certified"}
     if (
@@ -154,13 +201,14 @@ async def process_verification_one(ledger: Ledger, owner: str) -> bool:
     ):
         try:
             if claim["kind"] == "REPLAY":
-                report = await verify(original["witness"])
+                report = await verify(original["witness"], tracked_target)
             else:
                 report = await asyncio.to_thread(
                     reduce_witness,
                     original["witness"],
                     os.getenv("CLASHBOLT_TARGET_ADMIN_URL"),
                     ledger.dsn,
+                    tracked_target,
                 )
         except (TimeoutError, RuntimeError, OSError, ValueError, psycopg.Error):
             report = {"status": "UNCONFIRMED", "reason": "Verification worker failed"}
