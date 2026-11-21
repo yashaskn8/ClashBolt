@@ -105,6 +105,80 @@ class VerificationJobs:
             ).fetchone()
             return {**_public(row), "lease_generation": row["lease_generation"]}
 
+    def track_target(
+        self, job_id: UUID, owner: str, generation: int, instance_id: UUID
+    ) -> bool:
+        """Persist target identity before provisioning so crashed workers can be cleaned."""
+        with self.ledger.connect() as conn:
+            current = conn.execute(
+                """
+                SELECT id FROM verification_job
+                WHERE id = %s AND status = 'RUNNING'
+                  AND lease_owner = %s AND lease_generation = %s
+                  AND lease_until > now()
+                FOR SHARE
+                """,
+                (job_id, owner, generation),
+            ).fetchone()
+            if not current:
+                return False
+            conn.execute(
+                """
+                INSERT INTO verification_target_instance(
+                    id, job_id, lease_generation, status
+                ) VALUES (%s, %s, %s, 'PROVISIONING')
+                """,
+                (instance_id, job_id, generation),
+            )
+            return True
+
+    def mark_target(self, instance_id: UUID, status: str) -> None:
+        if status not in ("ACTIVE", "CLEANED", "UNKNOWN"):
+            raise ValueError("Invalid verification target state")
+        with self.ledger.connect() as conn:
+            conn.execute(
+                """
+                UPDATE verification_target_instance
+                SET status = %s, updated_at = now()
+                WHERE id = %s AND status != 'CLEANED'
+                """,
+                (status, instance_id),
+            )
+
+    def claim_abandoned_targets(self, limit: int = 8) -> list[UUID]:
+        """Claim only targets whose verification lease is no longer live."""
+        if not 1 <= limit <= 50:
+            raise ValueError("Invalid verification target cleanup limit")
+        with self.ledger.connect() as conn:
+            targets = conn.execute(
+                """
+                SELECT t.id FROM verification_target_instance t
+                JOIN verification_job j ON j.id = t.job_id
+                WHERE t.status IN (
+                    'PROVISIONING', 'ACTIVE', 'UNKNOWN', 'CLEANING'
+                )
+                  AND t.updated_at < now() - interval '5 seconds'
+                  AND (
+                      j.status != 'RUNNING'
+                      OR j.lease_generation != t.lease_generation
+                      OR j.lease_until < now()
+                  )
+                ORDER BY t.created_at, t.id
+                LIMIT %s FOR UPDATE OF t SKIP LOCKED
+                """,
+                (limit,),
+            ).fetchall()
+            for target in targets:
+                conn.execute(
+                    """
+                    UPDATE verification_target_instance
+                    SET status = 'CLEANING', updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (target["id"],),
+                )
+            return [row["id"] for row in targets]
+
     def finish(
         self, job_id: UUID, owner: str, generation: int, report: dict
     ) -> bool:
