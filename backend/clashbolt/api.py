@@ -112,6 +112,14 @@ class RunPreviewRequest(ExperimentRequest):
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
 
 
+class WitnessReviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_run_version: int = Field(ge=1)
+    expected_evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision: Literal["SUPPORTED", "WITHHELD"]
+    reason: str = Field(min_length=12, max_length=400)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="ClashBolt Synthetic Lab", version="0.3.0")
 
@@ -312,8 +320,15 @@ def create_app() -> FastAPI:
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             reviewing = (
                 request.method == "POST"
-                and path.startswith("/api/oracle/proposals/")
-                and (path.endswith("/approve") or path.endswith("/revoke"))
+                and (
+                    (
+                        path.startswith("/api/oracle/proposals/")
+                        and (path.endswith("/approve") or path.endswith("/revoke"))
+                    )
+                    or (
+                        path.startswith("/api/runs/") and path.endswith("/reviews")
+                    )
+                )
             )
             permitted = (
                 account_only
@@ -453,10 +468,16 @@ def create_app() -> FastAPI:
         if account is None or not account.get("schema"):
             raise HTTPException(403, "An authorized project context is required")
         operator_read = http_request.url.path in ("/api/operations", "/api/metrics")
+        reviewer_write = (
+            http_request.method == "POST"
+            and http_request.url.path.startswith("/api/runs/")
+            and http_request.url.path.endswith("/reviews")
+        )
         return Ledger(
             dsn, schema=account["schema"], project_id=account["project_id"],
             actor_account_id=UUID(account["id"]),
             required_role=(
+                "reviewer" if reviewer_write else
                 "operator"
                 if http_request.method not in ("GET", "HEAD", "OPTIONS")
                     or operator_read
@@ -760,6 +781,30 @@ def create_app() -> FastAPI:
         if result is None:
             raise HTTPException(404, "Run not found")
         return result
+
+    @app.get("/api/runs/{run_id}/reviews")
+    def read_witness_reviews(run_id: UUID, http_request: Request) -> dict:
+        if access_mode != "accounts":
+            raise HTTPException(404, "Named reviewers are not enabled")
+        result = require_ledger(http_request).witness_reviews(run_id)
+        if result is None:
+            raise HTTPException(404, "Run not found in this project")
+        return result
+
+    @app.post("/api/runs/{run_id}/reviews", status_code=201)
+    def write_witness_review(
+        run_id: UUID, body: WitnessReviewInput, http_request: Request,
+    ) -> dict:
+        if access_mode != "accounts":
+            raise HTTPException(404, "Named reviewers are not enabled")
+        try:
+            return require_ledger(http_request).review_witness(
+                run_id, expected_version=body.expected_run_version,
+                expected_evidence_sha256=body.expected_evidence_sha256,
+                decision=body.decision, reason=body.reason,
+            )
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
 
     @app.get("/api/runs/{run_id}/bundle")
     def download_witness_bundle(run_id: UUID, http_request: Request):
