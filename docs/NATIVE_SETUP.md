@@ -312,11 +312,36 @@ Requests exceeding this limit return HTTP 429 and a Retry-After header. This is
 `X-Forwarded-For`, enable proxy exposure, or assume separate clients behind a
 shared gateway are independently limited. Existing username lockout remains.
 After updating the application, run `python -m clashbolt.accounts migrate`
-to apply account schema revision 3 before restarting the API.
+to apply account schema revision 4 before restarting the API.
 
 A reviewer can select a pending proposal in the React console after signing in
 without possessing an operator credential. An operator can then sign back in
 to execute the separately approved proposal.
+
+Named accounts now receive a durable grant for the existing `local`
+project. Every protected API request resolves this project role directly from
+PostgreSQL, so an existing signed cookie does not preserve access after a
+grant is revoked. A project role cannot exceed the account's provisioned
+viewer/operator/reviewer role: a reviewer can never grant themselves operator
+authority. These grants and changes have append-only audit rows.
+
+The following **trusted administrator CLI** commands allow a local grant
+to be removed or restored (they are not public API routes):
+
+```powershell
+python -m clashbolt.accounts revoke-local experiment-operator
+python -m clashbolt.accounts grant-local experiment-operator operator
+python -m clashbolt.accounts grant-local experiment-operator viewer
+```
+
+An account with no `local` grant cannot sign into the current application
+or access its project resources. The `migrate` command backfills grants for
+existing accounts **only once**, when upgrading from schema revision 3. Later
+migrations must not restore a deliberately revoked grant. Grant changes are
+checked on every request; a signed-out or disabled account remains invalid.
+This is still a **single supported project**, not general multitenancy: other
+project IDs are not accepted by API resource endpoints until every query and
+worker boundary is separately scoped and tested.
 
 To revoke an account and invalidate its sessions immediately, run:
 
