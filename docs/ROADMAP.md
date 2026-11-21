@@ -22,10 +22,37 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
 | P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression, read-only project quota/approval/resource preview | Real general-target contracts, measured CPU/provider cost estimates and wider browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
-| P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
+| P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued replay/reduction, version-fenced reports and revocation, named reviewer-only immutable synthetic evidence decisions and React review desk | Externally supported application reproduction, externally verified reviewer identity and portable independent adjudication |
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P3 independently role-reviewed synthetic witness (21 November 2026)
+
+Control schema **revision 7** adds an append-only, project-scoped
+`witness_review` audit. A named account with the **reviewer** role may record
+one immutable SUPPORTED or WITHHELD decision for a specific failed run
+version and evidence SHA256. An independently queued worker `REPLAY` job
+must be COMPLETE and have a matching synthetic-only replay report before
+SUPPORTED is permitted. The server derives the eligible replay from its
+own database; a client cannot substitute an arbitrary job or replay hash.
+Repeat requests with identical content are idempotent. Operators, viewers,
+stale run versions, changed evidence and foreign projects are denied.
+Concurrent decisions on one run serialize under its PostgreSQL row lock.
+
+GET returns the historical audit with a derived `current` flag. Revocation
+withdraws the run's current verdict and marks existing reviews superseded
+without deleting the audit. The React review desk exposes replay readiness,
+reviewer-only explicit reason/decision controls and historical outcomes.
+Browser and PostgreSQL tests cover this fixed synthetic workflow.
+
+**No real-application adjudication is claimed.** Named local reviewer accounts
+are not independently verified external human identity or professional
+signatures. Hashes and PostgreSQL triggers are not protection from privileged
+database administrators. The supported status explicitly means only that
+the *shipped deterministic synthetic fixture* was replayed by the worker.
+It is not a publication gate for a reported vulnerability in an external
+application. External reproduction and independent reviewers remain open.
 
 ## A5 versioned agent obligation lifecycle (21 November 2026)
 
