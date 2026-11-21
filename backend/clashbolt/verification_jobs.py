@@ -93,6 +93,19 @@ class VerificationJobs:
                 and self.ledger._global_native_active(conn) >= GLOBAL_NATIVE_SLOTS
             ):
                 return None
+            # The project limit is shared by native executions and all
+            # verification claims. Lock the same quota row as Ledger.claim,
+            # after the global advisory lock, to serialize mixed workers.
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local') "
+                "ON CONFLICT DO NOTHING"
+            )
+            quota = conn.execute(
+                "SELECT max_native_active FROM project_quota "
+                "WHERE project_id = 'local' FOR UPDATE"
+            ).fetchone()
+            if self.ledger._local_native_active(conn) >= quota["max_native_active"]:
+                return None
             job = conn.execute(
                 """
                 SELECT * FROM verification_job
