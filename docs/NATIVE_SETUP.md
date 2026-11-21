@@ -271,7 +271,7 @@ This separates credentials for review and execution, but is not yet proof
 of different human identities or a project-level RBAC system.
 
 
-## 13. Named local accounts (optional single-project role mode)
+## 13. Named accounts and backward-compatible local project access
 
 The shared-token `private` mode remains supported for a single-machine lab.
 For a stronger local separation of review and execution, use **named accounts**
@@ -371,7 +371,8 @@ To reset a password and invalidate existing sessions:
 python -m clashbolt.accounts reset independent-reviewer
 ```
 
-This is **single-project local account authorization**, not SSO,
+The original **local** grant is a single-project compatibility path; the
+multi-project CLI workflow appears below. This is not SSO,
 multi-organization tenancy, production TLS termination, device trust, or a
 verified two-person approval process. Do not make the API Internet-facing.
 
@@ -393,7 +394,8 @@ current version of the approved experiment; withdrawal of the oracle makes
 previous results `UNKNOWN`. A missing worker receipt also yields `UNKNOWN`
 rather than silently retrying an uncertain effect.
 
-This is a **single-project native worker queue**, not a distributed exactly-once
+The legacy default is a **single-project native worker queue**; accounts
+mode rotates across registered isolated project queues. Neither is a distributed exactly-once
 effect guarantee or an externally verified finding.
 
 
@@ -473,7 +475,8 @@ A `VERIFIED` history confirms internal event-chain consistency, **not**
 external application behavior or resistance to the PostgreSQL administrator.
 Older pre-migration plans without full history report `UNCONFIRMED`.
 
-After applying policy schema revision **9** through the usual
+After applying current policy schema revision **10** (which includes the
+revision 9 integrity sweep) through the usual
 `python -m clashbolt.policy` or account migration, the worker periodically
 checks each active plan's stored context against its history. A missing or
 inconsistent history is quarantined as terminal `UNKNOWN`, with a persistent
