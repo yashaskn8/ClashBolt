@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, atomic global two-native-target cap, transactional per-project native cap shared by run and verification claims, queue age/start P95, and bounded three-project worker drain | Sustained external/multi-project fair-load benchmarks, measured CPU/provider cost, retry storms and host-wide resource benchmarks |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, host-wide and project-native claim caps, queue age/start P95, bounded three-project drain, and three-generation fail-closed run retry ceiling with duplicate-admission storm tests | Sustained external fair-load and retry-storm benchmarks, measured CPU/provider cost, host-wide resource benchmarks and distributed recovery |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
@@ -150,6 +150,29 @@ is conservative admission based on the coordinator's current lease state,
 not a cgroup resource controller: already executing external effects,
 ambiguous expired leases, administrator bypass, multiple separate control
 clusters, and host-level recovery behavior still need independent tests.
+
+## B7 bounded run retry exhaustion (21 November 2026)
+
+A worker claim that loses its lease can be reassigned to a new generation, but
+an unbounded sequence of missing receipts is unsafe and consumes repeated
+worker/target capacity. The durable run ledger now allows at most **three
+claim generations**. During the normal worker claim transaction, it selects
+up to 32 expired non-cancelled runs that exhausted that budget, writes an
+append-only `UNKNOWN` transition, clears their active lease, and prevents
+additional claims for that same run. The cap applies to both the fixed memory
+and disposable native-PostgreSQL synthetic backends. Existing cancellation,
+oracle version checks, and late-receipt generation fencing remain authoritative.
+A matching idempotency key returns the same terminal run, not a fourth run.
+
+PostgreSQL tests exercise three successive expired leases for both supported
+backends, 12 competing post-expiry claimers, stale receipt rejection,
+terminal quota release, new admissible work and a 40-request simultaneous
+identical-key admission storm under a single open-run slot. No external
+application target runs in these tests. The fixed cap is a conservative
+synthetic fixture policy, not a proven production retry optimum; this work
+does not measure high-volume real retry storms, rate-limit HTTP clients,
+bound independent host CPU consumption or prove distributed exactly-once
+effects.
 
 ## B7 project-native admission and bounded fair-load regression (21 November 2026)
 
