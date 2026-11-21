@@ -995,14 +995,99 @@ class Policy(Ledger):
         integrity = verify_history(planned["id"], rows)
         if integrity["status"] == "VERIFIED":
             initial = rows[0]["payload"]
+            obligation = conn.execute(
+                "SELECT * FROM agent_obligation WHERE plan_id = %s",
+                (planned["id"],),
+            ).fetchone()
+            context = (
+                {
+                    "question_id": str(obligation["question_id"]),
+                    "context_version": obligation["context_version"],
+                    "tool_schema_version": obligation["tool_schema_version"],
+                    "model_identifier": obligation["model_identifier"],
+                }
+                if obligation else None
+            )
+            dispatched = [
+                item["payload"] for item in rows if item["event"] == "DISPATCHED"
+            ]
+            closure = [
+                item for item in rows
+                if item["event"] in ("RECEIPT", "TIMEOUT", "ORACLE_REVOKED")
+            ]
             if (
                 initial.get("plan") != planned["plan"]
                 or initial.get("proposal_id") != str(planned["proposal_id"])
                 or initial.get("rule_sha256") != ORACLE_HASH
+                or context is None
+                or initial.get("obligation") != context
+                or context["context_version"] != CONTEXT_VERSION
+                or context["tool_schema_version"] != TOOL_SCHEMA_VERSION
             ):
                 integrity = {
                     "status": "INVALID",
-                    "reason": "Stored agent plan differs from approved decision",
+                    "reason": "Stored agent plan or context differs from approved decision",
+                }
+            elif (
+                (planned["state"] == "PROPOSED"
+                 and (
+                     obligation["state"] != "PENDING"
+                     or obligation["tool_request_id"] is not None
+                     or obligation["receipt_id"] is not None
+                     or dispatched or closure
+                 ))
+                or (planned["state"] == "IN_FLIGHT"
+                    and (
+                        obligation["state"] != "IN_FLIGHT"
+                        or obligation["tool_request_id"] is None
+                        or obligation["receipt_id"] is not None
+                        or len(dispatched) != 1 or closure
+                    ))
+                or (planned["state"] == "COMPLETE"
+                    and (
+                        obligation["state"] != "FULFILLED"
+                        or obligation["receipt_id"] is None
+                        or not closure or closure[-1]["event"] != "RECEIPT"
+                    ))
+                or (planned["state"] == "UNKNOWN"
+                    and (
+                        obligation["state"] != "UNKNOWN"
+                        or not closure
+                    ))
+            ):
+                integrity = {
+                    "status": "INVALID",
+                    "reason": "Agent obligation and decision state disagree",
+                }
+            elif dispatched and (
+                dispatched[0].get("question_id") != context["question_id"]
+                or dispatched[0].get("tool_request_id")
+                    != str(obligation["tool_request_id"])
+                or dispatched[0].get("tool_schema_version") != TOOL_SCHEMA_VERSION
+            ):
+                integrity = {
+                    "status": "INVALID",
+                    "reason": "Agent tool request identity differs from recorded intent",
+                }
+            elif closure and closure[-1]["event"] == "RECEIPT" and (
+                closure[-1]["payload"].get("question_id") != context["question_id"]
+                or closure[-1]["payload"].get("tool_request_id")
+                    != str(obligation["tool_request_id"])
+                or closure[-1]["payload"].get("receipt_id")
+                    != str(obligation["receipt_id"])
+            ):
+                integrity = {
+                    "status": "INVALID",
+                    "reason": "Agent receipt identity differs from recorded obligation",
+                }
+            elif closure and closure[-1]["event"] == "TIMEOUT" and (
+                closure[-1]["payload"].get("question_id") != context["question_id"]
+                or closure[-1]["payload"].get("tool_request_id")
+                    != str(obligation["tool_request_id"])
+            ):
+                integrity = {
+                    "status": "INVALID",
+                    "reason": "Timed-out agent request identity is inconsistent",
                 }
         return integrity, rows
 
