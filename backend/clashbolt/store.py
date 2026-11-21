@@ -22,7 +22,7 @@ from clashbolt.witness import validate_contract
 SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
-BASE_SCHEMA_VERSION = 6
+BASE_SCHEMA_VERSION = 7
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
 _SCHEMA = (
@@ -130,6 +130,35 @@ _SCHEMA = (
     """
     CREATE INDEX IF NOT EXISTS verification_job_claim_idx
     ON verification_job(status, created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS witness_review (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES experiment_run(id),
+        run_version BIGINT NOT NULL,
+        evidence_sha256 TEXT NOT NULL CHECK (length(evidence_sha256) = 64),
+        reviewer_account_id UUID NOT NULL,
+        decision TEXT NOT NULL CHECK (decision IN ('SUPPORTED', 'WITHHELD')),
+        reason TEXT NOT NULL CHECK (length(reason) BETWEEN 12 AND 400),
+        replay_job_id UUID REFERENCES verification_job(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE(run_id, run_version, reviewer_account_id),
+        CHECK (decision != 'SUPPORTED' OR replay_job_id IS NOT NULL)
+    )
+    """,
+    """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_witness_review()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $review_guard$
+    BEGIN
+        RAISE EXCEPTION 'Witness review audit is append-only';
+    END
+    $review_guard$
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_witness_review_immutable ON witness_review",
+    """
+    CREATE TRIGGER clashbolt_witness_review_immutable
+    BEFORE UPDATE OR DELETE ON witness_review FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_witness_review()
     """,
     """
     CREATE TABLE IF NOT EXISTS verification_target_instance (
