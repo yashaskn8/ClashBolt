@@ -22,6 +22,11 @@ def diagnose_operations(snapshot: dict) -> dict:
             "code": "VERIFICATION_NEEDS_WORKER",
             "message": "Pending verification jobs have no recently responsive worker.",
         })
+    if snapshot.get("quarantined_agent_plans", 0) > 0:
+        alerts.append({
+            "code": "QUARANTINED_AGENT_CONTEXT",
+            "message": "Invalid agent history was quarantined; inspect plan evidence gaps.",
+        })
     return {
         "status": "ATTENTION" if alerts else "NORMAL",
         "alerts": alerts,
