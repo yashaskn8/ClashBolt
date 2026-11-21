@@ -105,6 +105,11 @@ class RunRequest(ExperimentRequest):
     approved_oracle_id: UUID
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
 
+class RunPreviewRequest(ExperimentRequest):
+    step_budget: int = Field(default=4, ge=4, le=32)
+    approved_oracle_id: UUID | None = None
+    execution_backend: Literal["memory", "native-postgresql"] = "memory"
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ClashBolt Synthetic Lab", version="0.3.0")
@@ -653,6 +658,20 @@ def create_app() -> FastAPI:
             return {"runs": require_ledger(http_request).recent(limit)}
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/runs/preview")
+    def preview_run(
+        request: RunPreviewRequest, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        # An advisory, authorized, project-scoped DB snapshot. No admission or
+        # target is created. Revalidate everything in the actual submit.
+        require_operator(x_operator_token, http_request)
+        return require_ledger(http_request).preview_run(
+            approved_oracle_id=request.approved_oracle_id,
+            execution_backend=request.execution_backend,
+            step_budget=request.step_budget,
+        )
 
     @app.post("/api/runs", status_code=201)
     def submit_run(
