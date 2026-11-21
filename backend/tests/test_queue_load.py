@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
-
 from clashbolt.experiment import ORACLE_HASH, execute
 from clashbolt.policy import Policy
 
