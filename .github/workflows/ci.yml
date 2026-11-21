@@ -129,6 +129,10 @@ jobs:
               ('browser.rolesync', 'operator'),
           ):
               store.create_account(username, role, 'browser-local-password-000')
+          store.create_project('browser-workspace')
+          store.grant_project_role('browser.operator', 'operator', 'browser-workspace')
+          store.grant_project_role('browser.reviewer', 'reviewer', 'browser-workspace')
+          store.grant_project_role('browser.viewer', 'viewer', 'browser-workspace')
           PY
           echo "CLASHBOLT_DATABASE_URL=$CLASHBOLT_DATABASE_URL" >> "$GITHUB_ENV"
           echo "CLASHBOLT_ACCESS_MODE=$CLASHBOLT_ACCESS_MODE" >> "$GITHUB_ENV"
