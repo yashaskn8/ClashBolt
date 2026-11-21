@@ -242,6 +242,7 @@ async def main() -> None:
     worker_id = f"worker-{uuid4()}"
     while True:
         ledger.heartbeat(worker_id)
+        ledger.reconcile_corrupt_plans()
         ledger.reconcile_stalled_plans()
         ledger.reconcile_stalled_model_calls()
         accepted = await process_one(ledger, worker_id)
