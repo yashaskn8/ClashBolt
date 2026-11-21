@@ -304,6 +304,76 @@ class Ledger:
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
             self._apply_base_schema(conn)
 
+    def preview_run(
+        self, *, approved_oracle_id: UUID | None,
+        execution_backend: str = "memory", step_budget: int = 4,
+    ) -> dict:
+        """Read-only admission estimate, never a quota or target reservation.
+
+        The actual admit transaction independently validates the approval and
+        serializes the open-run quota. Native target capacity is checked later,
+        at worker claim time, and cannot be promised by a composer preview.
+        """
+        if execution_backend not in ("memory", "native-postgresql"):
+            raise ValueError("Unsupported execution backend")
+        if not 4 <= step_budget <= 32:
+            raise ValueError("Step budget must be between 4 and 32")
+        with self.connect() as conn:
+            quota = conn.execute(
+                "SELECT max_open FROM project_quota WHERE project_id = 'local'"
+            ).fetchone()
+            max_open = quota["max_open"] if quota else 20
+            open_runs = conn.execute(
+                """
+                SELECT count(*) AS n FROM experiment_run
+                WHERE project_id = 'local'
+                  AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                """
+            ).fetchone()["n"]
+            approval = (
+                conn.execute(
+                    """
+                    SELECT state, rule_hash, target_revision, reviewed_by
+                    FROM oracle_proposal WHERE id = %s
+                    """,
+                    (approved_oracle_id,),
+                ).fetchone()
+                if approved_oracle_id else None
+            )
+        approved = bool(
+            approval and approval["state"] == "APPROVED"
+            and approval["rule_hash"] == ORACLE_HASH
+            and approval["target_revision"] == TARGET_REVISION
+            and approval["reviewed_by"]
+        )
+        backend_configured = execution_backend == "memory" or bool(
+            os.getenv("CLASHBOLT_TARGET_CLUSTER_URL")
+            or os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
+        )
+        blockers = []
+        if not approved:
+            blockers.append("No current approved oracle for this project")
+        if open_runs >= max_open:
+            blockers.append("Active experiment quota is full")
+        if not backend_configured:
+            blockers.append("Separate native target cluster is not configured")
+        return {
+            "project_id": self.project_id,
+            "step_budget": step_budget,
+            "open_runs": open_runs,
+            "max_open": max_open,
+            "oracle_approved": approved,
+            "backend_configured": backend_configured,
+            "preflight_ok": not blockers,
+            "blockers": blockers,
+            "reservation_made": False,
+            "resource_bound": {
+                "checkpoint_limit": step_budget,
+                "disposable_databases": int(execution_backend == "native-postgresql"),
+                "cpu_seconds_estimate": None,
+            },
+        }
+
     def admit(
         self,
         *,
