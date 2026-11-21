@@ -1,7 +1,8 @@
-"""Named local accounts: opt-in role separation for the single synthetic project.
+"""Named local accounts with an explicit, fail-closed local project grant.
 
-Accounts are provisioned from the trusted local CLI, not an HTTP signup endpoint.
-This does not provide project tenancy, SSO, or Internet-facing authentication.
+Accounts are provisioned from the trusted local CLI, not HTTP signup.
+Only the shipped local project has scoped resources; there is no general
+multi-project API, SSO, or Internet-facing authentication.
 """
 
 import argparse
@@ -23,7 +24,7 @@ from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
 KDF_ITERATIONS = 450_000
-ACCOUNT_SCHEMA_VERSION = 3
+ACCOUNT_SCHEMA_VERSION = 4
 LOGIN_ATTEMPTS_PER_MINUTE = 20
 
 _ACCOUNT_SCHEMA = (
@@ -57,6 +58,41 @@ _ACCOUNT_SCHEMA = (
         attempts INTEGER NOT NULL CHECK (attempts BETWEEN 1 AND 21)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS project_membership (
+        project_id TEXT NOT NULL REFERENCES project_quota(project_id),
+        account_id UUID NOT NULL REFERENCES local_account(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'operator', 'reviewer')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (project_id, account_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS project_role_audit (
+        id BIGSERIAL PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        account_id UUID NOT NULL REFERENCES local_account(id),
+        action TEXT NOT NULL CHECK (action IN ('GRANTED', 'CHANGED', 'REVOKED')),
+        previous_role TEXT,
+        new_role TEXT,
+        actor TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_project_role_audit()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $role_guard$
+    BEGIN
+        RAISE EXCEPTION 'Project role audit is append-only';
+    END
+    $role_guard$
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_project_role_audit_immutable ON project_role_audit",
+    """
+    CREATE TRIGGER clashbolt_project_role_audit_immutable
+    BEFORE UPDATE OR DELETE ON project_role_audit FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_project_role_audit()
+    """,
 )
 
 
@@ -76,8 +112,24 @@ class AccountStore(Policy):
         with self.connect() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (SCHEMA_LOCK_ID,))
             self._apply_policy_schema(conn)
+            previous = conn.execute(
+                "SELECT version FROM schema_revision WHERE component = 'accounts'"
+            ).fetchone()
             for statement in _ACCOUNT_SCHEMA:
                 conn.execute(statement)
+            conn.execute(
+                "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
+            )
+            if previous is None or previous["version"] < 4:
+                # One-time migration of existing named accounts. Never repeat
+                # this backfill or it would silently restore revoked grants.
+                conn.execute(
+                    """
+                    INSERT INTO project_membership(project_id, account_id, role)
+                    SELECT 'local', id, role FROM local_account
+                    ON CONFLICT DO NOTHING
+                    """
+                )
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)
 
     def reserve_login_attempt(self, peer: str) -> bool:
@@ -112,6 +164,106 @@ class AccountStore(Policy):
                 (peer,),
             ).fetchone()
             return row["attempts"] <= LOGIN_ATTEMPTS_PER_MINUTE
+
+    def project_role(self, account_id: UUID, project_id: str = "local") -> str | None:
+        """Resolve effective project authority from the database every request.
+
+        The legacy account role is an upper bound. An operator cannot be
+        promoted to reviewer (or vice versa) by a membership row.
+        """
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT m.role AS project_role, a.role AS account_role
+                FROM project_membership m JOIN local_account a ON a.id = m.account_id
+                WHERE m.account_id = %s AND m.project_id = %s AND a.active = TRUE
+                """,
+                (account_id, project_id),
+            ).fetchone()
+            if not row:
+                return None
+            return (
+                row["project_role"]
+                if row["project_role"] in ("viewer", row["account_role"])
+                else None
+            )
+
+    def grant_local_role(self, username: str, role: str) -> bool:
+        """Trusted CLI-only grant; cannot expand the account's role ceiling."""
+        if not USERNAME.fullmatch(username) or role not in ROLES:
+            raise ValueError("Invalid local username or project role")
+        with self.connect() as conn:
+            account = conn.execute(
+                """
+                SELECT id, role FROM local_account
+                WHERE username = %s AND active = TRUE FOR UPDATE
+                """,
+                (username,),
+            ).fetchone()
+            if not account:
+                return False
+            if role not in ("viewer", account["role"]):
+                raise ValueError("A project grant cannot elevate the account's role")
+            previous = conn.execute(
+                """
+                SELECT role FROM project_membership
+                WHERE project_id = 'local' AND account_id = %s FOR UPDATE
+                """,
+                (account["id"],),
+            ).fetchone()
+            if previous and previous["role"] == role:
+                return True
+            conn.execute(
+                """
+                INSERT INTO project_membership(project_id, account_id, role)
+                VALUES ('local', %s, %s)
+                ON CONFLICT (project_id, account_id)
+                DO UPDATE SET role = EXCLUDED.role
+                """,
+                (account["id"], role),
+            )
+            conn.execute(
+                """
+                INSERT INTO project_role_audit(
+                    project_id, account_id, action, previous_role, new_role, actor
+                ) VALUES ('local', %s, %s, %s, %s, 'trusted-local-cli')
+                """,
+                (
+                    account["id"], "CHANGED" if previous else "GRANTED",
+                    previous["role"] if previous else None, role,
+                ),
+            )
+            return True
+
+    def revoke_local_role(self, username: str) -> bool:
+        """Removal immediately denies all local resource requests, even with a cookie."""
+        if not USERNAME.fullmatch(username):
+            raise ValueError("Invalid local username")
+        with self.connect() as conn:
+            account = conn.execute(
+                "SELECT id FROM local_account WHERE username = %s FOR UPDATE",
+                (username,),
+            ).fetchone()
+            if not account:
+                return False
+            previous = conn.execute(
+                """
+                DELETE FROM project_membership
+                WHERE project_id = 'local' AND account_id = %s RETURNING role
+                """,
+                (account["id"],),
+            ).fetchone()
+            if not previous:
+                return False
+            conn.execute(
+                """
+                INSERT INTO project_role_audit(
+                    project_id, account_id, action, previous_role, new_role, actor
+                ) VALUES ('local', %s, 'REVOKED', %s, NULL, 'trusted-local-cli')
+                """,
+                (account["id"], previous["role"]),
+            )
+            return True
 
     def get_account_draft(self, account_id: UUID) -> dict | None:
         with self.connect() as conn:
@@ -174,6 +326,21 @@ class AccountStore(Policy):
             ).fetchone()
             if not row:
                 raise ValueError("Account already exists")
+            conn.execute(
+                """
+                INSERT INTO project_membership(project_id, account_id, role)
+                VALUES ('local', %s, %s)
+                """,
+                (row["id"], role),
+            )
+            conn.execute(
+                """
+                INSERT INTO project_role_audit(
+                    project_id, account_id, action, new_role, actor
+                ) VALUES ('local', %s, 'GRANTED', %s, 'trusted-local-cli')
+                """,
+                (row["id"], role),
+            )
             return str(row["id"])
 
     def authenticate(self, username: str, password: str) -> dict | None:
@@ -325,7 +492,11 @@ def verify_session(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage locally provisioned ClashBolt accounts")
-    parser.add_argument("command", choices=("migrate", "create", "disable", "reset"))
+    parser.add_argument(
+        "command", choices=(
+            "migrate", "create", "disable", "reset", "grant-local", "revoke-local"
+        )
+    )
     parser.add_argument("username", nargs="?")
     parser.add_argument("role", nargs="?", choices=ROLES)
     args = parser.parse_args()
@@ -342,6 +513,17 @@ def main() -> None:
     if args.command == "disable":
         if not store.disable_account(args.username):
             parser.error("Account not found or already disabled")
+    elif args.command == "revoke-local":
+        if not store.revoke_local_role(args.username):
+            parser.error("Local project grant not found")
+    elif args.command == "grant-local":
+        if not args.role:
+            parser.error("Project grant requires viewer, operator or reviewer role")
+        try:
+            if not store.grant_local_role(args.username, args.role):
+                parser.error("Active account not found")
+        except ValueError as error:
+            parser.error(str(error))
     elif args.command in ("create", "reset"):
         if args.command == "create" and not args.role:
             parser.error("Account creation requires viewer, operator or reviewer role")
