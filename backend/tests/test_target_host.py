@@ -64,20 +64,32 @@ def test_live_instances_have_distinct_uids_and_kernel_resource_limits():
             assert int((group / "pids.max").read_text()) == 8
             quota, period = map(int, (group / "cpu.max").read_text().split())
             assert quota * 2 == period
-            # cgroup.procs can temporarily contain the root-owned
-            # ExecStartPre helper. Verify the actual fixture MainPID instead.
-            pid = 0
+            # MainPID can briefly point to the root-owned exec trampoline
+            # before systemd has completed DynamicUser credential switching.
+            # Only accept a running fixture PID *after* it is non-root and
+            # present in the restricted cgroup. Never relax the UID invariant.
+            fixture_uid = None
             startup_deadline = monotonic() + 5
             while monotonic() < startup_deadline:
                 pid = int(subprocess.check_output([
                     "systemctl", "show", "-p", "MainPID", "--value", unit,
                 ], text=True).strip())
                 if pid > 0:
-                    break
+                    try:
+                        uid = Path(f"/proc/{pid}").stat().st_uid
+                        members = (group / "cgroup.procs").read_text().split()
+                    except FileNotFoundError:
+                        # systemd swapped a short-lived startup process.
+                        sleep(0.05)
+                        continue
+                    if uid not in (0, os.getuid()) and str(pid) in members:
+                        fixture_uid = uid
+                        break
                 sleep(0.05)
-            assert pid > 0
-            assert str(pid) in (group / "cgroup.procs").read_text().split()
-            uids.add(Path(f"/proc/{pid}").stat().st_uid)
+            assert fixture_uid is not None, (
+                f"Fixture never became a distinct non-root cgroup process: {unit}"
+            )
+            uids.add(fixture_uid)
         assert len(uids) == 2 and not uids.intersection({0, os.getuid()})
     finally:
         for client in clients:
