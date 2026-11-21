@@ -2,7 +2,7 @@ import os
 from uuid import UUID, uuid4
 
 import pytest
-from clashbolt.accounts import AccountStore
+from clashbolt.accounts import LOGIN_ATTEMPTS_PER_MINUTE, AccountStore
 from clashbolt.api import create_app
 from clashbolt.experiment import ORACLE_HASH
 from fastapi.testclient import TestClient
@@ -144,3 +144,31 @@ def test_named_account_operations_restricted_to_operator(named_accounts):
         response = client.get("/api/operations")
         assert response.status_code == 200
         assert "responsive_workers" in response.json()
+
+
+def test_login_throttle_denies_expensive_password_checks(named_accounts, monkeypatch):
+    authenticated = []
+
+    def deny_password(_store, username, password):
+        authenticated.append(username)
+        return None
+
+    monkeypatch.setattr(AccountStore, "authenticate", deny_password)
+    with TestClient(create_app()) as client:
+        payload = {"username": "not.registered", "password": "bad-credential"}
+        for _ in range(LOGIN_ATTEMPTS_PER_MINUTE):
+            assert client.post("/api/auth/login", json=payload).status_code == 401
+
+        blocked = client.post("/api/auth/login", json=payload)
+        assert blocked.status_code == 429
+        assert blocked.headers["retry-after"] == "60"
+        assert len(authenticated) == LOGIN_ATTEMPTS_PER_MINUTE
+        assert "password" not in blocked.text.lower()
+
+        with named_accounts.connect() as conn:
+            conn.execute(
+                "UPDATE account_login_throttle "
+                "SET window_started = now() - interval '61 seconds'"
+            )
+        assert client.post("/api/auth/login", json=payload).status_code == 401
+        assert len(authenticated) == LOGIN_ATTEMPTS_PER_MINUTE + 1
