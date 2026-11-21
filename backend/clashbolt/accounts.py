@@ -146,6 +146,37 @@ class AccountStore(Policy):
                 VALUES ('local', 'public') ON CONFLICT (project_id) DO NOTHING
                 """
             )
+            # Policy-only bootstrap has nullable issuer columns but cannot
+            # reference accounts until the account tables are created.
+            if not conn.execute(
+                """
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'tool_capability'::regclass
+                  AND confrelid = 'local_account'::regclass AND contype = 'f'
+                """
+            ).fetchone():
+                conn.execute(
+                    """
+                    ALTER TABLE tool_capability
+                    ADD CONSTRAINT public_capability_issuer_fk
+                    FOREIGN KEY(issuer_account_id) REFERENCES local_account(id)
+                    """
+                )
+            if not conn.execute(
+                """
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'tool_capability'::regclass
+                  AND confrelid = 'project_workspace'::regclass AND contype = 'f'
+                """
+            ).fetchone():
+                conn.execute(
+                    """
+                    ALTER TABLE tool_capability
+                    ADD CONSTRAINT public_capability_workspace_fk
+                    FOREIGN KEY(issuer_project_id)
+                    REFERENCES project_workspace(project_id)
+                    """
+                )
             if previous is not None and previous["version"] < 6:
                 # Upgrade the original account-wide draft key exactly once,
                 # retaining the existing draft as the local project's draft.
@@ -232,6 +263,14 @@ class AccountStore(Policy):
                 ALTER TABLE tool_capability
                 ADD CONSTRAINT project_capability_issuer_account_fk
                 FOREIGN KEY(issuer_account_id) REFERENCES public.local_account(id)
+                """
+            )
+            conn.execute(
+                """
+                ALTER TABLE tool_capability
+                ADD CONSTRAINT project_capability_workspace_fk
+                FOREIGN KEY(issuer_project_id)
+                REFERENCES public.project_workspace(project_id)
                 """
             )
         return schema
