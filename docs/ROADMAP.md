@@ -6,7 +6,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
-| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections | Actual process suspension/crash and network-partition tests, database failover and target-effect readback |
+| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections, one killed claimant subprocess/reclaim regression | Full worker/target process suspension and network-partition tests, database failover and target-effect readback |
 | B3 Disposable Target Isolation | Fresh per-run native PostgreSQL database and role, orphan cleanup, bounded child resources, hardened API/worker systemd templates | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
@@ -78,6 +78,11 @@ than being represented as completed or solved by the new unit tests.
 
 ## Incremental authentication hardening (21 November 2026)
 
+- B2 now includes a real POSIX claimant subprocess terminated after a durable
+  claim. A replacement worker generation reclaims the run and rejects stale
+  and duplicate receipts. The database lease is advanced for test speed; this
+  does not demonstrate network partition, full worker interruption mid-effect,
+  or multi-node failover.
 - Account schema revision 3 adds a persisted PostgreSQL one-minute attempt
   budget, enforced atomically per direct loopback peer **before** PBKDF2 work.
   Excess requests return HTTP 429 with a fixed Retry-After hint.
