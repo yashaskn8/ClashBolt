@@ -129,3 +129,67 @@ def test_forged_verification_status_without_evidence_does_not_certify(completed_
     assert current["status"] == "UNKNOWN"
     assert current["result"]["status"] == "UNCONFIRMED"
     assert "evidence" in current["result"]["reason"]
+
+
+def test_verification_targets_are_generation_bound_and_reclaimed(completed_run):
+    ledger, run_id, _ = completed_run
+    queue = VerificationJobs(ledger.dsn)
+    queue.submit(run_id, "REPLAY")
+    claim = queue.claim("verification-owner")
+    assert claim is not None
+    job_id = UUID(claim["job_id"])
+    generation = claim["lease_generation"]
+    instance = uuid4()
+
+    assert queue.track_target(job_id, "verification-owner", generation, instance)
+    queue.mark_target(instance, "ACTIVE")
+    # Age the row but keep its worker lease live: active work cannot be stolen.
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE verification_target_instance "
+            "SET updated_at = now() - interval '10 seconds' WHERE id = %s",
+            (instance,),
+        )
+    assert queue.claim_abandoned_targets() == []
+
+    # A killed worker's lease expires, making its previously tracked target
+    # independently recoverable without knowing the old worker's credentials.
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE verification_job SET lease_until = now() - interval "
+            "'1 second' WHERE id = %s",
+            (job_id,),
+        )
+    assert not queue.track_target(job_id, "verification-owner", generation, uuid4())
+    assert queue.claim_abandoned_targets() == [instance]
+    with ledger.connect() as conn:
+        status = conn.execute(
+            "SELECT status FROM verification_target_instance WHERE id = %s",
+            (instance,),
+        ).fetchone()["status"]
+    assert status == "CLEANING"
+    queue.mark_target(instance, "CLEANED")
+    assert queue.claim_abandoned_targets() == []
+    assert queue.claim("new-verifier") is None
+    assert queue.get(job_id)["status"] == "UNKNOWN"
+
+
+def test_verification_target_registration_rejects_stale_owners(completed_run):
+    ledger, run_id, _ = completed_run
+    queue = VerificationJobs(ledger.dsn)
+    queue.submit(run_id, "REDUCE")
+    claim = queue.claim("first-owner")
+    assert claim
+    job_id = UUID(claim["job_id"])
+    assert not queue.track_target(
+        job_id, "other-owner", claim["lease_generation"], uuid4()
+    )
+    assert not queue.track_target(
+        job_id, "first-owner", claim["lease_generation"] + 1, uuid4()
+    )
+    with pytest.raises(ValueError, match="limit"):
+        queue.claim_abandoned_targets(0)
+    with pytest.raises(ValueError, match="limit"):
+        queue.claim_abandoned_targets(51)
+    with pytest.raises(ValueError, match="state"):
+        queue.mark_target(uuid4(), "PENDING")
