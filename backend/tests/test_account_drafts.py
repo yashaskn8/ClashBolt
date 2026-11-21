@@ -15,7 +15,7 @@ def test_account_drafts_do_not_leak_between_operators(monkeypatch):
     store = AccountStore(dsn)
     store.migrate()
     with store.connect() as conn:
-        conn.execute("TRUNCATE local_account CASCADE")
+        conn.execute("TRUNCATE account_login_throttle, local_account CASCADE")
     for name, role in [
         ("alice.op", "operator"),
         ("bob.op", "operator"),
