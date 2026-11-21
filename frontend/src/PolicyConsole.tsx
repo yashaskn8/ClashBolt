@@ -262,7 +262,7 @@ export default function PolicyConsole({
   }
 
   return (
-    <section className="panel policy-console" aria-labelledby="policy-title">
+    <section id="agent-planning" className="panel policy-console" aria-labelledby="policy-title">
       <div className="panel-kicker">04 / RULE REVIEW + CAPABILITY BROKER</div>
       <h2 id="policy-title">Deterministic agent safety lab</h2>
       <p className="panel-description">
