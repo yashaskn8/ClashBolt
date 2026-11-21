@@ -164,3 +164,41 @@ Standalone CLI replay/reduction still provisions temporary databases without
 a durable cleanup record and must run on trusted disposable test systems.
 A database lease does not fence already-running external effects, and neither
 power failure nor production-host systemd containment is certified.
+
+## Strict CI/security regression gates (21 November 2026)
+
+The `.github/workflows/ci.yml` pipeline runs for each push to `main`,
+pull requests, on explicit dispatch, and daily. Every required backend,
+frontend, Chromium, dependency-audit and real native systemd host job must
+succeed before the `release-gate` job can pass. Jobs have finite timeouts,
+and superseded runs are cancelled to avoid stale green results.
+
+- Python: Ruff, syntax compilation, `pip check`, strict pytest configuration,
+  unexpected-warning failures, 120-second per-test timeouts, ten slowest test
+  durations, complete native PostgreSQL integration suite and branch coverage
+  of at least 75%. This is a *floor*, not evidence of adequate per-module
+  security coverage. The initial measured coverage was 78.77%.
+- Security: `pip-audit --strict` against the exact installed, pinned freeze of
+  third-party Python packages, plus npm audit failing for high/critical
+  advisories. Unknown registry dependencies fail; the unpublished local
+  ClashBolt source is checked by tests and lint rather than a PyPI lookup.
+- Frontend: committed npm lockfile, `npm ci` for reproducible dependency
+  resolution, TypeScript/Vite build, and multiple real Chromium modes
+  including accounts, native worker and same-origin deployment.
+- Native host: a systemd-backed execution acceptance run validates distinct
+  non-root fixture UIDs, CPU/memory/task quotas and negative filesystem/network
+  checks on a disposable Linux CI host.
+
+The new strict run exposed a **real unclosed stdout-pipe deadlock** in the
+fixed-child worker's oversized-output error path. The worker now terminates
+the child and discards remaining pipe bytes in bounded chunks before reaping,
+with 256 KiB and 2 MiB regression cases. Do not weaken this safety check.
+
+**Still open:** `main` has no required-status-check protection and existing
+repository policy explicitly permits direct-to-main commits; these CI gates
+therefore report failures *after* a push, not before it. There is no automatic
+production deployment, so `release-gate` is an evidence gate, not a release
+authorization. The Python dependency graph is not yet locked across CI runs;
+independent production-host security review, higher per-module coverage and
+external-target research validation remain unverified. No CI system can
+guarantee discovery of every defect or vulnerability.
