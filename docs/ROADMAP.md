@@ -8,7 +8,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive, disposable restore drill and a CI immediate-primary-crash restart/acknowledged-run check | Multi-node failover, external recovery objectives and schema rollback drills |
 | B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic fault injections, killed claimant recovery and a live POSIX claimant SIGSTOP/SIGCONT takeover regression | Whole worker/target process mid-effect recovery, network partitions, PostgreSQL failover and target-effect readback |
-| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss and verifier-crash drills |
+| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction, SIGKILL native verifier recovery drill | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss, wider crash-point and multi-host recovery drills |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
@@ -339,6 +339,26 @@ Standalone CLI replay/reduction still provisions temporary databases without
 a durable cleanup record and must run on trusted disposable test systems.
 A database lease does not fence already-running external effects, and neither
 power failure nor production-host systemd containment is certified.
+
+## B3 native verifier crash-point recovery drill (21 November 2026)
+
+The PostgreSQL integration suite now starts the **real worker verification
+path** in a separate POSIX process for a certified native synthetic witness.
+The test pauses just after its fresh PostgreSQL replay target is marked ACTIVE,
+kills the verifier abruptly (without Python cleanup), and confirms the
+disposable target database still exists at the crash point. It then expires
+only the test worker lease and reclaims the recorded target using the normal
+reconciliation path. Both database and role must be gone; the durable target
+record must be CLEANED; a stale verification receipt must be rejected; and
+the unfinished verification job remains UNKNOWN instead of being certified.
+Failure cleanup also drops any registered fixture targets.
+
+This closes a **bounded, real-process verifier-crash regression** for the
+shipped fixture; it is not an independent host-security assessment, a power
+loss test, an actual network partition, or proof that expired leases stop
+arbitrary in-flight external effects. No external applications or user
+programs are accepted by this test. A deliberately killed subprocess is not
+a substitute for multi-host failure testing or independent deployment review.
 
 ## Strict CI/security regression gates (21 November 2026)
 
