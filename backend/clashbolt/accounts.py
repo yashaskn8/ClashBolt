@@ -408,7 +408,7 @@ class AccountStore(Policy):
             or not USERNAME.fullmatch(project_id)
             or role not in ROLES
         ):
-            raise ValueError("Invalid account, project or grant role")
+            raise ValueError("Invalid username, project identifier or grant role")
         with self.connect() as conn:
             account = conn.execute(
                 """
