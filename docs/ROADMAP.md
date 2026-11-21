@@ -185,6 +185,10 @@ and superseded runs are cancelled to avoid stale green results.
 - Frontend: committed npm lockfile, `npm ci` for reproducible dependency
   resolution, TypeScript/Vite build, and multiple real Chromium modes
   including accounts, native worker and same-origin deployment.
+- Workflow supply chain: checkout and Python/Node setup actions are pinned to
+  verified SHA commits of their official Node24-compatible release refs; the
+  workflow retains contents-read-only permissions and does not persist
+  checkout credentials.
 - Native host: a systemd-backed execution acceptance run validates distinct
   non-root fixture UIDs, CPU/memory/task quotas and negative filesystem/network
   checks on a disposable Linux CI host.
