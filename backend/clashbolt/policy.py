@@ -828,6 +828,9 @@ class Policy(Ledger):
                 """
                 SELECT plan, result FROM agent_plan
                 WHERE proposal_id = %s AND state IN ('COMPLETE', 'UNKNOWN')
+                  AND (
+                      result IS NULL OR result->>'quarantined' IS DISTINCT FROM 'true'
+                  )
                 ORDER BY created_at, id LIMIT 1000
                 """,
                 (proposal_id,),
@@ -855,6 +858,9 @@ class Policy(Ledger):
                 """
                 SELECT plan, result FROM agent_plan
                 WHERE proposal_id = %s AND state IN ('COMPLETE', 'UNKNOWN')
+                  AND (
+                      result IS NULL OR result->>'quarantined' IS DISTINCT FROM 'true'
+                  )
                 ORDER BY created_at, id LIMIT 1000
                 """,
                 (proposal_id,),
@@ -1059,6 +1065,10 @@ class Policy(Ledger):
             ).fetchone()
             if not plan or plan["state"] not in ("COMPLETE", "UNKNOWN"):
                 raise ValueError("Only terminal plans can receive feedback")
+            if plan["result"] and plan["result"].get("quarantined"):
+                raise ValueError("Quarantined decision context cannot be replanned")
+            if self._validated_plan_history(conn, plan)[0]["status"] != "VERIFIED":
+                raise ValueError("Corrupted agent decision history cannot be replanned")
             existing = conn.execute(
                 "SELECT * FROM search_feedback WHERE plan_id = %s", (plan_id,)
             ).fetchone()
