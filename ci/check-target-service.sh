@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Disposable Ubuntu Actions runner only. Requires the two CI PostgreSQL clusters.
 set -euo pipefail
+# Failed instance startup can look like a generic socket reset. Report only
+# systemd unit state and journal messages on this disposable CI host.
+on_failure() {
+    sudo systemctl --no-pager --full list-units --all 'clashbolt-target@*.service' || true
+    sudo journalctl --no-pager -n 80 -u 'clashbolt-target@*.service' || true
+}
+trap on_failure ERR
 test "${GITHUB_ACTIONS:-}" = true
 test -d /run/systemd/system
 sudo apt-get install -y python3-venv
