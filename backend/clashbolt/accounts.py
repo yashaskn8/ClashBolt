@@ -662,11 +662,7 @@ class AccountStore(Policy):
                 (account_id,),
             ).fetchone()
             if result:
-                conn.execute(
-                    "UPDATE tool_capability SET revoked = TRUE "
-                    "WHERE issuer_account_id = %s",
-                    (account_id,),
-                )
+                self._revoke_issued_capabilities(conn, account_id)
             return bool(result)
 
     def disable_account(self, username: str) -> bool:
@@ -680,11 +676,7 @@ class AccountStore(Policy):
                 (username,),
             ).fetchone()
             if result:
-                conn.execute(
-                    "UPDATE tool_capability SET revoked = TRUE "
-                    "WHERE issuer_account_id = %s",
-                    (result["id"],),
-                )
+                self._revoke_issued_capabilities(conn, result["id"])
             return bool(result)
 
     def reset_password(self, username: str, password: str) -> bool:
@@ -703,11 +695,7 @@ class AccountStore(Policy):
                 (salt, digest, username),
             ).fetchone()
             if result:
-                conn.execute(
-                    "UPDATE tool_capability SET revoked = TRUE "
-                    "WHERE issuer_account_id = %s",
-                    (result["id"],),
-                )
+                self._revoke_issued_capabilities(conn, result["id"])
             return bool(result)
 
 
