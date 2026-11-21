@@ -311,3 +311,42 @@ def test_per_account_drafts_are_locked_against_grant_changes(workspace):
         store.get_account_draft(account_id, project_id)
     assert store.grant_project_role("multi.operator", "operator", project_id)
     assert store.get_account_draft(account_id, project_id)["draft"] == draft
+
+
+def test_admission_preview_remains_in_selected_project(workspace):
+    store, project_id, schema = workspace
+    tenant = Policy(store.dsn, schema=schema, project_id=project_id)
+    with store.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO project_quota(project_id, max_open)
+            VALUES ('local', 7)
+            ON CONFLICT (project_id) DO UPDATE SET max_open = 7
+            """
+        )
+    with tenant.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO project_quota(project_id, max_open)
+            VALUES ('local', 3)
+            ON CONFLICT (project_id) DO UPDATE SET max_open = 3
+            """
+        )
+    payload = {"variant": "locked", "schedule": "serial"}
+    with TestClient(create_app()) as client:
+        _sign_in(client, "operator")
+        local = client.post("/api/runs/preview", json=payload)
+        assert local.status_code == 200, local.text
+        assert local.json()["project_id"] == "local"
+        assert local.json()["max_open"] == 7
+
+        _select(client, project_id, "operator")
+        scoped = client.post("/api/runs/preview", json=payload)
+        assert scoped.status_code == 200, scoped.text
+        assert scoped.json()["project_id"] == project_id
+        assert scoped.json()["max_open"] == 3
+        assert scoped.json()["reservation_made"] is False
+
+        _sign_in(client, "reviewer")
+        _select(client, project_id, "reviewer")
+        assert client.post("/api/runs/preview", json=payload).status_code == 403
