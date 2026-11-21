@@ -22,6 +22,7 @@ from clashbolt.witness import validate_contract
 SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
+MAX_CLAIM_GENERATIONS = 3
 BASE_SCHEMA_VERSION = 8
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
@@ -1076,6 +1077,32 @@ class Ledger:
                 WHERE project_id = 'local' FOR UPDATE
                 """
             ).fetchone()
+            # Permanently stop recycling an ambiguous claim after three
+            # missed receipts. The terminal UNKNOWN is an audited transition
+            # in the same transaction that attempts the next claim.
+            exhausted = conn.execute(
+                """
+                SELECT id FROM experiment_run
+                WHERE status = 'RUNNING' AND lease_until < now()
+                  AND cancel_requested = FALSE
+                  AND lease_generation >= %s
+                ORDER BY created_at, id
+                LIMIT 32 FOR UPDATE SKIP LOCKED
+                """,
+                (MAX_CLAIM_GENERATIONS,),
+            ).fetchall()
+            for item in exhausted:
+                terminal = conn.execute(
+                    """
+                    UPDATE experiment_run
+                    SET status = 'UNKNOWN', verdict = 'UNKNOWN',
+                        version = version + 1, lease_owner = NULL,
+                        lease_until = NULL, updated_at = now()
+                    WHERE id = %s RETURNING *
+                    """,
+                    (item["id"],),
+                ).fetchone()
+                _event(conn, terminal, "worker receipt missing; retry budget exhausted")
             local_budget_available = (
                 self._local_native_active(conn) < quota["max_native_active"]
             )
@@ -1086,7 +1113,8 @@ class Ledger:
                   AND (
                     status = 'PENDING'
                     OR (status = 'RUNNING' AND lease_until < now()
-                        AND cancel_requested = FALSE)
+                        AND cancel_requested = FALSE
+                        AND lease_generation < %s)
                   )
                   AND (
                     execution_backend = 'memory'
@@ -1095,7 +1123,7 @@ class Ledger:
                 ORDER BY created_at, id
                 LIMIT 1 FOR UPDATE SKIP LOCKED
                 """,
-                (local_budget_available, global_budget_available),
+                (MAX_CLAIM_GENERATIONS, local_budget_available, global_budget_available),
             ).fetchone()
             if not row:
                 return None
