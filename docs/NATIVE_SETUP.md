@@ -312,7 +312,7 @@ Requests exceeding this limit return HTTP 429 and a Retry-After header. This is
 `X-Forwarded-For`, enable proxy exposure, or assume separate clients behind a
 shared gateway are independently limited. Existing username lockout remains.
 After updating the application, run `python -m clashbolt.accounts migrate`
-to apply account schema revision 4 before restarting the API.
+to apply account schema revision 5 before restarting the API.
 
 A reviewer can select a pending proposal in the React console after signing in
 without possessing an operator credential. An operator can then sign back in
@@ -333,6 +333,22 @@ python -m clashbolt.accounts revoke-local experiment-operator
 python -m clashbolt.accounts grant-local experiment-operator operator
 python -m clashbolt.accounts grant-local experiment-operator viewer
 ```
+
+Account schema revision **5** adds an issuer-account and issuer-project
+binding to each newly issued named-account tool capability. The capability
+broker rechecks current operator membership under database row locks before
+debiting a one-use token; a legacy token cannot be carried into named-account
+mode. Logout, password reset, account disablement, membership removal and
+operator-to-viewer downgrade permanently revoke already-issued account-bound
+capabilities. Re-granting operator access does not resurrect old bearer tokens.
+Native authorization and a real Chromium role-change test cover these
+boundaries; they do **not** amount to general multi-project tool isolation.
+
+The React workspace re-reads the effective project role at two-second
+intervals. A downgrade removes operator UI controls; a revoked session or
+membership clears the current workspace selection and requires sign-in.
+Database authorization still takes effect immediately, independently of
+the browser refresh interval.
 
 An account with no `local` grant cannot sign into the current application
 or access its project resources. The `migrate` command backfills grants for
