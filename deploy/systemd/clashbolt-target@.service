@@ -1,0 +1,39 @@
+[Unit]
+Description=Disposable ClashBolt fixture instance
+
+[Service]
+DynamicUser=yes
+RootDirectory=/var/lib/clashbolt-target-root
+MountAPIVFS=no
+BindReadOnlyPaths=/usr /lib -/lib64 /opt/clashbolt-fixture
+BindReadOnlyPaths=-/run/postgresql/.s.PGSQL.5433:/run/clashbolt-db/.s.PGSQL.5433
+WorkingDirectory=/
+ExecStart=/opt/clashbolt-fixture/bin/python -I -B -m clashbolt.target_service
+StandardInput=socket
+StandardOutput=inherit
+StandardError=null
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+InaccessiblePaths=-/proc -/sys
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @privileged io_uring_setup
+UMask=0077
+MemoryMax=384M
+MemorySwapMax=0
+CPUQuota=50%
+TasksMax=8
+LimitNOFILE=64
+LimitCORE=0
+LimitCPU=3
+RuntimeMaxSec=8s
+TimeoutStopSec=1s
+KillMode=control-group

@@ -32,7 +32,9 @@ The **worker environment** contains `CLASHBOLT_DATABASE_URL` and, only
 when native target mode is enabled, `CLASHBOLT_TARGET_ADMIN_URL` pointing
 at a separate native target cluster. These secrets must not be committed.
 
-Copy the two systemd unit templates from `deploy/systemd` into your normal
+Prepare the dedicated fixture venv and empty target root as specified in
+[SYSTEMD_DEPLOYMENT.md](SYSTEMD_DEPLOYMENT.md). Copy the API, worker, target socket
+and target service templates from `deploy/systemd` into your normal
 systemd unit directory and perform `systemctl daemon-reload`, then enable
 and start them after verifying the OS users, database grants and environment
 file permissions. The API binds only to `127.0.0.1:8000`.

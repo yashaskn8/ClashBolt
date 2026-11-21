@@ -18,7 +18,7 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the evidence-based 20-feature status 
 
 ## Native setup (no Docker)
 
-See [docs/NATIVE_SETUP.md](docs/NATIVE_SETUP.md) for PostgreSQL setup and named-account provisioning. [Native systemd hardening examples](docs/SYSTEMD_DEPLOYMENT.md) use separate API and worker service users, distinct environment files, loopback-only connectivity and resource limits; actual host enforcement has not been verified.
+See [docs/NATIVE_SETUP.md](docs/NATIVE_SETUP.md) for PostgreSQL setup and named-account provisioning. [Native systemd hardening examples](docs/SYSTEMD_DEPLOYMENT.md) use separate API and worker identities. The deployed worker sends fixed fixture requests to a socket-activated per-request service with its own Linux identity, network namespace and cgroup. See the deployment guide for the required target socket and host acceptance drill.
 
 In-memory scratch mode:
 
@@ -54,7 +54,7 @@ Set `CLASHBOLT_TEST_DATABASE_URL` to a **disposable test-only PostgreSQL databas
 
 Export a JSON witness from the UI and run `python -m clashbolt.witness path/to/witness.json`, or export a ZIP data-only bundle and run `python -m clashbolt.witness_bundle verify path/to/witness.zip`. The verifier independently reconstructs reads, commits, state transitions and the oracle verdict, rejects inconsistent evidence even if its hash was recomputed, and replays controlled checkpoints in a fresh process. This does **not** establish uncontrolled reproduction.
 
-**Security:** In standard local mode, durable mutations require `CLASHBOLT_OPERATOR_TOKEN` and reads are loopback-only. In opt-in `accounts` mode, HTTP-only sessions are bound to named, independently provisioned single-project viewer/operator/reviewer roles and revalidated against PostgreSQL. Optional `private` mode uses a time-limited HTTP-only session for reads and the token for writes. The API rejects direct non-loopback clients but can still be exposed unsafely through a reverse proxy. Project identity, multitenant RBAC, OS-level target isolation and external target support are not yet implemented. Bind the API to `127.0.0.1` only. This token is not production identity. The deterministic planner is **not** a validated LLM agent. No Docker, Temporal, Redis, Kafka or Kubernetes. Keep changes small, explicit and tested; commit directly on `main` with no branches or PRs.
+**Security:** In standard local mode, durable mutations require `CLASHBOLT_OPERATOR_TOKEN` and reads are loopback-only. In opt-in `accounts` mode, HTTP-only sessions are bound to named, independently provisioned single-project viewer/operator/reviewer roles and revalidated against PostgreSQL. Optional `private` mode uses a time-limited HTTP-only session for reads and the token for writes. The API rejects direct non-loopback clients but can still be exposed unsafely through a reverse proxy. Project-scoped authorization, independent deployment-host validation and external target support remain open. Bind the API to `127.0.0.1` only. This token is not production identity. The deterministic planner is **not** a validated LLM agent. No Docker, Temporal, Redis, Kafka or Kubernetes. Keep changes small, explicit and tested; commit directly on `main` with no branches or PRs.
 
 
 For native control-plane archive creation with archive integrity verification,

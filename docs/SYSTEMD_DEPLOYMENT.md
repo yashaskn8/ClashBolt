@@ -56,3 +56,40 @@ resource-exhaustion tests on the actual host.
 These unit files have static CI checks; they have **not** been executed
 inside the target machine's systemd or subjected to a kernel-enforced
 network-denial penetration test.
+
+## Per-request fixed target service
+
+The worker unit requires `clashbolt-target.socket`. Install that socket and
+`clashbolt-target@.service` along with the worker unit on a cgroup-v2 Linux
+host with systemd mount namespaces, seccomp and dynamic users. Each accepted
+connection starts one bounded fixture command under its own dynamic identity.
+The worker group has access to the root-owned socket. Each target has a private
+network namespace, AF_UNIX only, an empty root directory, read-only runtime
+mounts and a single PostgreSQL socket mount. Keep the bound runtime directories
+free of secrets and service sockets. The target receives only a generated
+instance ID and its disposable password for a native trial.
+
+Create an empty root-owned directory `/var/lib/clashbolt-target-root` (0755).
+Build a dedicated root-owned, read-only-to-services Python venv at
+`/opt/clashbolt-fixture` using the distribution Python under /usr. Install a
+reviewed **non-editable** ClashBolt wheel and its dependencies there. Install
+the units, reload systemd and start the target socket before the worker.
+Never place environment files or the checkout inside the target root or venv.
+
+The native unit expects the disposable cluster at port 5433 with its Unix
+socket at `/run/postgresql/.s.PGSQL.5433`. Enable SCRAM password authentication
+for its disposable roles on that socket. On PostgreSQL 16+ the target cluster's
+first matching pg_hba.conf rule can be `local all /^cb_runner_ scram-sha-256`.
+The runtime libpq must support require_auth. The control cluster and its socket
+must be separate. Memory jobs can run without the PostgreSQL socket. Missing
+service, incompatible authentication or stale socket mounts fail the request.
+The deployed worker never retries a job under its own identity.
+
+The unit caps each instance at 50% of one CPU, 3 CPU seconds, 384 MiB memory,
+8 tasks, 64 file descriptors and 8 seconds of runtime. PostgreSQL server cost
+is outside these cgroups. Local development retains its existing subprocess
+mode. API scratch demos remain trusted in-process code. Native verification
+replay and reduction provision from the worker, and run fixture operations in
+the target unit. A worker crash during verification provisioning can still
+leave an untracked database. Use disposable installations for the CI host drill
+in `ci/check-target-service.sh`; it configures that machine's services and HBA.

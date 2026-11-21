@@ -1,0 +1,14 @@
+[Unit]
+Description=Worker access to the fixed ClashBolt fixture
+
+[Socket]
+ListenStream=/run/clashbolt-target.sock
+Accept=yes
+SocketUser=root
+SocketGroup=clashbolt-worker
+SocketMode=0660
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -25,6 +25,7 @@ from clashbolt.experiment import (
     execute_postgres,
 )
 from clashbolt.target_db import disposable_target
+from clashbolt.target_service import request_fixture, service_enabled
 
 
 def evidence_digest(witness: dict) -> str:
@@ -165,13 +166,27 @@ async def verify(witness: dict) -> dict:
             }
         try:
             with disposable_target(admin_url, control_url, uuid4()) as target:
-                replay = await execute_postgres(
-                    witness["variant"], witness["schedule"], target.url
-                )
+                if service_enabled():
+                    replay = await asyncio.to_thread(
+                        request_fixture, witness["variant"], witness["schedule"], target.url
+                    )
+                else:
+                    replay = await execute_postgres(
+                        witness["variant"], witness["schedule"], target.url
+                    )
         except (OSError, ValueError, RuntimeError, psycopg.Error):
             return {"status": "UNCONFIRMED", "reason": "Native target replay failed"}
+    elif service_enabled():
+        try:
+            replay = await asyncio.to_thread(
+                request_fixture, witness["variant"], witness["schedule"], None
+            )
+        except (OSError, ValueError):
+            return {"status": "UNCONFIRMED", "reason": "Target service replay failed"}
     else:
         replay = await execute(witness["variant"], witness["schedule"])
+    if validate_contract(replay) is not None:
+        return {"status": "UNCONFIRMED", "reason": "Invalid evidence from replay"}
     matched = (
         replay["complete"]
         and replay["evidence_sha256"] == witness["evidence_sha256"]

@@ -17,6 +17,7 @@ from clashbolt.experiment import (
     check_invariant,
 )
 from clashbolt.target_db import disposable_target
+from clashbolt.target_service import request_fixture, service_enabled
 from clashbolt.witness import validate_contract
 
 
@@ -32,6 +33,16 @@ def _probe(variant: str, gates: list[str], target_url: str | None) -> str:
         else:
             return "UNKNOWN"  # Missing evidence for a claimed commit.
     return check_invariant(fixture.final_state(), complete=True)
+
+
+def _trial(variant: str, schedule: str, gates: list[str], target_url: str | None) -> str:
+    if service_enabled():
+        response = request_fixture(variant, schedule, target_url, gates)
+        verdict = response.get("verdict")
+        if verdict not in ("PASS", "FAIL", "UNKNOWN"):
+            raise ValueError("Invalid target service probe verdict")
+        return verdict
+    return _probe(variant, gates, target_url)
 
 
 def reduce_witness(
@@ -61,9 +72,9 @@ def reduce_witness(
                 with disposable_target(
                     target_admin_url, control_url, uuid4()
                 ) as fresh:
-                    verdict = _probe(witness["variant"], candidate, fresh.url)
+                    verdict = _trial(witness["variant"], witness["schedule"], candidate, fresh.url)
             else:
-                verdict = _probe(witness["variant"], candidate, None)
+                verdict = _trial(witness["variant"], witness["schedule"], candidate, None)
             accepted = verdict == "FAIL"
             trials.append({
                 "removed_gate": remaining[index],

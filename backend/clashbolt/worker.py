@@ -16,14 +16,20 @@ from clashbolt.policy import Policy
 from clashbolt.reducer import reduce_witness
 from clashbolt.store import Ledger
 from clashbolt.target_db import disposable_target, drop_abandoned_target
+from clashbolt.target_service import request_fixture, service_enabled
 from clashbolt.verification_jobs import VerificationJobs
-from clashbolt.witness import verify
+from clashbolt.witness import validate_contract, verify
 
 
 async def isolated_synthetic_run(
     variant: str, schedule: str, target_dsn: str | None = None
 ) -> dict:
     """Run the allowlisted child with a minimized environment."""
+    if service_enabled():
+        evidence = await asyncio.to_thread(request_fixture, variant, schedule, target_dsn)
+        if validate_contract(evidence) is not None:
+            raise ValueError("Target service returned invalid evidence")
+        return evidence
     environment = {
         key: os.environ[key]
         for key in ("PATH", "VIRTUAL_ENV", "SYSTEMROOT", "WINDIR")
@@ -52,7 +58,7 @@ async def isolated_synthetic_run(
 
         try:
             stdout = await asyncio.wait_for(bounded_output(), timeout=5)
-        except (TimeoutError, ValueError):
+        except (TimeoutError, ValueError, asyncio.CancelledError):
             if process.returncode is None:
                 try:
                     if os.name == "posix":

@@ -1,6 +1,7 @@
 [Unit]
 Description=ClashBolt generation-fenced synthetic worker
-After=network.target postgresql.service
+Requires=clashbolt-target.socket
+After=network.target postgresql.service clashbolt-target.socket
 Wants=postgresql.service
 
 [Service]
@@ -10,7 +11,7 @@ Group=clashbolt-worker
 WorkingDirectory=/opt/clashbolt
 EnvironmentFile=/etc/clashbolt/worker.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/clashbolt/.venv/bin/python -m clashbolt.worker
+ExecStart=/usr/bin/env CLASHBOLT_TARGET_TRANSPORT=systemd /opt/clashbolt/.venv/bin/python -m clashbolt.worker
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

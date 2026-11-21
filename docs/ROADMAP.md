@@ -8,7 +8,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
 | B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections, one killed claimant subprocess/reclaim regression | Full worker/target process suspension and network-partition tests, database failover and target-effect readback |
-| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, orphan cleanup, bounded child resources, hardened API/worker systemd templates | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
+| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; verification-job orphan recovery; power-loss drills |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
@@ -108,3 +108,21 @@ Verified locally with two disposable PostgreSQL 16.2 clusters:
 roles and checks cross-database denial, temporary and permanent table denial,
 forbidden column updates, deletion, a third connection, and absence of admin
 options from the runner DSN. Host isolation and external validation remain open.
+
+## B3 target execution boundary (21 November 2026)
+
+Implemented in `target_service.py`, the worker, witness verifier, reducer and
+`deploy/systemd/clashbolt-target*`. The installed worker uses socket activation
+with one dynamic user and cgroup per connection. Only fixed schedules and
+order-preserving subsets for reductions are accepted. The target can request
+no executable, host, role override or connection option. The private root
+exposes the runtime and designated target PostgreSQL socket. IP sockets are
+disabled. The service has no control or target-administrator credential.
+
+Evidence: `test_target_service.py` covers the actual stdin/stdout handler,
+input bounds, rejection paths and absent-socket failure. The distinct host
+gate in `ci/check-target-service.sh` runs `test_target_host.py` and an
+ExecStartPre confinement probe against the installed units. Local protocol
+tests cannot verify host enforcement. Deployment-host review and power-loss
+validation remain blocked pending independent infrastructure. Per-target
+limits exclude the separate PostgreSQL server. External targets stay disabled.
