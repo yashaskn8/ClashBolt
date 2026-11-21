@@ -23,7 +23,11 @@ printf '%s\n' '[Service]' 'ExecStartPre=/opt/clashbolt-fixture/bin/python -I /op
 sudo systemd-analyze verify clashbolt-target.socket clashbolt-target@ci.service
 sudo systemctl daemon-reload
 sudo systemctl start clashbolt-target.socket
-# Grant this CI job exactly the socket group; exercise the real units.
-sudo -g clashbolt-worker --preserve-env=CLASHBOLT_TEST_TARGET_ADMIN_URL,CLASHBOLT_TEST_DATABASE_URL \
+# GitHub's runner sudo policy rejects a direct -g group switch. Enter the
+# socket group via a root-launched setpriv, then drop back to the runner UID.
+# Preserve the two test DSNs as environment, not command-line arguments.
+sudo --preserve-env=CLASHBOLT_TEST_TARGET_ADMIN_URL,CLASHBOLT_TEST_DATABASE_URL \
+    setpriv --reuid="$(id -u)" \
+    --regid="$(getent group clashbolt-worker | cut -d: -f3)" --clear-groups \
     env CLASHBOLT_TARGET_TRANSPORT=systemd "$(command -v python)" \
     -m pytest -q backend/tests/test_target_host.py
