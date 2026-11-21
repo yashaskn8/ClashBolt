@@ -16,6 +16,13 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
 - **Small verified commits.** Add focused unit and integration tests, run Ruff,
   pytest, TypeScript/Vite build and check GitHub Actions before reporting
   success. Never equate synthetic replay with independent external reproduction.
+- **Fail-closed CI.** Do not suppress a failing test, audit finding, coverage
+  gate or host-boundary check to obtain a green workflow. Every backend,
+  frontend, Chromium, dependency-security and native host job must pass, as
+  must the aggregate release-gate, on the exact commit being reported.
+  Diagnose legitimate failures and add regression coverage before fixing.
+- **Reproducible frontend.** Keep the npm lockfile in version control; use
+  `npm ci` in CI. Keep separate PostgreSQL target and control clusters native.
 - **Do not lie about completion.** Note exact implemented features, test
   evidence and remaining gaps in the roadmap. Never claim unmeasured benchmark
   scores or production certification.
