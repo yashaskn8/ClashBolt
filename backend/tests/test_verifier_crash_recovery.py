@@ -14,11 +14,11 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
-from clashbolt.experiment import ORACLE_HASH, execute
+from clashbolt.experiment import ORACLE_HASH
 from clashbolt.policy import Policy
 from clashbolt.target_db import drop_abandoned_target
 from clashbolt.verification_jobs import VerificationJobs
-from clashbolt.worker import reconcile_verification_targets
+from clashbolt.worker import process_one, reconcile_verification_targets
 
 # This child runs the real verification worker and target provisioning path.
 # Pause only after the real ACTIVE record is committed, then the parent
@@ -72,16 +72,17 @@ def test_killed_verifier_reclaims_real_target_and_never_accepts_receipt(
 
     proposal = ledger.propose("verifier-crash-test")
     approved = ledger.approve(UUID(proposal["id"]), ORACLE_HASH, "reviewer")
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
     run = ledger.admit(
         client_key=str(uuid4()), variant="locked", schedule="serial",
+        execution_backend="native-postgresql",
         approved_oracle_id=UUID(approved["id"]),
     )
-    claimed = ledger.claim("fixture-worker")
-    assert claimed and claimed["run_id"] == run["run_id"]
-    assert ledger.finish(
-        UUID(run["run_id"]), "fixture-worker", claimed["lease_generation"],
-        asyncio.run(execute("locked", "serial")),
-    )
+    assert asyncio.run(process_one(ledger, "fixture-worker"))
+    completed = ledger.get(UUID(run["run_id"]))
+    assert completed["status"] == "COMPLETE"
+    assert completed["execution_backend"] == "native-postgresql"
+    assert completed["verdict"] == "PASS"
 
     queue = VerificationJobs(control)
     submitted = queue.submit(UUID(run["run_id"]), "REPLAY")
