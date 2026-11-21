@@ -17,7 +17,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
 | A4 Evidence-Calibrated Abstention | Structured persisted missing-receipt, withdrawn-oracle, incomplete and conflict gaps; UNKNOWN never becomes a finding | Evidence-calibrated confidence and independently reviewed bounded probes |
-| A5 Agent Decision Record | Typed plans, in-flight and model-call deadlines, UNKNOWN timeout reconciliation without budget refunds, hash-chained dispatch/receipt history, bound immutable proposals and feedback | Full model-context obligations, independent signatures, external crash-point matrix and context-corruption recovery |
+| A5 Agent Decision Record | Typed plans, bounded model/tool deadlines, UNKNOWN recovery without budget refunds, hash-chained history, bounded worker-integrity sweeps with durable quarantine, no feedback from corrupt context | Full context/schema obligations, independently authenticated signatures, external crash-point matrix and recovery validation |
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
 | P1 Experiment Composer | Named-account login, operator-only admission, approved oracle, account-specific CAS drafts and native Chromium end-to-end tests | Multi-project ownership and durable browser fault matrix |
@@ -207,6 +207,27 @@ independent production-host security review, higher per-module coverage and
 external-target research validation remain unverified. No CI system can
 guarantee discovery of every defect or vulnerability.
 
+
+## A5 agent context corruption quarantine (21 November 2026)
+
+Policy schema revision **9** adds an indexed integrity-check timestamp for
+active agent plans. Each worker maintenance pass checks at most 20 eligible
+plans whose records have not been checked in the past 30 seconds. Checks
+compare the persisted plan and approved oracle binding against the
+append-only digest-linked decision history. Only `VERIFIED` entries remain
+eligible; corrupted or pre-history `UNCONFIRMED` records transition
+atomically to terminal `UNKNOWN` with a persisted evidence gap and
+`quarantined` marker. A user can inspect the original inconsistent history,
+but cannot authorize a tool receipt or replan from quarantined context.
+The semantic frontier ignores quarantined observations.
+
+Real PostgreSQL regressions verify stale proposal quarantine, in-flight
+receipt rejection, scan rotation, concurrent sweeps and a separate
+`python -m clashbolt.worker --once` process performing recovery. Existing
+valid prior feedback paths remain available. This is control-plane
+corruption detection, **not** protection from a database superuser capable
+of rebuilding the hash chain and its stored data, and not independent
+model-context-signature evidence.
 
 ## A3/P4 account-bound tool authority and live UI role synchronization (21 November 2026)
 
