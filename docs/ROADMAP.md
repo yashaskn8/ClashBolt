@@ -8,7 +8,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
 | B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections, one killed claimant subprocess/reclaim regression | Full worker/target process suspension and network-partition tests, database failover and target-effect readback |
-| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; verification-job orphan recovery; power-loss drills |
+| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss and verifier-crash drills |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
@@ -126,3 +126,26 @@ ExecStartPre confinement probe against the installed units. Local protocol
 tests cannot verify host enforcement. Deployment-host review and power-loss
 validation remain blocked pending independent infrastructure. Per-target
 limits exclude the separate PostgreSQL server. External targets stay disabled.
+
+
+## B3 durable verification target lifecycle (21 November 2026)
+
+The native replay/reduction worker now registers each disposable PostgreSQL
+target in the control database **before** provisioning. The record binds the
+target's deterministic UUID to the verification job, its lease generation and
+a bounded trial number. On a worker restart, a separate cleanup claim can
+identify old targets with expired ownership and force-drop their databases
+and roles. Live, unexpired verification claims are excluded from cleanup.
+A failed teardown remains `UNKNOWN` for later retry.
+
+The corresponding control schema is **revision 6**. Apply the normal
+`python -m clashbolt.policy` or `python -m clashbolt.accounts migrate`
+migration before starting updated workers. Regression tests cover lease
+fencing, interrupted verification cleanup on a real disposable native cluster,
+and tracking of successful replay/reduction targets.
+
+Limits: only worker-queued verification uses this durable target registry.
+Standalone CLI replay/reduction still provisions temporary databases without
+a durable cleanup record and must run on trusted disposable test systems.
+A database lease does not fence already-running external effects, and neither
+power failure nor production-host systemd containment is certified.
