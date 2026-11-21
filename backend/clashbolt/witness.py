@@ -163,7 +163,7 @@ async def verify(
 
         admin_url = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
         control_url = os.getenv("CLASHBOLT_DATABASE_URL")
-        if not admin_url or not control_url:
+        if target_factory is None and (not admin_url or not control_url):
             return {
                 "status": "UNCONFIRMED",
                 "reason": "Independent native target database is not configured",
