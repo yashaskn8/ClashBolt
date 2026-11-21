@@ -37,6 +37,20 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
     const response = await page.request.get(`/api/verification-jobs/${jobId}`)
     return ((await response.json()) as { status: string }).status
   }, { timeout: 25_000 }).toBe('COMPLETE')
+  const workerReplay = await page.request.get(`/api/verification-jobs/${jobId}`)
+  const replayRecord = await workerReplay.json() as {
+    status: string
+    result: { status: string; original_sha256?: string }
+  }
+  expect(replayRecord.result.status).toBe('REPRODUCED')
+  const readiness = await page.request.get(`/api/runs/${runId}/reviews`)
+  expect(readiness.status()).toBe(200)
+  const initialReview = await readiness.json() as {
+    replay_verified: boolean; replay_job_id: string | null
+  }
+  expect(initialReview, 'Server must bind a completed worker replay').toMatchObject({
+    replay_verified: true, replay_job_id: jobId,
+  })
 
   await signIn(page, 'reviewer')
   await page.locator('.recent-list button').filter({
