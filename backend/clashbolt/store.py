@@ -20,6 +20,8 @@ from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
 
 SCHEMA_LOCK_ID = 538192047
+GLOBAL_NATIVE_LOCK_ID = 538192048
+GLOBAL_NATIVE_SLOTS = 2
 BASE_SCHEMA_VERSION = 6
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
@@ -611,11 +613,54 @@ class Ledger:
     def transitions(self, run_id: UUID, after: int = 0) -> list[dict]:
         return self.transition_page(run_id, after)["events"]
 
+    def _global_native_active(self, conn) -> int:
+        """Count all live native run and verification claims in trusted schemas.
+
+        Call only with GLOBAL_NATIVE_LOCK_ID held. The schema names come from
+        the administrator-created registry, never an HTTP or agent-supplied ID.
+        Expired claims do not reserve a slot; their effects remain UNKNOWN
+        until the normal fenced reconciliation path.
+        """
+        workspaces = conn.execute(
+            "SELECT schema_name FROM public.project_workspace ORDER BY project_id"
+        ).fetchall()
+        occupied = 0
+        for workspace in workspaces:
+            schema = workspace["schema_name"]
+            if not _PROJECT_SCHEMA_NAME.fullmatch(schema):
+                raise ValueError("Untrusted registered project schema")
+            row = conn.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM {}.experiment_run
+                         WHERE execution_backend = 'native-postgresql'
+                           AND status IN ('RUNNING', 'CANCELLING')
+                           AND lease_until > now())
+                      + (SELECT count(*) FROM {}.verification_job
+                         WHERE status = 'RUNNING' AND lease_until > now())
+                        AS occupied
+                    """
+                ).format(sql.Identifier(schema), sql.Identifier(schema))
+            ).fetchone()
+            occupied += row["occupied"]
+        return occupied
+
     def claim(self, owner: str, lease_seconds: int = 30) -> dict | None:
         if not owner or len(owner) > 100 or not 5 <= lease_seconds <= 300:
             raise ValueError("Invalid worker or lease duration")
         with self.connect() as conn:
-            # Serialize native-slot decisions between concurrent workers.
+            # The shared advisory lock comes *before* the local quota row.
+            # Otherwise workers in different project schemas can each see
+            # spare local capacity while jointly exceeding native host limits.
+            global_budget_available = True
+            if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts":
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(%s)", (GLOBAL_NATIVE_LOCK_ID,)
+                )
+                global_budget_available = (
+                    self._global_native_active(conn) < GLOBAL_NATIVE_SLOTS
+                )
             conn.execute(
                 "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
             )
@@ -637,17 +682,20 @@ class Ledger:
                   AND (
                     execution_backend = 'memory'
                     OR (
-                        SELECT count(*) FROM experiment_run AS active
-                        WHERE active.project_id = 'local'
-                          AND active.execution_backend = 'native-postgresql'
-                          AND active.status IN ('RUNNING', 'CANCELLING')
-                          AND active.lease_until > now()
-                    ) < %s
+                        (
+                            SELECT count(*) FROM experiment_run AS active
+                            WHERE active.project_id = 'local'
+                              AND active.execution_backend = 'native-postgresql'
+                              AND active.status IN ('RUNNING', 'CANCELLING')
+                              AND active.lease_until > now()
+                        ) < %s
+                        AND %s
+                    )
                   )
                 ORDER BY created_at, id
                 LIMIT 1 FOR UPDATE SKIP LOCKED
                 """,
-                (quota["max_native_active"],),
+                (quota["max_native_active"], global_budget_available),
             ).fetchone()
             if not row:
                 return None
