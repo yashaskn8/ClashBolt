@@ -234,3 +234,15 @@ def test_membership_in_another_project_never_grants_local_resource_access(named_
         assert client.get("/api/runs").status_code == 401
     # Merely existing as a member of another project never opens the local
     # project's API. The other project's resources are not exposed yet.
+
+
+def test_readiness_fails_without_any_effective_local_grant(named_accounts):
+    with TestClient(create_app()) as client:
+        assert client.get("/api/ready").status_code == 200
+        for username in ("sample.viewer", "sample.operator", "sample.reviewer"):
+            assert named_accounts.revoke_local_role(username)
+        readiness = client.get("/api/ready")
+        assert readiness.status_code == 503
+        assert "grant" in readiness.json()["detail"]
+        assert named_accounts.grant_local_role("sample.viewer", "viewer")
+        assert client.get("/api/ready").status_code == 200
