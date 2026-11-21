@@ -7,7 +7,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
-| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections, one killed claimant subprocess/reclaim regression | Full worker/target process suspension and network-partition tests, database failover and target-effect readback |
+| B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic fault injections, killed claimant recovery and a live POSIX claimant SIGSTOP/SIGCONT takeover regression | Whole worker/target process mid-effect recovery, network partitions, PostgreSQL failover and target-effect readback |
 | B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, generation-bound run and verification-target orphan cleanup, per-request systemd target for worker execution, replay and reduction | Independent deployment validation of target UID, egress and resource enforcement; actual power-loss and verifier-crash drills |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
@@ -23,7 +23,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P1 Experiment Composer | Named-account login, operator-only admission, approved oracle, account-specific CAS drafts and native Chromium end-to-end tests | Multi-project ownership and durable browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
-| P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, PostgreSQL-backed per-direct-peer login throttling, role-bound signed sessions, revoked-account enforcement, selectable pending rules; legacy independent reviewer token | Multi-project isolation, SSO, administrative identity verification and cross-tenant tests |
+| P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, PostgreSQL-backed login throttling, signed sessions, durable per-account `local` project grants, immediately checked revocation, append-only grant audit, selectable pending rules | General project-scoped resources and workers, cross-tenant integration, SSO, independent identity verification and external review |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-account drafts, model uncertainty, worker and queue gauges, fixed operator-facing backlog diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
@@ -206,3 +206,31 @@ authorization. The Python dependency graph is not yet locked across CI runs;
 independent production-host security review, higher per-module coverage and
 external-target research validation remain unverified. No CI system can
 guarantee discovery of every defect or vulnerability.
+
+
+## P4 single-project role grants and B2 live claimant suspension (21 November 2026)
+
+- Account schema revision **4** persists membership in the existing `local`
+  workspace and records grant/change/revocation through an append-only,
+  database-trigger-protected audit. New local accounts receive only the
+  account-role-matching grant; upgrading existing schema-3 accounts backfills
+  matching local grants **once**, never during later migrations. CLI commands
+  `grant-local` and `revoke-local` require trusted local administration.
+- The API reads the effective project role on every protected request and
+  denies login or resource access without a local membership. An existing
+  signed session cannot bypass revocation; reviewer and operator authority
+  cannot be swapped or escalated through a project grant. Tests exercise
+  session revocation, read/write downgrades, grant ceilings, a foreign-project
+  membership that cannot access local resources, and append-only audit.
+- B2 adds a POSIX SIGSTOP/SIGCONT test with a real claimant process that
+  resumes after its lease expires and a replacement publishes a certified
+  result; the old generation's receipt must be rejected without a duplicate
+  terminal transition.
+
+**Scope guard:** This is not general multi-project tenancy. Experiment runs,
+oracle proposals, worker dispatch, agent state and SSE projections are still
+hard-coded to the `local` project. Do **not** expose arbitrary project IDs in
+HTTP endpoints until every associated database query, resource reference,
+background worker, capability and browser projection has been scoped and
+cross-tenant tested. B2 process suspension demonstrates control-plane receipt
+fencing only, not containment of any already-in-flight external effect.
