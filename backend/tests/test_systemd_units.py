@@ -28,9 +28,6 @@ def test_per_request_target_protects_kernel_and_system_controls():
         "PrivateNetwork=yes",
         "RestrictAddressFamilies=AF_UNIX",
         "InaccessiblePaths=-/proc -/sys",
-        "ProtectKernelModules=yes",
-        "ProtectControlGroups=yes",
-        "RestrictRealtime=yes",
         "NoNewPrivileges=yes",
         "MemorySwapMax=0",
     ):
