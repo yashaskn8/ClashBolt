@@ -84,6 +84,11 @@ class AccountLogin(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class ProjectSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(min_length=3, max_length=48)
+
+
 class DraftRequest(ExperimentRequest):
     expected_version: int = Field(ge=0, le=2**63 - 2)
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
@@ -250,9 +255,21 @@ def create_app() -> FastAPI:
             return await call_next(request)
         if path == "/api/session":
             return JSONResponse(status_code=404, content={"detail": "Not found"})
-        # A separately issued, bounded capability authorizes the one fixed tool.
+
+        # The HttpOnly project cookie is a *selector*, never authority.
+        # All named API endpoints require a live project membership; the
+        # one capability-only endpoint independently checks the issuer.
+        project_id = request.cookies.get("clashbolt_project", "local")
+        schema = account_store.project_schema(project_id)
         if path == "/api/agent/tools/run" and request.method == "POST":
+            if schema is None:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Unknown tool capability project"},
+                )
+            request.state.project = {"project_id": project_id, "schema": schema}
             return await call_next(request)
+
         identity = verify_session(
             request.cookies.get("clashbolt_identity"), session_secret, account_store
         )
@@ -260,16 +277,25 @@ def create_app() -> FastAPI:
             return JSONResponse(
                 status_code=401, content={"detail": "Named account session required"},
             )
-        # Account-wide role alone is insufficient. A local-project grant
-        # is mandatory for *all* protected reads and writes, and is checked
-        # on every request so an existing cookie cannot outlive revocation.
-        effective_role = account_store.project_role(UUID(identity["id"]))
-        if effective_role is None and path != "/api/auth/logout":
+        account_id = UUID(identity["id"])
+        # Project selection, listing and logout remain usable when the current
+        # project was revoked; they do not access project resource tables.
+        account_only = path in (
+            "/api/auth/logout", "/api/auth/projects", "/api/auth/select-project"
+        )
+        effective_role = (
+            account_store.project_role(account_id, project_id)
+            if schema is not None else None
+        )
+        if not account_only and effective_role is None:
             return JSONResponse(
                 status_code=403,
-                content={"detail": "No permission for the local project"},
+                content={"detail": "No permission for the selected project"},
             )
-        request.state.account = {**identity, "role": effective_role}
+        request.state.account = {
+            **identity, "role": effective_role,
+            "project_id": project_id, "schema": schema,
+        }
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             reviewing = (
                 request.method == "POST"
@@ -277,7 +303,7 @@ def create_app() -> FastAPI:
                 and (path.endswith("/approve") or path.endswith("/revoke"))
             )
             permitted = (
-                path == "/api/auth/logout"
+                account_only
                 or (reviewing and effective_role == "reviewer")
                 or (not reviewing and effective_role == "operator")
             )
@@ -304,16 +330,25 @@ def create_app() -> FastAPI:
         )
         if identity is None:
             raise HTTPException(401, "Invalid account credentials")
-        role = account_store.project_role(UUID(identity["id"]))
-        if role is None:
-            raise HTTPException(403, "No permission for the local project")
+        projects = account_store.accessible_projects(UUID(identity["id"]))
+        if not projects:
+            raise HTTPException(403, "No project permission is configured")
+        selected = next(
+            (project for project in projects if project["id"] == "local"),
+            projects[0],
+        )
         response = JSONResponse(content={
-            "username": identity["username"], "role": role,
-            "expires_in": 3600,
+            "username": identity["username"], "role": selected["role"],
+            "project_id": selected["id"], "expires_in": 3600,
         })
         response.set_cookie(
             key="clashbolt_identity",
             value=sign_session(identity, session_secret),
+            httponly=True, samesite="strict", path="/api", max_age=3600,
+            secure=request.url.scheme == "https",
+        )
+        response.set_cookie(
+            key="clashbolt_project", value=selected["id"],
             httponly=True, samesite="strict", path="/api", max_age=3600,
             secure=request.url.scheme == "https",
         )
@@ -325,7 +360,42 @@ def create_app() -> FastAPI:
         if account_store is None:
             raise HTTPException(404, "Named accounts are not enabled")
         identity = request.state.account
-        return {"username": identity["username"], "role": identity["role"]}
+        return {
+            "username": identity["username"], "role": identity["role"],
+            "project_id": identity["project_id"],
+        }
+
+    @app.get("/api/auth/projects")
+    def account_projects(request: Request) -> dict:
+        identity = request.state.account
+        return {
+            "projects": account_store.accessible_projects(UUID(identity["id"])),
+            "selected_project_id": identity["project_id"],
+        }
+
+    @app.post("/api/auth/select-project")
+    def account_select_project(
+        selection: ProjectSelection, request: Request
+    ):
+        identity = request.state.account
+        available = account_store.accessible_projects(UUID(identity["id"]))
+        selected = next(
+            (project for project in available if project["id"] == selection.project_id),
+            None,
+        )
+        if not selected:
+            raise HTTPException(403, "No grant for selected project")
+        response = JSONResponse(content={
+            "username": identity["username"], "role": selected["role"],
+            "project_id": selected["id"],
+        })
+        response.set_cookie(
+            key="clashbolt_project", value=selected["id"],
+            httponly=True, samesite="strict", path="/api", max_age=3600,
+            secure=request.url.scheme == "https",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.post("/api/auth/logout")
     def account_logout(request: Request):
@@ -334,6 +404,7 @@ def create_app() -> FastAPI:
         account_store.revoke_sessions(UUID(request.state.account["id"]))
         response = JSONResponse(content={"status": "LOGGED_OUT"})
         response.delete_cookie("clashbolt_identity", path="/api")
+        response.delete_cookie("clashbolt_project", path="/api")
         response.headers["Cache-Control"] = "no-store"
         return response
 
