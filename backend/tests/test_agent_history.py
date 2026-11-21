@@ -4,10 +4,12 @@ import asyncio
 import os
 import subprocess
 import sys
-from uuid import UUID
+from concurrent.futures import ThreadPoolExecutor
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 from clashbolt.api import create_app
 from clashbolt.experiment import ORACLE_HASH, execute
 from clashbolt.planner import choose_plan
@@ -221,3 +223,44 @@ def test_real_worker_once_quarantines_invalid_agent_history(policy):
     )
     assert completed.returncode == 0, completed.stderr
     assert policy.get_plan(plan_id)["state"] == "UNKNOWN"
+
+
+def test_parallel_integrity_reapers_quarantine_each_corrupt_plan_once(policy):
+    _, plan_id = _approved_plan(policy)
+    with policy.connect() as conn:
+        conn.execute(
+            "UPDATE agent_plan SET plan = jsonb_set(plan, '{schedule}', "
+            "'\"serial\"'::jsonb) WHERE id = %s",
+            (plan_id,),
+        )
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        changed = list(pool.map(
+            lambda _: policy.reconcile_corrupt_plans(limit=1), range(6)
+        ))
+    assert sum(changed) == 1
+    assert policy.get_plan(plan_id)["state"] == "UNKNOWN"
+    assert len(policy.evidence_gaps(plan_id)) == 1
+
+
+def test_missing_legacy_decision_history_is_never_treated_as_verified(policy):
+    proposed = policy.propose("unconfirmed-old-context")
+    rule_id = UUID(proposed["id"])
+    policy.approve(rule_id, ORACLE_HASH, "reviewer")
+    plan_id = uuid4()
+    with policy.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO agent_plan(id, proposal_id, plan, strategy)
+            VALUES (%s, %s, %s, 'semantic')
+            """,
+            (
+                plan_id, rule_id,
+                Jsonb(choose_plan(strategy="semantic", variant="racy")),
+            ),
+        )
+    assert policy.plan_history(plan_id)["integrity"]["status"] == "UNCONFIRMED"
+    assert policy.reconcile_corrupt_plans() == 1
+    record = policy.get_plan(plan_id)
+    assert record["state"] == "UNKNOWN"
+    assert record["result"]["quarantined"] is True
+    assert record["result"]["evidence_sha256"] is None
