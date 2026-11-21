@@ -22,7 +22,7 @@ test('real browser switches isolated projects without carrying stale rule or dra
   await page.goto('/')
   await signIn(page, 'operator')
   await expect(page.getByRole('status', { name: 'Run resource preview' }))
-    .toContainText('No current approved oracle for this project')
+    .toContainText('active run slots')
 
   await page.getByLabel('Implementation').selectOption('locked')
   await page.getByRole('button', { name: /Save experiment draft/ }).click()
@@ -34,6 +34,8 @@ test('real browser switches isolated projects without carrying stale rule or dra
 
   await enterProject(page, 'browser-workspace')
   await expect(page.getByLabel('Implementation')).toHaveValue('racy')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('No current approved oracle for this project')
   const tenantInitial = await page.request.get('/api/oracle/proposals')
   expect(tenantInitial.ok()).toBe(true)
   expect(((await tenantInitial.json()) as { proposals: unknown[] }).proposals).toEqual([])
