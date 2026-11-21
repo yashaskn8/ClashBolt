@@ -718,6 +718,107 @@ class Ledger:
             return _public(row, self.project_id) if row else None
 
     @staticmethod
+    def _public_export(row: dict, current_version: int, current_status: str) -> dict:
+        return {
+            "export_id": str(row["id"]),
+            "run_id": str(row["run_id"]),
+            "run_version": row["run_version"],
+            "evidence_sha256": row["evidence_sha256"],
+            "artifact_sha256": row["artifact_sha256"],
+            "artifact_bytes": row["artifact_bytes"],
+            "created_at": row["created_at"].isoformat(),
+            "current": (
+                current_status == "COMPLETE"
+                and row["run_version"] == current_version
+            ),
+            "scope": "SYNTHETIC_ONLY",
+        }
+
+    def record_bundle_export(self, run_id: UUID) -> dict | None:
+        """Freeze a verifiable ZIP digest without persisting or executing target code.
+
+        A read-only bundle download remains separate: operators must first
+        request this audited export. The run lock fences concurrent revocation
+        so the recorded digest always belongs to the exact certified version.
+        """
+        from clashbolt.witness_bundle import create_bundle
+
+        with self.connect() as conn:
+            run = conn.execute(
+                """
+                SELECT * FROM experiment_run
+                WHERE id = %s AND project_id = 'local' FOR SHARE
+                """,
+                (run_id,),
+            ).fetchone()
+            if not run:
+                return None
+            if (
+                run["status"] != "COMPLETE"
+                or run["verdict"] not in ("PASS", "FAIL")
+                or not isinstance(run["witness"], dict)
+            ):
+                raise ValueError("A current certified synthetic witness is required")
+            bundle = create_bundle(run["witness"])
+            artifact_sha = hashlib.sha256(bundle).hexdigest()
+            evidence_sha = run["witness"]["evidence_sha256"]
+            conn.execute(
+                """
+                INSERT INTO witness_export(
+                    id, run_id, run_version, evidence_sha256,
+                    artifact_sha256, artifact_bytes
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (run_id, run_version) DO NOTHING
+                """,
+                (
+                    uuid4(), run_id, run["version"], evidence_sha,
+                    artifact_sha, len(bundle),
+                ),
+            )
+            entry = conn.execute(
+                """
+                SELECT * FROM witness_export
+                WHERE run_id = %s AND run_version = %s
+                """,
+                (run_id, run["version"]),
+            ).fetchone()
+            if (
+                not entry
+                or entry["artifact_sha256"] != artifact_sha
+                or entry["evidence_sha256"] != evidence_sha
+                or entry["artifact_bytes"] != len(bundle)
+            ):
+                raise ValueError("Immutable evidence export does not match current ZIP")
+            return self._public_export(entry, run["version"], run["status"])
+
+    def bundle_exports(self, run_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            run = conn.execute(
+                """
+                SELECT version, status FROM experiment_run
+                WHERE id = %s AND project_id = 'local'
+                """,
+                (run_id,),
+            ).fetchone()
+            if not run:
+                return None
+            rows = conn.execute(
+                """
+                SELECT * FROM witness_export WHERE run_id = %s
+                ORDER BY created_at, id
+                """,
+                (run_id,),
+            ).fetchall()
+            return {
+                "run_id": str(run_id),
+                "project_id": self.project_id,
+                "exports": [
+                    self._public_export(row, run["version"], run["status"])
+                    for row in rows
+                ],
+            }
+
+    @staticmethod
     def _current_replay(conn, run: dict) -> dict | None:
         """Only a worker-certified, current synthetic replay is reviewable."""
         if (
