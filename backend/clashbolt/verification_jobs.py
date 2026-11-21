@@ -26,8 +26,10 @@ def _public(row: dict) -> dict:
 
 
 class VerificationJobs:
-    def __init__(self, dsn: str):
-        self.ledger = Ledger(dsn)
+    def __init__(
+        self, dsn: str, *, schema: str = "public", project_id: str = "local"
+    ):
+        self.ledger = Ledger(dsn, schema=schema, project_id=project_id)
 
     def submit(self, run_id: UUID, kind: str) -> dict:
         if kind not in KINDS:
