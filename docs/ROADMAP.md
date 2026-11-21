@@ -304,6 +304,15 @@ This proves only the stated ephemeral GitHub runner configuration; production
 host enforcement, power-loss recovery and an independent security assessment
 remain open.
 
+A follow-up host acceptance regression now interrogates the **running target
+MainPIDs** via the CI host's privileged `/proc` reader. It requires active
+seccomp filtering, `NoNewPrivs`, zero effective and bounding capabilities,
+and a distinct network and mount namespace for each active target, separate
+from the host. These are checks of the disposable runner's live kernel state,
+not merely the configured unit text. They complement the negative target-side
+IP-socket and filesystem checks, but do **not** certify an independent
+production host, untrusted external targets or recovery after power loss.
+
 ## B3 durable verification target lifecycle (21 November 2026)
 
 The native replay/reduction worker now registers each disposable PostgreSQL
