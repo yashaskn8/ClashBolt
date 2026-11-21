@@ -15,7 +15,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/first-start P95, real PostgreSQL concurrent admission/queue-drain regression | Real CPU/provider cost, multi-project fair scheduling, sustained load-tested SLOs and retry storms |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
-| A3 Capability Tool Broker | Hashed short-lived scope-limited tokens, plan-history integrity check, oracle-first row locking against concurrent revocation, single-action audit and budgets | Project-specific identity, external fault testing of revocation races, and multitenant limits |
+| A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
 | A4 Evidence-Calibrated Abstention | Structured persisted missing-receipt, withdrawn-oracle, incomplete and conflict gaps; UNKNOWN never becomes a finding | Evidence-calibrated confidence and independently reviewed bounded probes |
 | A5 Agent Decision Record | Typed plans, in-flight and model-call deadlines, UNKNOWN timeout reconciliation without budget refunds, hash-chained dispatch/receipt history, bound immutable proposals and feedback | Full model-context obligations, independent signatures, external crash-point matrix and context-corruption recovery |
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
@@ -23,7 +23,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P1 Experiment Composer | Named-account login, operator-only admission, approved oracle, account-specific CAS drafts and native Chromium end-to-end tests | Multi-project ownership and durable browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
-| P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, PostgreSQL-backed login throttling, signed sessions, durable per-account `local` project grants, immediately checked revocation, append-only grant audit, selectable pending rules | General project-scoped resources and workers, cross-tenant integration, SSO, independent identity verification and external review |
+| P4 Approval Console | Named local viewer/operator/reviewer accounts, signed sessions, per-account audited local grant, account-bound bearer revocation, browser role re-sync, independent reviewer approval, selectable rules | General project-scoped resources and workers, cross-tenant integration, SSO and independently verified identities |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-account drafts, model uncertainty, worker and queue gauges, fixed operator-facing backlog diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
@@ -207,6 +207,37 @@ independent production-host security review, higher per-module coverage and
 external-target research validation remain unverified. No CI system can
 guarantee discovery of every defect or vulnerability.
 
+
+## A3/P4 account-bound tool authority and live UI role synchronization (21 November 2026)
+
+Account revision **5** attaches the account UUID and fixed `local` project
+to each newly issued named-account capability. The capability broker rechecks
+the issuing operator's active account and current membership using PostgreSQL
+row locks **before** locking/debiting the capability; the lock order matches
+role revocation and avoids cap/account deadlocks. Account disablement, logout,
+password reset, project revocation and downgrade permanently revoke tokens.
+Switching an old local/private bearer into account mode (or vice versa) is
+rejected. HTTP and concurrency regressions exercise the actual capability-only
+endpoint, including previously issued tokens after a re-grant.
+
+React polls the authoritative role and removes obsolete operator controls or
+clears state after a revoked grant. Chromium exercises a real CLI downgrade
+and membership removal against the PostgreSQL-backed API. The sidebar's
+previous `Later` placeholders are replaced with links to existing timeline
+and agent planning panels, only when those panels are available.
+
+Python CI now runs **Vulture** at 100% confidence after Ruff and before pytest;
+TypeScript's strict unused-symbol checks remain enabled. High-confidence
+static analysis can miss dynamic/indirect dead code, so neither tool
+demonstrates a mathematically dead-code-free repository. Changes should not
+add dormant scaffolding, unused helpers, fake UI controls or unverified
+production claims. No Docker dependency was introduced.
+
+**Outstanding:** capability execution remains limited to the shipped
+single-project synthetic fixture. Authoritative multi-project resource
+ownership, per-project worker fairness, genuine external target repro,
+independently adjudicated held-out AI experiments and real failover trials
+are still incomplete.
 
 ## P4 single-project role grants and B2 live claimant suspension (21 November 2026)
 
