@@ -554,3 +554,47 @@ its worker lease after restart. That crash drill refuses execution outside
 GitHub Actions or on a non-`clashbolt_test` database. It validates only
 local primary recovery, not HA failover, replication, or external restore
 SLAs. No Docker or network-supplied target is involved.
+
+
+## Multiple isolated project workspaces (named accounts)
+
+Schema revision **6** adds the `project_workspace` registry and projects'
+independent PostgreSQL schemas. The original `local` project still uses
+`public`, so existing named-account installations retain their local runs,
+approval histories, and drafts. Every additional project is provisioned
+**only from the trusted local CLI**; never accept project identifiers as
+SQL schema names or arbitrary target URLs:
+
+```sh
+python -m clashbolt.accounts migrate
+python -m clashbolt.accounts create-project scenario-a
+python -m clashbolt.accounts grant-project alice.operator operator --project scenario-a
+python -m clashbolt.accounts grant-project alice.reviewer reviewer --project scenario-a
+python -m clashbolt.accounts revoke-project alice.operator --project scenario-a
+```
+
+Account names in the commands must already exist and have compatible global
+role ceilings. No HTTP user signup or project creation is supported.
+`GET /api/auth/projects` lists only the authenticated account's current
+grants. `POST /api/auth/select-project` accepts a typed `project_id`,
+requires a live grant, and stores only the selector in an HttpOnly cookie;
+it does not grant authority. Every resource read/write, independent
+review, agent plan, tool debit, and verification job uses the chosen
+server-side schema. The React project selector clears old evidence and
+reloads the target workspace. Workers in account mode rotate through
+the trusted registry and process each project's durable run and
+verification queues independently.
+
+Deleting a member grant or disabling the account revokes their
+previously issued capabilities in all affected project schemas.
+Copied cookies and tokens cannot access another project's rows.
+The global account role is the upper bound: reviewers cannot operate
+and operators cannot approve their own rules.
+
+**Boundary:** PostgreSQL schema segregation provides a query namespace,
+not separate database clusters, Unix security identities, or a hard
+isolation boundary against a compromised database administrator.
+All projects currently use only the fixed, allowlisted synthetic
+inventory target. Global resource reservation, independent project
+backups, network segmentation and external-target instrumentation
+still need separate security and recovery validation.
