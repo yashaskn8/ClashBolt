@@ -23,7 +23,8 @@ from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
 KDF_ITERATIONS = 450_000
-ACCOUNT_SCHEMA_VERSION = 2
+ACCOUNT_SCHEMA_VERSION = 3
+LOGIN_ATTEMPTS_PER_MINUTE = 20
 
 _ACCOUNT_SCHEMA = (
     """
@@ -49,6 +50,13 @@ _ACCOUNT_SCHEMA = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS account_login_throttle (
+        peer TEXT PRIMARY KEY,
+        window_started TIMESTAMPTZ NOT NULL,
+        attempts INTEGER NOT NULL CHECK (attempts BETWEEN 1 AND 21)
+    )
+    """,
 )
 
 
@@ -71,6 +79,39 @@ class AccountStore(Policy):
             for statement in _ACCOUNT_SCHEMA:
                 conn.execute(statement)
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)
+
+    def reserve_login_attempt(self, peer: str) -> bool:
+        """Atomically bound password KDF work per direct local peer.
+
+        Do not use X-Forwarded-For here: only the trusted socket peer is
+        available until a separately audited reverse-proxy boundary exists.
+        The fixed one-minute window does not lock accounts or reset sessions.
+        """
+        if peer not in ("127.0.0.1", "::1", "testclient"):
+            return False
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO account_login_throttle(peer, window_started, attempts)
+                VALUES (%s, now(), 1)
+                ON CONFLICT (peer) DO UPDATE
+                SET attempts = CASE
+                        WHEN account_login_throttle.window_started <= now()
+                             - interval '1 minute'
+                        THEN 1
+                        ELSE LEAST(account_login_throttle.attempts + 1, 21)
+                    END,
+                    window_started = CASE
+                        WHEN account_login_throttle.window_started <= now()
+                             - interval '1 minute'
+                        THEN now()
+                        ELSE account_login_throttle.window_started
+                    END
+                RETURNING attempts
+                """,
+                (peer,),
+            ).fetchone()
+            return row["attempts"] <= LOGIN_ATTEMPTS_PER_MINUTE
 
     def get_account_draft(self, account_id: UUID) -> dict | None:
         with self.connect() as conn:
