@@ -184,6 +184,12 @@ _POLICY_SCHEMA = (
     BEFORE UPDATE OR DELETE ON agent_history FOR EACH ROW
     EXECUTE FUNCTION clashbolt_guard_agent_history()
     """,
+    "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS integrity_checked_at TIMESTAMPTZ",
+    """
+    CREATE INDEX IF NOT EXISTS agent_plan_integrity_sweep
+    ON agent_plan (integrity_checked_at, created_at, id)
+    WHERE state IN ('PROPOSED', 'IN_FLIGHT')
+    """,
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
     "ALTER TABLE agent_plan ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ",
     """
@@ -242,7 +248,7 @@ _POLICY_SCHEMA = (
 )
 
 
-POLICY_SCHEMA_VERSION = 8
+POLICY_SCHEMA_VERSION = 9
 
 
 class Policy(Ledger):
@@ -917,6 +923,63 @@ class Policy(Ledger):
                     "reason": "Stored agent plan differs from approved decision",
                 }
         return integrity, rows
+
+    def reconcile_corrupt_plans(self, limit: int = 20) -> int:
+        """Quarantine persistent agent context drift without any tool retry.
+
+        Inspect a rotating, age-limited set of active plans in deterministic
+        row-lock order. A corrupt or missing history becomes terminal UNKNOWN;
+        only a separately approved new plan can ever regain execution rights.
+        """
+        if not 1 <= limit <= 100:
+            raise ValueError("Invalid agent integrity sweep batch size")
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_plan
+                WHERE state IN ('PROPOSED', 'IN_FLIGHT')
+                  AND (
+                      integrity_checked_at IS NULL
+                      OR integrity_checked_at < now() - interval '30 seconds'
+                  )
+                ORDER BY integrity_checked_at NULLS FIRST, created_at, id
+                LIMIT %s FOR UPDATE SKIP LOCKED
+                """,
+                (limit,),
+            ).fetchall()
+            quarantined = 0
+            for planned in rows:
+                integrity, _ = self._validated_plan_history(conn, planned)
+                if integrity["status"] == "VERIFIED":
+                    conn.execute(
+                        """
+                        UPDATE agent_plan SET integrity_checked_at = now()
+                        WHERE id = %s
+                        """,
+                        (planned["id"],),
+                    )
+                    continue
+                reason = (
+                    "Agent decision history is "
+                    f"{integrity['status']}: {integrity['reason']}"
+                )
+                conn.execute(
+                    """
+                    UPDATE agent_plan
+                    SET state = 'UNKNOWN', integrity_checked_at = now(),
+                        result = %s
+                    WHERE id = %s
+                    """,
+                    (Jsonb({
+                        "verdict": "UNKNOWN",
+                        "evidence_sha256": None,
+                        "evidence_gap": reason,
+                        "quarantined": True,
+                    }), planned["id"]),
+                )
+                self._record_gap(conn, planned["id"], reason)
+                quarantined += 1
+            return quarantined
 
     def plan_history(self, plan_id: UUID) -> dict | None:
         with self.connect() as conn:
