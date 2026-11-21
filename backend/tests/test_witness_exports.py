@@ -10,8 +10,8 @@ import pytest
 from clashbolt.api import create_app
 from clashbolt.experiment import ORACLE_HASH
 from clashbolt.policy import Policy
-from clashbolt.worker import process_one
 from clashbolt.witness_bundle import verify_bundle
+from clashbolt.worker import process_one
 from fastapi.testclient import TestClient
 
 
