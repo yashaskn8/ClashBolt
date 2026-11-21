@@ -279,8 +279,11 @@ order-preserving subsets for reductions are accepted. The target can request
 no executable, host, role override or connection option. The private root
 exposes the runtime and designated target PostgreSQL socket. IP sockets are
 disabled. The service has no control or target-administrator credential.
-It also denies kernel tunable, module and control-group writes and real-time
-scheduling through dedicated systemd hardening directives.
+It also denies kernel module and control-group changes and real-time
+scheduling through dedicated systemd directives. The rejected
+`ProtectKernelTunables=yes` option exposed `/proc/1/environ` on the CI
+host; the stronger existing proc-less root restriction remains mandatory
+and is checked by the negative fixture preflight.
 
 Evidence: `test_target_service.py` covers the actual stdin/stdout handler,
 input bounds, rejection paths and absent-socket failure. The distinct host
