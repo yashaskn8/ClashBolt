@@ -611,7 +611,7 @@ export default function App() {
                       ))}
                     </select>
                   </>
-                )
+                )}
                 <label className="field-label" htmlFor="account-name">Account name</label>
                 <input
                   id="account-name" autoComplete="username"
