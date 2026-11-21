@@ -16,7 +16,7 @@ def named_accounts(monkeypatch):
     store = AccountStore(dsn)
     store.migrate()
     with store.connect() as conn:
-        conn.execute("TRUNCATE local_account CASCADE")
+        conn.execute("TRUNCATE account_login_throttle, local_account CASCADE")
     for username, role in (
         ("sample.viewer", "viewer"),
         ("sample.operator", "operator"),
