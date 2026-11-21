@@ -1,4 +1,6 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from uuid import UUID, uuid4
 
 import pytest
@@ -421,3 +423,78 @@ def test_issuer_role_and_credential_changes_revoke_live_bearers(
                 (UUID(cap["capability_id"]),),
             ).fetchone()
         assert row == {"revoked": True, "used_calls": 0}
+
+
+def test_named_capability_authorization_waits_for_revoking_account(
+    named_accounts,
+):
+    """A locked account can revoke a cap without a cap/account deadlock."""
+    with TestClient(create_app()) as client:
+        plan_id, cap = _issue_operator_capability(client)
+    with named_accounts.connect() as conn:
+        issuer = conn.execute(
+            "SELECT id FROM local_account WHERE username = 'sample.operator'"
+        ).fetchone()["id"]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with named_accounts.connect() as conn:
+            conn.execute(
+                "SELECT id FROM local_account WHERE id = %s FOR UPDATE",
+                (issuer,),
+            )
+            future = pool.submit(
+                named_accounts.authorize,
+                cap["token"], "racy", "overlap", UUID(plan_id),
+                accounts_mode=True,
+            )
+            with pytest.raises(FutureTimeout):
+                future.result(timeout=0.2)
+            conn.execute(
+                "DELETE FROM project_membership "
+                "WHERE account_id = %s AND project_id = 'local'",
+                (issuer,),
+            )
+            conn.execute(
+                "UPDATE tool_capability SET revoked = TRUE "
+                "WHERE issuer_account_id = %s",
+                (issuer,),
+            )
+        assert future.result(timeout=5) is False
+    with named_accounts.connect() as conn:
+        row = conn.execute(
+            "SELECT used_calls FROM tool_capability WHERE id = %s",
+            (UUID(cap["capability_id"]),),
+        ).fetchone()
+    assert row["used_calls"] == 0
+    assert named_accounts.get_plan(UUID(plan_id))["state"] == "PROPOSED"
+
+
+def test_legacy_tool_capability_is_not_accepted_in_named_account_mode(
+    named_accounts,
+):
+    proposal = named_accounts.propose("legacy-capability-no-named-issuer")
+    named_accounts.approve(UUID(proposal["id"]), ORACLE_HASH, "trusted-reviewer")
+    from clashbolt.planner import choose_plan
+
+    plan = named_accounts.record_plan(
+        UUID(proposal["id"]), choose_plan(strategy="semantic", variant="racy")
+    )
+    plan_id = UUID(plan["id"])
+    cap = named_accounts.issue(
+        UUID(proposal["id"]), "racy", "overlap", plan_id=plan_id,
+    )
+    with TestClient(create_app()) as client:
+        denied = client.post(
+            "/api/agent/tools/run",
+            json={
+                "variant": "racy", "schedule": "overlap",
+                "plan_id": str(plan_id),
+            },
+            headers={"Authorization": f"Bearer {cap['token']}"},
+        )
+        assert denied.status_code == 403
+    with named_accounts.connect() as conn:
+        used = conn.execute(
+            "SELECT used_calls FROM tool_capability WHERE id = %s",
+            (UUID(cap["capability_id"]),),
+        ).fetchone()["used_calls"]
+    assert used == 0
