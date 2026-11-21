@@ -310,3 +310,114 @@ def test_downgraded_reviewer_cannot_approve_with_existing_signed_session(
         assert named_accounts.grant_local_role("sample.reviewer", "reviewer")
         approved = client.post(approve_path, json=payload)
         assert approved.status_code == 200, approved.text
+
+
+def _issue_operator_capability(client: TestClient) -> tuple[str, dict]:
+    """A reviewer must approve before an operator can issue a scoped tool."""
+    _login(client, "operator")
+    proposal = client.post("/api/oracle/proposals", json={})
+    assert proposal.status_code == 201, proposal.text
+    proposal_id = proposal.json()["id"]
+
+    _login(client, "reviewer")
+    approved = client.post(
+        f"/api/oracle/proposals/{proposal_id}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "not-trusted-body"},
+    )
+    assert approved.status_code == 200, approved.text
+
+    _login(client, "operator")
+    plan = client.post("/api/agent/plans", json={
+        "proposal_id": proposal_id,
+        "strategy": "semantic", "variant": "racy", "seed": 0,
+    })
+    assert plan.status_code == 201, plan.text
+    plan_id = plan.json()["id"]
+    grant = client.post("/api/tool-capabilities", json={
+        "proposal_id": proposal_id,
+        "variant": "racy", "schedule": "overlap",
+        "max_calls": 1, "plan_id": plan_id,
+    })
+    assert grant.status_code == 201, grant.text
+    return plan_id, grant.json()
+
+
+def test_account_bound_tool_capability_tracks_issuer_and_refuses_revocation(
+    named_accounts,
+):
+    with TestClient(create_app()) as client:
+        plan_id, cap = _issue_operator_capability(client)
+        with named_accounts.connect() as conn:
+            row = conn.execute(
+                "SELECT issuer_account_id, issuer_project_id, revoked, used_calls "
+                "FROM tool_capability WHERE id = %s",
+                (UUID(cap["capability_id"]),),
+            ).fetchone()
+            account = conn.execute(
+                "SELECT id FROM local_account WHERE username = 'sample.operator'"
+            ).fetchone()
+        assert row["issuer_account_id"] == account["id"]
+        assert row["issuer_project_id"] == "local"
+        assert row["revoked"] is False
+
+        assert named_accounts.revoke_local_role("sample.operator")
+        assert named_accounts.grant_local_role("sample.operator", "operator")
+        request = {"variant": "racy", "schedule": "overlap", "plan_id": plan_id}
+        # The capability-only route deliberately skips cookie authentication,
+        # so *only* policy's live membership and persisted revocation protect it.
+        denied = client.post(
+            "/api/agent/tools/run", json=request,
+            headers={"Authorization": f"Bearer {cap['token']}"},
+        )
+        assert denied.status_code == 403, denied.text
+        with named_accounts.connect() as conn:
+            updated = conn.execute(
+                "SELECT revoked, used_calls FROM tool_capability WHERE id = %s",
+                (UUID(cap["capability_id"]),),
+            ).fetchone()
+        assert updated == {"revoked": True, "used_calls": 0}
+        assert named_accounts.get_plan(UUID(plan_id))["state"] == "PROPOSED"
+
+        # The regrant may authorize a *new* capability, not resurrect the old.
+        fresh = client.post("/api/tool-capabilities", json={
+            "proposal_id": named_accounts.get_plan(UUID(plan_id))["proposal_id"],
+            "variant": "racy", "schedule": "overlap",
+            "max_calls": 1, "plan_id": plan_id,
+        })
+        assert fresh.status_code == 201, fresh.text
+        completed = client.post(
+            "/api/agent/tools/run", json=request,
+            headers={"Authorization": f"Bearer {fresh.json()['token']}"},
+        )
+        assert completed.status_code == 200, completed.text
+        assert completed.json()["verdict"] == "FAIL"
+
+
+@pytest.mark.parametrize("change", ["downgrade", "disable", "reset", "logout"])
+def test_issuer_role_and_credential_changes_revoke_live_bearers(
+    named_accounts, change,
+):
+    with TestClient(create_app()) as client:
+        plan_id, cap = _issue_operator_capability(client)
+        if change == "downgrade":
+            assert named_accounts.grant_local_role("sample.operator", "viewer")
+        elif change == "disable":
+            assert named_accounts.disable_account("sample.operator")
+        elif change == "reset":
+            assert named_accounts.reset_password(
+                "sample.operator", "replacement-long-password-54321"
+            )
+        else:
+            assert client.post("/api/auth/logout").status_code == 200
+        denied = client.post(
+            "/api/agent/tools/run",
+            json={"variant": "racy", "schedule": "overlap", "plan_id": plan_id},
+            headers={"Authorization": f"Bearer {cap['token']}"},
+        )
+        assert denied.status_code == 403
+        with named_accounts.connect() as conn:
+            row = conn.execute(
+                "SELECT revoked, used_calls FROM tool_capability WHERE id = %s",
+                (UUID(cap["capability_id"]),),
+            ).fetchone()
+        assert row == {"revoked": True, "used_calls": 0}
