@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 async function signIn(page: Page, role: 'operator' | 'reviewer') {
@@ -32,6 +34,23 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
   const runs = await page.request.get('/api/runs')
   expect(runs.ok()).toBe(true)
   const runId = ((await runs.json()) as { runs: { run_id: string }[] }).runs[0].run_id
+
+  const [bundle] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export verifier bundle (ZIP)' }).click(),
+  ])
+  expect(bundle.suggestedFilename()).toBe(`clashbolt-witness-${runId}.zip`)
+  const actualSha = createHash('sha256')
+    .update(await readFile(await bundle.path())).digest('hex')
+  const exportsResponse = await page.request.get(`/api/runs/${runId}/exports`)
+  expect(exportsResponse.ok()).toBe(true)
+  const exported = await exportsResponse.json() as {
+    exports: { artifact_sha256: string; current: boolean }[]
+  }
+  expect(exported.exports).toHaveLength(1)
+  expect(exported.exports[0].current).toBe(true)
+  expect(exported.exports[0].artifact_sha256).toBe(actualSha)
+  await expect(page.getByLabel('Audited evidence export')).toContainText(actualSha)
 
   const queued = await page.request.post(`/api/runs/${runId}/verification-jobs`, {
     data: { kind: 'REPLAY' },
