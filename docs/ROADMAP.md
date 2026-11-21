@@ -222,6 +222,10 @@ guarantee discovery of every defect or vulnerability.
   cannot be swapped or escalated through a project grant. Tests exercise
   session revocation, read/write downgrades, grant ceilings, a foreign-project
   membership that cannot access local resources, and append-only audit.
+  The first strict CI run found a write-authorization check that accidentally
+  used the legacy account-wide role after the project role had been downgraded.
+  It has been corrected to check the live effective role, with separate
+  operator-write and reviewer-approval downgrade regressions.
 - B2 adds a POSIX SIGSTOP/SIGCONT test with a real claimant process that
   resumes after its lease expires and a replacement publishes a certified
   result; the old generation's receipt must be rejected without a duplicate
