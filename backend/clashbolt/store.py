@@ -427,6 +427,19 @@ class Ledger:
             verifications = conn.execute(
                 "SELECT status, count(*) AS count FROM verification_job GROUP BY status"
             ).fetchall()
+            # Base-only ledger installations have no policy schema. Keep the
+            # operational projection usable in both modes, never fabricate a
+            # role-sensitive agent finding from a corrupt decision record.
+            if conn.execute("SELECT to_regclass('agent_plan') AS name").fetchone()["name"]:
+                quarantined = conn.execute(
+                    """
+                    SELECT count(*) AS count FROM agent_plan
+                    WHERE state = 'UNKNOWN'
+                      AND result->>'quarantined' = 'true'
+                    """
+                ).fetchone()["count"]
+            else:
+                quarantined = 0
             native_slots = conn.execute(
                 """
                 SELECT count(*) AS occupied FROM experiment_run
@@ -486,6 +499,7 @@ class Ledger:
                     for row in workers
                 ],
                 "responsive_workers": sum(row["responsive"] for row in workers),
+                "quarantined_agent_plans": quarantined,
                 "native_slots_occupied": native_slots,
                 "native_slots_limit": quota["max_native_active"] if quota else 2,
                 "oldest_pending_seconds": max(0.0, float(pending_age or 0)),
