@@ -7,6 +7,7 @@ This does not claim a generalized delta-debugger or ungated reproduction.
 
 import hashlib
 import json
+from typing import Callable, ContextManager
 from uuid import uuid4
 
 from clashbolt.experiment import (
@@ -16,7 +17,7 @@ from clashbolt.experiment import (
     PostgresInventoryFixture,
     check_invariant,
 )
-from clashbolt.target_db import disposable_target
+from clashbolt.target_db import TargetLease, disposable_target
 from clashbolt.target_service import request_fixture, service_enabled
 from clashbolt.witness import validate_contract
 
@@ -46,7 +47,10 @@ def _trial(variant: str, schedule: str, gates: list[str], target_url: str | None
 
 
 def reduce_witness(
-    witness: dict, target_admin_url: str | None = None, control_url: str | None = None
+    witness: dict,
+    target_admin_url: str | None = None,
+    control_url: str | None = None,
+    target_factory: Callable[[], ContextManager[TargetLease]] | None = None,
 ) -> dict:
     invalid = validate_contract(witness)
     if invalid:
@@ -69,9 +73,11 @@ def reduce_witness(
                 break
             candidate = remaining[:index] + remaining[index + 1:]
             if backend == "native-postgresql":
-                with disposable_target(
-                    target_admin_url, control_url, uuid4()
-                ) as fresh:
+                target_context = (
+                    target_factory() if target_factory
+                    else disposable_target(target_admin_url, control_url, uuid4())
+                )
+                with target_context as fresh:
                     verdict = _trial(witness["variant"], witness["schedule"], candidate, fresh.url)
             else:
                 verdict = _trial(witness["variant"], witness["schedule"], candidate, None)
