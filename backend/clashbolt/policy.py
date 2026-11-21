@@ -1172,9 +1172,13 @@ class Policy(Ledger):
             if not plan:
                 return None
             status, entries = self._validated_plan_history(conn, plan)
+            obligation = conn.execute(
+                "SELECT * FROM agent_obligation WHERE plan_id = %s", (plan_id,)
+            ).fetchone()
             return {
                 "plan_id": str(plan_id),
                 "current_state": plan["state"],
+                "obligation": self._public_obligation(obligation),
                 "integrity": status,
                 "entries": [
                     {**row, "created_at": row["created_at"].isoformat()}
@@ -1190,10 +1194,14 @@ class Policy(Ledger):
             ).fetchone()
             if not row:
                 return None
+            obligation = conn.execute(
+                "SELECT * FROM agent_obligation WHERE plan_id = %s", (plan_id,)
+            ).fetchone()
             return {
                 **row,
                 "id": str(row["id"]),
                 "proposal_id": str(row["proposal_id"]),
+                "obligation": self._public_obligation(obligation),
             }
 
     @staticmethod
