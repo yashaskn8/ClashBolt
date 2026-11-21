@@ -22,7 +22,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P1 Experiment Composer | Named-account login, operator-only admission, approved oracle, account-specific CAS drafts and native Chromium end-to-end tests | Multi-project ownership and durable browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
-| P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, role-bound signed sessions, revoked-account enforcement, selectable pending rules; legacy independent reviewer token | Multi-project isolation, SSO, administrative identity verification and cross-tenant tests |
+| P4 Approval Console | Named local viewer/operator/reviewer accounts, password hashing/lockout, PostgreSQL-backed per-direct-peer login throttling, role-bound signed sessions, revoked-account enforcement, selectable pending rules; legacy independent reviewer token | Multi-project isolation, SSO, administrative identity verification and cross-tenant tests |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-account drafts, model uncertainty, worker and queue gauges, fixed operator-facing backlog diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
@@ -70,8 +70,20 @@ Hardening committed directly to `main`:
 Unresolved security/production gates: demonstrated independent host/process and
 deny-egress containment; independently verified target/control cluster identity;
 real multi-project authorization and tenant isolation; trusted external identity;
-bounded IP-level authentication throttling and proxy-hardening verification;
+proxy-aware client identity and multi-node login throttling (current limit is direct-peer only);
 dependency lockfiles, vulnerability scanning and software provenance; real
 worker crash/partition/failover tests; and external independent security review.
 The main branch is not currently protected. These issues remain open rather
 than being represented as completed or solved by the new unit tests.
+
+## Incremental authentication hardening (21 November 2026)
+
+- Account schema revision 3 adds a persisted PostgreSQL one-minute attempt
+  budget, enforced atomically per direct loopback peer **before** PBKDF2 work.
+  Excess requests return HTTP 429 with a fixed Retry-After hint.
+- Tests cover concurrent reservation, rollover, and denial of further password
+  verification work at the HTTP boundary. This mitigates local brute-force/CPU
+  abuse but is not a proxy-aware Internet-facing identity or abuse-prevention
+  service. Keep the existing loopback restriction in place.
+- Upgrade: run `python -m clashbolt.accounts migrate` before starting the
+  API in accounts mode. Its readiness check rejects incompatible schema versions.
