@@ -24,6 +24,10 @@ def operational_metrics(snapshot: dict) -> str:
             f'{int(snapshot["verifications"].get(state, 0))}'
         )
     lines.extend((
+        "# HELP clashbolt_quarantined_agent_plans Agent decisions quarantined as UNKNOWN",
+        "# TYPE clashbolt_quarantined_agent_plans gauge",
+        f'clashbolt_quarantined_agent_plans '
+        f'{int(snapshot.get("quarantined_agent_plans", 0))}',
         "# HELP clashbolt_responsive_workers Recently responding worker processes",
         "# TYPE clashbolt_responsive_workers gauge",
         f'clashbolt_responsive_workers {int(snapshot["responsive_workers"])}',
