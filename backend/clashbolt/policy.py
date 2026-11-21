@@ -1377,11 +1377,38 @@ class Policy(Ledger):
                 (status, Jsonb(receipt), plan_id),
             ).fetchone()
             if updated:
+                receipt_id = uuid4()
+                obligation = conn.execute(
+                    """
+                    UPDATE agent_obligation
+                    SET state = %s,
+                        receipt_id = CASE
+                            WHEN tool_request_id IS NOT NULL THEN %s
+                            ELSE NULL END
+                    WHERE plan_id = %s
+                    RETURNING question_id, tool_request_id, receipt_id
+                    """,
+                    (
+                        "UNKNOWN" if invalid else "FULFILLED",
+                        receipt_id, plan_id,
+                    ),
+                ).fetchone()
                 if invalid:
                     self._record_gap(conn, plan_id, invalid)
                 append_history(conn, plan_id, "RECEIPT", {
                     "state": status,
                     "receipt": receipt,
+                    "question_id": (
+                        str(obligation["question_id"]) if obligation else None
+                    ),
+                    "tool_request_id": (
+                        str(obligation["tool_request_id"])
+                        if obligation and obligation["tool_request_id"] else None
+                    ),
+                    "receipt_id": (
+                        str(obligation["receipt_id"])
+                        if obligation and obligation["receipt_id"] else None
+                    ),
                 })
             return updated is not None
 
