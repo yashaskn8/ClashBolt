@@ -21,6 +21,8 @@ test('real browser switches isolated projects without carrying stale rule or dra
   test.setTimeout(90_000)
   await page.goto('/')
   await signIn(page, 'operator')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('No current approved oracle for this project')
 
   await page.getByLabel('Implementation').selectOption('locked')
   await page.getByRole('button', { name: /Save experiment draft/ }).click()
@@ -48,6 +50,8 @@ test('real browser switches isolated projects without carrying stale rule or dra
 
   await signIn(page, 'operator')
   await enterProject(page, 'browser-workspace')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('No known blockers now; submission still rechecks')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
     timeout: 20_000,
