@@ -806,6 +806,27 @@ def create_app() -> FastAPI:
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
+    @app.post("/api/runs/{run_id}/exports", status_code=201)
+    def record_witness_export(
+        run_id: UUID, http_request: Request,
+        x_operator_token: str | None = Header(default=None),
+    ) -> dict:
+        require_operator(x_operator_token, http_request)
+        try:
+            record = require_ledger(http_request).record_bundle_export(run_id)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+        if record is None:
+            raise HTTPException(404, "Run not found in this project")
+        return {**record, "download_path": f"/api/runs/{run_id}/bundle"}
+
+    @app.get("/api/runs/{run_id}/exports")
+    def list_witness_exports(run_id: UUID, http_request: Request) -> dict:
+        record = require_ledger(http_request).bundle_exports(run_id)
+        if record is None:
+            raise HTTPException(404, "Run not found in this project")
+        return record
+
     @app.get("/api/runs/{run_id}/bundle")
     def download_witness_bundle(run_id: UUID, http_request: Request):
         current = require_ledger(http_request).get(run_id)
@@ -830,6 +851,7 @@ def create_app() -> FastAPI:
                     f'attachment; filename="clashbolt-witness-{run_id}.zip"'
                 ),
                 "Cache-Control": "no-store",
+                "X-Clashbolt-Artifact-Sha256": hashlib.sha256(data).hexdigest(),
             },
         )
 
