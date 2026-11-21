@@ -310,3 +310,34 @@ def test_native_admission_uses_safe_endpoint_without_admin_secret(
     )
     assert run["execution_backend"] == "native-postgresql"
     assert "password" not in safe_endpoint
+
+
+def test_runner_credential_and_database_privileges(cluster):
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    admin, control = cluster
+    private_admin = make_conninfo(
+        admin, sslpassword="admin-client-key-secret", application_name="provisioner",
+        options="-c statement_timeout=10000",
+    )
+    with disposable_target(private_admin, control, uuid4()) as first:
+        with disposable_target(admin, control, uuid4()) as other:
+            settings = conninfo_to_dict(first.url)
+            assert settings["user"] == first.role
+            assert not {"sslpassword", "application_name", "options"} & settings.keys()
+            assert settings["password"] not in repr(first)
+            with pytest.raises(psycopg.OperationalError, match="permission denied"):
+                psycopg.connect(make_conninfo(first.url, dbname=other.database))
+            with psycopg.connect(first.url, autocommit=True) as runner:
+                for statement in (
+                    "CREATE TEMP TABLE scratch(id int)",
+                    "CREATE TABLE public.scratch(id int)",
+                    "UPDATE inventory SET id = 2 WHERE id = 1",
+                    "DELETE FROM inventory",
+                ):
+                    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                        runner.execute(statement)
+                runner.execute("UPDATE inventory SET remaining = 0 WHERE id = 1")
+                with psycopg.connect(first.url):
+                    with pytest.raises(psycopg.OperationalError, match="too many connections"):
+                        psycopg.connect(first.url)

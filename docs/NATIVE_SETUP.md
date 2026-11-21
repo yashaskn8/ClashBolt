@@ -463,3 +463,13 @@ that responds after its reservation deadline is replaced by the deterministic
 fallback plan. A process crash may leave an ambiguous external model effect;
 it cannot be treated as a certified result or silently retried. The system
 does **not** reconcile the model provider's actual billing.
+
+### Disposable role permissions
+
+Use a dedicated, password-authenticated target cluster. Keep unrelated databases
+off it and restrict access to maintenance databases in pg_hba.conf. Public
+CONNECT grants on *other* databases are outside ClashBolt's per-run grants.
+The runner gets at most two sessions, read access to inventory, and update
+access to the two counters. Cluster setup requiring a client private key for
+the administrator must separately allow the disposable password-authenticated
+roles. The provisioner does not delegate the administrator's client key.

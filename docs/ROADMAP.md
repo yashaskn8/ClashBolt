@@ -1,13 +1,14 @@
 # ClashBolt TITAN-20 implementation status
 
 Source: **INTERLEAVE TITAN-20 Architecture** (3 November 2026), renamed ClashBolt.
+Status for all 20 rows is **partially implemented**. The middle column records implemented scope and the right column records missing work. Verification applies only to the evidence described below.
 All observed verdicts are limited to a shipped synthetic fixture. Partial is not complete.
 
 | Track | Implemented scope | Remaining for complete specification |
 | --- | --- | --- |
 | B1 Durable Experiment Ledger | Atomic admission, version-CAS drafts, atomic migrations, private native archive and verified disposable-cluster restore drill | Multi-node failover, external recovery objectives and schema rollback drills |
 | B2 Fenced Worker Claims | Generation-fenced run and verification claims, rejected stale receipts, worker heartbeats, 120 deterministic claim/expire/cancel/duplicate fault injections, one killed claimant subprocess/reclaim regression | Full worker/target process suspension and network-partition tests, database failover and target-effect readback |
-| B3 Disposable Target Isolation | Fresh per-run native PostgreSQL database and role, orphan cleanup, bounded child resources, hardened API/worker systemd templates | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
+| B3 Disposable Target Isolation | Connection-disabled creation from template0, per-run login with two sessions and column-limited writes, orphan cleanup, bounded child resources, hardened API/worker systemd templates | OS-user/process containment, deny-egress network policy, resource quotas and demonstrated teardown after unclean power loss |
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog | Instrumented general target, uncontrolled replay |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
@@ -92,3 +93,18 @@ than being represented as completed or solved by the new unit tests.
   service. Keep the existing loopback restriction in place.
 - Upgrade: run `python -m clashbolt.accounts migrate` before starting the
   API in accounts mode. Its readiness check rejects incompatible schema versions.
+
+## B3 native database isolation (21 November 2026)
+
+The provisioner creates the database closed to connections and the role with
+login disabled. It removes public database privileges before opening the
+database. Only after schema setup commits does it enable the disposable login.
+The runner DSN uses the actual connected endpoint and server-verification
+settings. Administrator client keys, passwords, passfile, and startup options
+are excluded. A runner can read inventory and update the two counters.
+
+Verified locally with two disposable PostgreSQL 16.2 clusters:
+`backend/tests/test_target_db.py` (11 passed). The regression uses two live
+roles and checks cross-database denial, temporary and permanent table denial,
+forbidden column updates, deletion, a third connection, and absence of admin
+options from the runner DSN. Host isolation and external validation remain open.

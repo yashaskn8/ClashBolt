@@ -8,7 +8,7 @@ A database boundary is not a process or network sandbox.
 import os
 import secrets
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from ipaddress import ip_address
 from uuid import UUID
 
@@ -61,7 +61,7 @@ def validate_target_cluster(target_admin_dsn: str, control_dsn: str) -> None:
 class TargetLease:
     database: str
     role: str
-    url: str
+    url: str = field(repr=False)
 
 
 
@@ -100,17 +100,19 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
     database_created = False
     try:
         admin.execute(
-            sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+            sql.SQL("CREATE ROLE {} NOLOGIN CONNECTION LIMIT 2 PASSWORD {}").format(
                 sql.Identifier(role), sql.Literal(password)
             )
         )
         role_created = True
         admin.execute(
-            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname))
+            sql.SQL("CREATE DATABASE {} TEMPLATE template0 ALLOW_CONNECTIONS false").format(
+                sql.Identifier(dbname)
+            )
         )
         database_created = True
         admin.execute(
-            sql.SQL("REVOKE CONNECT ON DATABASE {} FROM PUBLIC").format(
+            sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(
                 sql.Identifier(dbname)
             )
         )
@@ -119,9 +121,13 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
                 sql.Identifier(dbname), sql.Identifier(role)
             )
         )
+        admin.execute(
+            sql.SQL("ALTER DATABASE {} ALLOW_CONNECTIONS true").format(sql.Identifier(dbname))
+        )
         with psycopg.connect(
             make_conninfo(target_admin_dsn, dbname=dbname), connect_timeout=5
         ) as setup:
+            setup.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             setup.execute(
                 """
                 CREATE TABLE inventory(
@@ -138,13 +144,27 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
                 sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(sql.Identifier(role))
             )
             setup.execute(
-                sql.SQL("GRANT SELECT, UPDATE ON inventory TO {}").format(
-                    sql.Identifier(role)
-                )
+                sql.SQL(
+                    "GRANT SELECT, UPDATE (remaining, confirmed_count) ON inventory TO {}"
+                ).format(sql.Identifier(role))
             )
+        # Build a new credential from the connected endpoint. Administrator
+        # options such as sslkey, sslpassword, passfile and options stay private.
+        parameters = admin.info.get_parameters()
+        transport = {
+            key: parameters[key]
+            for key in (
+                "sslmode", "sslrootcert", "ssl_min_protocol_version",
+                "ssl_max_protocol_version", "channel_binding", "gssencmode",
+                "require_auth", "sslcrl", "sslcrldir",
+            )
+            if key in parameters
+        }
         url = make_conninfo(
-            target_admin_dsn, dbname=dbname, user=role, password=password
+            host=admin.info.host, hostaddr=admin.info.hostaddr, port=admin.info.port,
+            dbname=dbname, user=role, password=password, **transport,
         )
+        admin.execute(sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(role)))
         yield TargetLease(database=dbname, role=role, url=url)
     finally:
         try:
