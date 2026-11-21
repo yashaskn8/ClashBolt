@@ -278,8 +278,8 @@ def create_app() -> FastAPI:
             )
             permitted = (
                 path == "/api/auth/logout"
-                or (reviewing and identity["role"] == "reviewer")
-                or (not reviewing and identity["role"] == "operator")
+                or (reviewing and effective_role == "reviewer")
+                or (not reviewing and effective_role == "operator")
             )
             if not permitted:
                 return JSONResponse(
@@ -402,7 +402,7 @@ def create_app() -> FastAPI:
                         """
                     ).fetchone()["n"]
                     if active == 0:
-                        raise HTTPException(503, "No active local-project grants are configured")
+                        raise HTTPException(503, "No active local-project account grants are configured")
         except DatabaseError as error:
             raise HTTPException(503, "Control database is unavailable") from error
         if require_worker:
