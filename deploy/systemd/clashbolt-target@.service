@@ -22,10 +22,6 @@ RestrictAddressFamilies=AF_UNIX
 PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=yes
-# Keep /proc inaccessible. ProtectKernelTunables remounted it on the CI host.
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictRealtime=yes
 InaccessiblePaths=-/proc -/sys
 RestrictNamespaces=yes
 RestrictSUIDSGID=yes
