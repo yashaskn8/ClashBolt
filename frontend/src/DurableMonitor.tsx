@@ -57,7 +57,12 @@ export default function DurableMonitor({
 }: Props) {
   const [events, setEvents] = useState<Event[]>([])
   const [error, setError] = useState('')
+  const [exportDigest, setExportDigest] = useState<string | null>(null)
   const runId = initial.run_id
+
+  useEffect(() => {
+    setExportDigest(null)
+  }, [runId, initial.version])
 
   useEffect(() => {
     let mounted = true
@@ -136,19 +141,47 @@ export default function DurableMonitor({
   }
 
   async function exportBundle() {
-    if (!initial.witness || initial.status !== 'COMPLETE') return
+    if (!initial.witness || initial.status !== 'COMPLETE' || !canOperate) return
+    setError('')
+    setExportDigest(null)
     try {
+      const recorded = await fetch(`/api/runs/${runId}/exports`, {
+        method: 'POST',
+        headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
+      })
+      if (!recorded.ok) throw new Error('Export record was rejected')
+      const audit = (await recorded.json()) as {
+        run_version: number
+        artifact_sha256: string
+        artifact_bytes: number
+      }
+      if (audit.run_version !== initial.version) {
+        throw new Error('The run changed during export')
+      }
       const response = await fetch(`/api/runs/${runId}/bundle`)
       if (!response.ok) throw new Error('Bundle export rejected')
       const blob = await response.blob()
+      const bytes = await blob.arrayBuffer()
+      const digest = Array.from(
+        new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+        (byte) => byte.toString(16).padStart(2, '0'),
+      ).join('')
+      if (
+        digest !== audit.artifact_sha256 ||
+        blob.size !== audit.artifact_bytes ||
+        response.headers.get('X-Clashbolt-Artifact-Sha256') !== digest
+      ) {
+        throw new Error('Downloaded artifact differs from immutable export record')
+      }
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
       link.download = `clashbolt-witness-${runId}.zip`
       link.click()
       URL.revokeObjectURL(url)
+      setExportDigest(digest)
     } catch {
-      setError('Portable witness package could not be exported.')
+      setError('Portable evidence export could not be verified or completed.')
     }
   }
 
@@ -204,11 +237,16 @@ export default function DurableMonitor({
         <button
           type="button" className="secondary-button"
           onClick={() => void exportBundle()}
-          disabled={!initial.witness || initial.status !== 'COMPLETE'}
+          disabled={!canOperate || !initial.witness || initial.status !== 'COMPLETE'}
         >
           Export verifier bundle (ZIP)
         </button>
       </div>
+      {exportDigest && (
+        <p className="help-text" aria-label="Audited evidence export">
+          Verified synthetic ZIP SHA256: {exportDigest}
+        </p>
+      )}
       {error && <p className="error" role="alert">{error}</p>}
       <ol className="transition-list">
         {events.map((event) => (
