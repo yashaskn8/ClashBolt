@@ -24,7 +24,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   color: #657890; margin: 9px 0 49px;
 }
 .navigation { display: grid; gap: 9px; font-size: 13px; }
-.navigation span { padding: 13px; border-radius: 8px; }
+.navigation span, .navigation a { padding: 13px; border-radius: 8px; }
+.nav-link { color: #c4d6e9; text-decoration: none; border: 1px solid transparent; }
+.nav-link:hover, .nav-link:focus-visible { color: #d2fa75; border-color: #354c30; background: #1e3028; }
 .nav-active { background: #1e3028; color: #d2fa75; font-weight: 700; border: 1px solid #354c30; }
 .nav-disabled { color: #74849b; display: flex; justify-content: space-between; }
 .nav-disabled em { font: 10px ui-monospace, monospace; color: #536278; }
