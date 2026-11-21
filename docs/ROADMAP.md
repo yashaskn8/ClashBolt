@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, host-wide and project-native claim caps, queue age/start P95, bounded three-project drain, and three-generation fail-closed run retry ceiling with duplicate-admission storm tests | Sustained external fair-load and retry-storm benchmarks, measured CPU/provider cost, host-wide resource benchmarks and distributed recovery |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, host-wide and project-native claim caps, queue age/start P95, bounded three-project drain, three-generation run retry ceiling, deadlock-resilient worker scheduling, and fail-closed expired-verifier read state | Sustained external fair-load and retry-storm benchmarks, measured CPU/provider cost, host-wide resource benchmarks and distributed recovery |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
@@ -173,6 +173,28 @@ synthetic fixture policy, not a proven production retry optimum; this work
 does not measure high-volume real retry storms, rate-limit HTTP clients,
 bound independent host CPU consumption or prove distributed exactly-once
 effects.
+
+## B7 transient PostgreSQL deadlocks and expired verifier reads (21 November 2026)
+
+The strict Chromium regression exposed a transient PostgreSQL deadlock between
+an active multi-project worker's host-wide capacity scan and concurrent
+database activity. The worker previously exited, leaving a queued browser run
+PENDING. Its continuous scheduler now catches only PostgreSQL
+`DeadlockDetected`, backs off for the configured polling interval and retries
+on a fresh transaction. Three consecutive deadlocked cycles cause an
+explicit failure, as does any deadlock during `--once`, rather than
+silently hiding persistent database trouble. The scheduler never fabricates a
+success receipt or bypasses existing lease and evidence fencing. Unit tests
+inject transient and repeated deadlocks; the full account-mode Chromium
+workflow is a mandatory regression.
+
+The verification job's read-only GET now projects an expired RUNNING lease
+as `UNKNOWN` / `UNCONFIRMED` before the next worker claim reconciles the
+durable row. The worker still performs that atomic reconciliation; reading a
+job does not mutate its audit. PostgreSQL tests cover stale receipt rejection,
+pre-reconciliation visibility and subsequent persistent UNKNOWN. This is
+bounded synthetic control-plane recovery, not a guarantee against distributed
+deadlocks, independent database failures or external side effects.
 
 ## B7 project-native admission and bounded fair-load regression (21 November 2026)
 
