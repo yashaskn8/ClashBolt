@@ -246,3 +246,42 @@ def test_readiness_fails_without_any_effective_local_grant(named_accounts):
         assert "grant" in readiness.json()["detail"]
         assert named_accounts.grant_local_role("sample.viewer", "viewer")
         assert client.get("/api/ready").status_code == 200
+
+
+def test_foreign_project_run_references_are_not_visible_through_local_api(
+    named_accounts,
+):
+    foreign_id = uuid4()
+    with named_accounts.connect() as conn:
+        conn.execute(
+            "INSERT INTO project_quota(project_id) VALUES ('foreign') "
+            "ON CONFLICT DO NOTHING"
+        )
+        conn.execute(
+            """
+            INSERT INTO experiment_run(
+                id, project_id, client_key, request_hash, variant, schedule,
+                oracle_hash, step_budget
+            ) VALUES (%s, 'foreign', %s, %s, 'locked', 'serial', %s, 4)
+            """,
+            (foreign_id, str(uuid4()), str(uuid4()), ORACLE_HASH),
+        )
+    with TestClient(create_app()) as client:
+        _login(client, "operator")
+        assert all(
+            row["run_id"] != str(foreign_id)
+            for row in client.get("/api/runs").json()["runs"]
+        )
+        for path in (
+            f"/api/runs/{foreign_id}",
+            f"/api/runs/{foreign_id}/events",
+            f"/api/runs/{foreign_id}/bundle",
+            f"/api/runs/{foreign_id}/reduction",
+        ):
+            assert client.get(path).status_code == 404
+        assert client.post(f"/api/runs/{foreign_id}/cancel").status_code == 404
+    with named_accounts.connect() as conn:
+        status = conn.execute(
+            "SELECT status FROM experiment_run WHERE id = %s", (foreign_id,),
+        ).fetchone()["status"]
+    assert status == "PENDING"
