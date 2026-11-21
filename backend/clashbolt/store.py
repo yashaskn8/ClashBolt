@@ -22,7 +22,7 @@ from clashbolt.witness import validate_contract
 SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
-BASE_SCHEMA_VERSION = 7
+BASE_SCHEMA_VERSION = 8
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
 _SCHEMA = (
@@ -175,6 +175,32 @@ _SCHEMA = (
     """
     CREATE INDEX IF NOT EXISTS verification_target_cleanup_idx
     ON verification_target_instance (status, updated_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS witness_export (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES experiment_run(id),
+        run_version BIGINT NOT NULL,
+        evidence_sha256 TEXT NOT NULL CHECK(length(evidence_sha256) = 64),
+        artifact_sha256 TEXT NOT NULL CHECK(length(artifact_sha256) = 64),
+        artifact_bytes INTEGER NOT NULL CHECK(artifact_bytes BETWEEN 1 AND 1000000),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE(run_id, run_version)
+    )
+    """,
+    """
+    CREATE OR REPLACE FUNCTION clashbolt_guard_witness_export()
+    RETURNS TRIGGER LANGUAGE plpgsql AS $export_guard$
+    BEGIN
+        RAISE EXCEPTION 'Witness export audit is append-only';
+    END
+    $export_guard$
+    """,
+    "DROP TRIGGER IF EXISTS clashbolt_witness_export_immutable ON witness_export",
+    """
+    CREATE TRIGGER clashbolt_witness_export_immutable
+    BEFORE UPDATE OR DELETE ON witness_export FOR EACH ROW
+    EXECUTE FUNCTION clashbolt_guard_witness_export()
     """,
     """
     CREATE TABLE IF NOT EXISTS worker_heartbeat (
