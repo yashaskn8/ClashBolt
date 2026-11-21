@@ -12,7 +12,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | B4 Bounded Schedule Controller | Controlled two-client gate orders, watchdog, independent fixed native two-client ungated sampler with fresh disposable target per trial | Instrumented general targets and independently reproduced uncontrolled application failures |
 | B5 Independent Invariant Oracle | Independently reconstructed history, approved version bound to durable admission/commit, revocation withdraws verdicts | Identity-verified human reviewers, general rules and re-evaluation of real findings |
 | B6 Minimal Witness Reproducer | Data-only hashed ZIP and clean fixture verifier, version-bound minimization, credential-isolated worker replay/reduction jobs | General-purpose minimization and externally proven cold-machine application reproduction |
-| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/first-start P95, real PostgreSQL concurrent admission/queue-drain regression | Real CPU/provider cost, multi-project fair scheduling, sustained load-tested SLOs and retry storms |
+| B7 Budgeted Admission and Recovery | Transactional quota/gate budget, model-call reservations, native claim slots, oldest queue age/start P95, real PostgreSQL concurrent admission, rotating project queue selection | Global multi-project resource caps, sustained fair-load trials, real provider CPU/token cost and retry storms |
 | A1 Invariant Workshop | Strict fixed-template rule candidates with source reference, rationale, hash-bound PASS/FAIL/UNKNOWN test vectors and reviewer gate | Model generation of new independently grounded rules and mutation suites |
 | A2 Test Planner | Deterministic and validated local-model schedules, bounded typed plans, atomic local model request reservation and fallback | Novel target planning, end-to-end CPU/provider cost and held-out model evaluation |
 | A3 Capability Tool Broker | Hashed short-lived tokens, bounded typed plans, oracle-first revocation fencing, account+local-project issuer binding, live grant checks, permanent token revocation on role/credential change, race tests and single-action audit | General project-specific capability partitioning, external fault testing, and multitenant limits |
@@ -20,12 +20,49 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A5 Agent Decision Record | Typed plans, bounded model/tool deadlines, UNKNOWN recovery without budget refunds, hash-chained history, bounded worker-integrity sweeps with durable quarantine, no feedback from corrupt context | Full context/schema obligations, independently authenticated signatures, external crash-point matrix and recovery validation |
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
-| P1 Experiment Composer | Named-account login, operator-only admission, approved oracle, account-specific CAS drafts and native Chromium end-to-end tests | Multi-project ownership and durable browser fault matrix |
+| P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression | Real general-target contracts, cost preview and wider browser fault matrix |
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON/ZIP evidence, independent checker, worker-queued native replay/reduction, version-fenced reports and revocation | Externally supported target reproduction and independent adjudication UI |
-| P4 Approval Console | Named local viewer/operator/reviewer accounts, signed sessions, per-account audited local grant, account-bound bearer revocation, browser role re-sync, independent reviewer approval, selectable rules | General project-scoped resources and workers, cross-tenant integration, SSO and independently verified identities |
-| P5 Live Run Operations | Cancellation, SSE reconnect, per-account drafts, model uncertainty, worker and queue gauges, fixed operator-facing backlog diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
+| P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
+| P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P4 multi-project storage and transaction authorization (21 November 2026)
+
+Account schema **6** adds the trusted `project_workspace` registry, a
+per-account/per-project draft key, and audited independent project grants.
+New projects are created by the trusted local CLI with transactionally
+provisioned PostgreSQL resource schemas; the original `local` project
+continues using `public` for backward compatibility. Policy schema **10**
+provisions issuer binding fields in every project. API request dispatch
+looks up the stored schema; neither a cookie nor model output can choose
+an arbitrary schema. Reviewer approval, experiment admission, agent plans,
+capability issuance, verification jobs, run history and metrics resolve
+only inside the selected project.
+
+A typed `/api/auth/select-project` action updates an HttpOnly project
+selector after checking current membership; the React workspace resets
+stale evidence on switch. The native worker rotates its starting project,
+follows the same server-side registry, and drains each project's bounded
+durable queues. Chromium exercises reviewer/operator project switching,
+draft recovery, private run history and the actual tenant worker.
+
+After a middleware permission check, each user-scoped database connection
+**rechecks and row-locks** the live account and grant for the transaction.
+Concurrent project revocation thus serializes with writes, rather than
+permitting a stale middleware decision to create new resources. Per-account
+draft read/write transactions enforce the same boundary. The one capability
+tool endpoint does not need a browser session but checks its issuing account
+and exact project independently at the broker, with permanent revocation
+on role/credential changes.
+
+**Scope boundary:** PostgreSQL schema namespaces and application locking
+do not protect against a compromised database superuser, do not supply
+independent per-tenant OS sandboxes or target behavior, and do not certify
+independent external real-application reproduction. The worker rotates
+projects but global cross-project native-resource limits, measured fair
+load tests and multi-node failover are still outstanding. The 20-track
+PDF is **not complete** merely because this release gate passes.
 
 ## Dependency-ordered next gates
 
