@@ -26,6 +26,18 @@ def test_data_only_bundle_replays_in_a_new_python_process(tmp_path):
         }
 
 
+def test_bundle_bytes_and_zip_metadata_are_deterministic():
+    witness = asyncio.run(execute("racy", "overlap"))
+    first = create_bundle(witness)
+    second = create_bundle(witness)
+    assert first == second
+    with zipfile.ZipFile(io.BytesIO(first)) as archive:
+        for entry in archive.infolist():
+            assert entry.date_time == (1980, 1, 1, 0, 0, 0)
+            assert entry.compress_type == zipfile.ZIP_STORED
+            assert entry.file_size <= 100_000
+
+
 def test_tampered_or_conflicting_archives_are_invalid():
     original = create_bundle(asyncio.run(execute("racy", "overlap")))
     archive = io.BytesIO()
