@@ -1,9 +1,9 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
+from uuid import UUID
 
 import psycopg
 import pytest
-from uuid import UUID
 from clashbolt.accounts import (
     LOGIN_ATTEMPTS_PER_MINUTE,
     AccountStore,
