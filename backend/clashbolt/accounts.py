@@ -24,7 +24,7 @@ from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
 KDF_ITERATIONS = 450_000
-ACCOUNT_SCHEMA_VERSION = 4
+ACCOUNT_SCHEMA_VERSION = 5
 LOGIN_ATTEMPTS_PER_MINUTE = 20
 
 _ACCOUNT_SCHEMA = (
@@ -50,6 +50,14 @@ _ACCOUNT_SCHEMA = (
         draft JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+    """,
+    """
+    ALTER TABLE tool_capability
+    ADD COLUMN IF NOT EXISTS issuer_account_id UUID REFERENCES local_account(id)
+    """,
+    """
+    ALTER TABLE tool_capability
+    ADD COLUMN IF NOT EXISTS issuer_project_id TEXT REFERENCES project_quota(project_id)
     """,
     """
     CREATE TABLE IF NOT EXISTS account_login_throttle (
@@ -213,6 +221,16 @@ class AccountStore(Policy):
             ).fetchone()
             if previous and previous["role"] == role:
                 return True
+            if previous and previous["role"] == "operator":
+                # A downgraded operator cannot keep a previously issued
+                # bearer token and regain it after a later re-grant.
+                conn.execute(
+                    """
+                    UPDATE tool_capability SET revoked = TRUE
+                    WHERE issuer_account_id = %s AND issuer_project_id = 'local'
+                    """,
+                    (account["id"],),
+                )
             conn.execute(
                 """
                 INSERT INTO project_membership(project_id, account_id, role)
@@ -255,6 +273,13 @@ class AccountStore(Policy):
             ).fetchone()
             if not previous:
                 return False
+            conn.execute(
+                """
+                UPDATE tool_capability SET revoked = TRUE
+                WHERE issuer_account_id = %s AND issuer_project_id = 'local'
+                """,
+                (account["id"],),
+            )
             conn.execute(
                 """
                 INSERT INTO project_role_audit(
@@ -412,7 +437,7 @@ class AccountStore(Policy):
             }
 
     def revoke_sessions(self, account_id: UUID) -> bool:
-        """Logging out revokes all sessions, including any copied cookies."""
+        """Logout revokes copied cookies and issued account-bound tool tokens."""
         with self.connect() as conn:
             result = conn.execute(
                 """
@@ -422,6 +447,12 @@ class AccountStore(Policy):
                 """,
                 (account_id,),
             ).fetchone()
+            if result:
+                conn.execute(
+                    "UPDATE tool_capability SET revoked = TRUE "
+                    "WHERE issuer_account_id = %s",
+                    (account_id,),
+                )
             return bool(result)
 
     def disable_account(self, username: str) -> bool:
@@ -434,6 +465,12 @@ class AccountStore(Policy):
                 """,
                 (username,),
             ).fetchone()
+            if result:
+                conn.execute(
+                    "UPDATE tool_capability SET revoked = TRUE "
+                    "WHERE issuer_account_id = %s",
+                    (result["id"],),
+                )
             return bool(result)
 
     def reset_password(self, username: str, password: str) -> bool:
@@ -451,6 +488,12 @@ class AccountStore(Policy):
                 """,
                 (salt, digest, username),
             ).fetchone()
+            if result:
+                conn.execute(
+                    "UPDATE tool_capability SET revoked = TRUE "
+                    "WHERE issuer_account_id = %s",
+                    (result["id"],),
+                )
             return bool(result)
 
 
