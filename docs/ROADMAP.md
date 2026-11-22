@@ -21,11 +21,30 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
 | P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression, read-only project quota/approval/resource preview | Real general-target contracts, measured CPU/provider cost estimates and wider browser fault matrix |
-| P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing and lost-SSE Chromium tests | Sustained disconnects, multi-worker browser chaos and long-run tests |
+| P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing, lost-SSE Chromium tests, single-flight poll/SSE coalescing, abort-on-unmount cleanup and bounded transition-burst browser coverage | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON evidence, deterministic ZIP bundle, immutable run-version/export SHA256 journal, independent checker, worker-queued replay/reduction, version-fenced reports and revocation, named reviewer-only immutable synthetic evidence decisions and React review desk | Externally supported application reproduction, externally verified reviewer identity and portable independent adjudication |
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P2 single-flight timeline reconciliation (22 November 2026)
+
+The React durable run timeline now admits only one authoritative snapshot and
+cursor-paged history refresh at a time. Advisory SSE transitions and the
+three-second fallback polling tick coalesce into at most one queued follow-up
+refresh while a request is in flight. Each refresh uses an AbortController, and
+switching runs/unmounting aborts pending reads and prevents stale UI updates.
+The existing monotonically increasing run-version and event-prefix checks
+continue to reject older data, and failed network reads still surface an
+explicit refresh error rather than promoting unverified state.
+
+A real account-mode Chromium regression injects 25 rapid transition events
+against the fixture's completed run while delaying the authoritative snapshot.
+It checks that snapshot requests never overlap, a burst results in bounded
+refresh attempts, and the final COMPLETE status and PostgreSQL event history
+remain visible. This is **bounded client transport resilience** on the shipped
+synthetic fixture; sustained disconnection chaos, real multi-worker browser
+load and long-running deployments remain unverified.
 
 ## P3 deterministic artifact export audit (21 November 2026)
 
