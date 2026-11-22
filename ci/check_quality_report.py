@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 
 MIN_TEST_CASES = 278
 MIN_COMBINED_COVERAGE = 82.0
-MIN_BRANCH_ONLY_COVERAGE = 72.0
+MIN_BRANCH_ONLY_COVERAGE = 80.0
 EXPECTED_SKIPS = {
     ("test_target_host", "test_native_execution_and_verification_in_deployed_target"),
     ("test_target_host", "test_live_instances_have_distinct_uids_and_kernel_resource_limits"),
