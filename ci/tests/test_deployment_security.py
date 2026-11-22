@@ -59,7 +59,9 @@ def test_unsafe_native_entrypoints_and_socket_changes_block_ci(mutation):
     units = _units()
     target = "clashbolt-target@.service"
     if mutation == "remove_syscall_filter":
-        units[target] = units[target].replace("SystemCallFilter=~@debug @mount @privileged io_uring_setup", "")
+        units[target] = units[target].replace(
+            "SystemCallFilter=~@debug @mount @privileged io_uring_setup", ""
+        )
     elif mutation == "remove_socket_mount":
         units[target] = "\n".join(
             line for line in units[target].splitlines() if not line.startswith("BindReadOnlyPaths=")
