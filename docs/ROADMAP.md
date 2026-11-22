@@ -27,6 +27,29 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Static Python security and native host configuration drift gates (22 November 2026)
+
+The required dependency-security job also runs Bandit on shipped Python
+modules with medium-or-higher finding severity and confidence; a finding
+blocks release instead of being ignored. A separate local security-audit
+script reads the committed API, worker, target-instance and target-socket
+systemd units. It rejects missing or weakened UID, privilege, network,
+socket, syscall, resource and filesystem limits, including the target's
+two cumulative syscall filters and both required read-only mount
+boundaries. It scans production source, deployment units and workflows
+for high-confidence private-key and provider-token patterns without
+printing suspected credentials.
+
+The dedicated red-team test job actively mutates every mandated systemd
+setting, injects unsafe unit configurations and inserts synthetic secret
+patterns to prove that the audit fails. The CI policy itself enforces
+that neither Bandit nor the deployment-audit step nor its adversarial
+tests may be silently deleted. These are read-only local static and
+negative-path checks on the shipped fixture, **not** outside-system
+attacks, independent penetration-test findings, or a guarantee that every
+security defect is detected. The previously mandated runtime systemd
+native-host acceptance remains separate and cannot be skipped.
+
 ## Strict CI and bounded red-team security regressions (22 November 2026)
 
 The mandatory release workflow now requires **backend, frontend, browser,
