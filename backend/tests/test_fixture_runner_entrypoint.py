@@ -6,7 +6,6 @@ these tests inspect bounded argument and resource-limit branches directly.
 
 import json
 import os
-import resource
 import sys
 
 import pytest
@@ -15,6 +14,8 @@ from clashbolt import fixture_runner
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX resource limits only")
 def test_fixed_runner_limits_cap_unbounded_and_preexisting_smaller_limits(monkeypatch):
+    import resource
+
     current = {
         resource.RLIMIT_CPU: (2, 10),
         resource.RLIMIT_AS: (resource.RLIM_INFINITY, resource.RLIM_INFINITY),
