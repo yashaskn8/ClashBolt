@@ -107,9 +107,8 @@ def audit(workflow: str, playwright: str) -> None:
     gate = jobs["release-gate"]
     commands = "\n".join(str(x.get("run", "")) for x in gate["steps"])
     for item in ("BACKEND", "FRONTEND", "BROWSER", "SECURITY", "REDTEAM"):
-        if f'${{ needs.{item.lower() if item != "REDTEAM" else "redteam"}.result }}' not in str(
-            gate["steps"][0].get("env", {}).get(item, "")
-        ):
+        expected = "${{ needs." + item.lower() + ".result }}"
+        if expected not in str(gate["steps"][0].get("env", {}).get(item, "")):
             raise ValueError(f"Missing release dependency status: {item}")
     if 'if [[ "$result" != "success" ]]' not in commands:
         raise ValueError("Release gate must explicitly reject non-success results")
