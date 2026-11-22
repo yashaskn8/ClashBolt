@@ -70,7 +70,11 @@ def test_release_audit_blocks_malformed_or_sensitive_artifacts(tmp_path, problem
     elif problem in ("mismatched_code", "unsafe_tar_path"):
         with tarfile.open(source, "w:gz") as archive:
             for module in MODULES:
-                data = ("different" if problem == "mismatched_code" else "fixed source for " + module).encode()
+                text = (
+                    "different" if problem == "mismatched_code"
+                    else "fixed source for " + module
+                )
+                data = text.encode()
                 name = (
                     "../escape.py" if problem == "unsafe_tar_path" and module == MODULES[0]
                     else "clashbolt-0.2.0/backend/clashbolt/" + module
