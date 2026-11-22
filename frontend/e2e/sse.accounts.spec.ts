@@ -106,8 +106,61 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
   expect(peak).toBe(1)
   expect(requests).toBeLessThan(5)
   await expect(page.locator('.run-status')).toHaveText('COMPLETE')
-  await expect(page.locator('.transition-list li strong', {
+  const terminal = page.locator('.transition-list li strong', {
     hasText: 'COMPLETE',
-  })).toBeVisible()
+  })
+  await expect(terminal).toBeVisible()
+
+  // Deliberately corrupt authoritative pages after an intact prefix has
+  // already been accepted. Rehashing/cursor changes cannot rewrite history.
+  let corruption: 'prefix' | 'cursor' | 'none' = 'prefix'
+  let corruptedPages = 0
+  await page.route(
+    (url) => url.pathname === `/api/runs/${run.run_id}/events`,
+    async (route) => {
+      if (corruption === 'none') {
+        await route.continue()
+        return
+      }
+      const response = await route.fetch()
+      const original = (await response.json()) as {
+        events: { version: number; status: string }[]
+        next_after: number
+      }
+      const payload = corruption === 'prefix'
+        ? {
+            ...original,
+            events: original.events.map((event, index) =>
+              index === 0 ? { ...event, status: 'FORGED' } : event,
+            ),
+          }
+        : { ...original, next_after: original.next_after + 1 }
+      corruptedPages++
+      await route.fulfill({
+        response, contentType: 'application/json',
+        body: JSON.stringify(payload),
+      })
+    },
+  )
+  await notify()
+  await expect.poll(() => corruptedPages).toBeGreaterThan(0)
+  await expect(page.getByText(
+    'Cannot refresh the authoritative run snapshot.',
+  )).toBeVisible()
+  await expect(terminal).toBeVisible()
+  await expect(page.locator('.transition-list li strong', {
+    hasText: 'FORGED',
+  })).toHaveCount(0)
+
+  corruption = 'cursor'
+  await notify()
+  await expect.poll(() => corruptedPages).toBeGreaterThan(1)
+  await expect(terminal).toBeVisible()
+  corruption = 'none'
+  await notify()
+  await expect(page.getByText(
+    'Cannot refresh the authoritative run snapshot.',
+  )).toHaveCount(0, { timeout: 12_000 })
+  await expect(terminal).toBeVisible()
 })
 
