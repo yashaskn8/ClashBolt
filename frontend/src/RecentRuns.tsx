@@ -54,7 +54,7 @@ export default function RecentRuns({
       } catch {
         if (mounted) {
           // Never continue showing an index after authorization or DB loss.
-          setRuns([])
+          setRuns({ context: contextKey, entries: [] })
           setOperations(null)
           setError('Recent runs unavailable; check PostgreSQL and the API.')
         }
