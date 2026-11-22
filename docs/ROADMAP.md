@@ -36,10 +36,12 @@ semantics plus an AbortController to stop when the panel unmounts or its
 role/credential context changes. Run-index fetch rejection clears the
 previously selectable run list and operator gauges; a rejected or lost
 operator diagnostics response clears the prior gauge/alert snapshot and
-labels the state **unconfirmed**, never healthy. The parent remounts the
-panel on the full named account, selected project and effective role;
-a different account using the same project cannot inherit the previous
-operator's private diagnostics state.
+labels the state **unconfirmed**, never healthy. Each displayed run list
+and operator diagnostic snapshot is bound to the full named-account,
+selected-project and effective-role context. The client checks this
+binding during rendering, before asynchronous cleanup runs, so a new
+identity cannot inherit old operator data. The account-switch Chromium
+gate also checks that a role transition leaves only one panel.
 
 Account-mode Chromium regression tests cover denied operations refresh
 after an earlier successful alert, PostgreSQL run-index unavailability
