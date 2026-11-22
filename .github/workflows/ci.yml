@@ -32,7 +32,7 @@ jobs:
           echo 'CLASHBOLT_TEST_DATABASE_URL=postgresql://clashbolt:clashbolt@127.0.0.1:5432/clashbolt_test' >> "$GITHUB_ENV"
       - name: Start independent native target PostgreSQL cluster
         run: |
-          VERSION="$(ls /usr/lib/postgresql | sort -V | tail -1)"
+          VERSION="$(find /usr/lib/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
           sudo pg_createcluster "$VERSION" clashbolt_target -p 5433 --start
           sudo -u postgres psql -p 5433 -c "ALTER USER postgres PASSWORD 'ci-target-only'"
           echo 'CLASHBOLT_TEST_TARGET_ADMIN_URL=postgresql://postgres:ci-target-only@127.0.0.1:5433/postgres' >> "$GITHUB_ENV"
@@ -116,7 +116,7 @@ jobs:
           sudo service postgresql start
           sudo -u postgres psql -c "CREATE USER clashbolt WITH PASSWORD 'clashbolt'"
           sudo -u postgres psql -c "CREATE DATABASE clashbolt_browser OWNER clashbolt"
-          VERSION="$(ls /usr/lib/postgresql | sort -V | tail -1)"
+          VERSION="$(find /usr/lib/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -1)"
           sudo pg_createcluster "$VERSION" clashbolt_browser_target -p 5433 --start
           sudo -u postgres psql -p 5433 -c "ALTER USER postgres PASSWORD 'ci-target-only'"
           export CLASHBOLT_DATABASE_URL='postgresql://clashbolt:clashbolt@127.0.0.1:5432/clashbolt_browser'
@@ -140,10 +140,12 @@ jobs:
           store.grant_project_role('browser.reviewer', 'reviewer', 'browser-workspace')
           store.grant_project_role('browser.viewer', 'viewer', 'browser-workspace')
           PY
-          echo "CLASHBOLT_DATABASE_URL=$CLASHBOLT_DATABASE_URL" >> "$GITHUB_ENV"
-          echo "CLASHBOLT_ACCESS_MODE=$CLASHBOLT_ACCESS_MODE" >> "$GITHUB_ENV"
-          echo "CLASHBOLT_SESSION_SECRET=$CLASHBOLT_SESSION_SECRET" >> "$GITHUB_ENV"
-          echo "CLASHBOLT_TARGET_CLUSTER_URL=postgresql://127.0.0.1:5433/postgres" >> "$GITHUB_ENV"
+          {
+            echo "CLASHBOLT_DATABASE_URL=$CLASHBOLT_DATABASE_URL"
+            echo "CLASHBOLT_ACCESS_MODE=$CLASHBOLT_ACCESS_MODE"
+            echo "CLASHBOLT_SESSION_SECRET=$CLASHBOLT_SESSION_SECRET"
+            echo "CLASHBOLT_TARGET_CLUSTER_URL=postgresql://127.0.0.1:5433/postgres"
+          } >> "$GITHUB_ENV"
       - name: Start separate native worker
         run: |
           CLASHBOLT_TARGET_ADMIN_URL='postgresql://postgres:ci-target-only@127.0.0.1:5433/postgres' \
