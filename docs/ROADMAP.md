@@ -27,6 +27,45 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Strict CI and bounded red-team security regressions (22 November 2026)
+
+The mandatory release workflow now requires **backend, frontend, browser,
+dependency security, redteam, and the aggregate release-gate** to succeed on
+the exact commit. All Actions remain SHA-pinned; checkout does not retain
+credentials. Security checks audit installed Python dependencies and the npm
+lockfile. Playwright fails CI on focused tests and on flaky pass-on-retry
+tests; the account-mode Chromium, native host isolation, database crash
+recovery, and cross-project checks remain mandatory.
+
+A dedicated redteam job runs only local, shipped synthetic fixture tests. It
+deliberately mutates rehashed histories, malformed target requests and
+copies of workflow, JUnit and coverage reports. The policy verifier rejects
+missing jobs, unpinned Actions, widened permissions, conditional mandatory
+steps, masked errors, skipped pytest files, changed coverage thresholds and
+missing release dependencies. The report verifier rejects failed tests,
+unapproved skips, missing critical modules and coverage regressions. Only
+two systemd-only host cases may skip in the ordinary PostgreSQL test process;
+the native-host verification job still exercises that boundary on a
+disposable deployed host. No test exclusion or failure continuation is
+introduced to achieve a green workflow.
+
+The latest measured full-suite baseline before this gate was **83.09%
+combined statement-and-branch coverage** and **73.67% branch-only coverage**
+(278 passing backend tests, 2 expected skips). CI now enforces at least
+**82% combined**, **73.5% separately calculated branch-only** and explicit
+critical-module minimums, with the true coverage JSON and JUnit roster
+checked independently. The earlier proposed 80% branch-only requirement
+correctly **failed**; it was not an actual observed measurement. The
+target-service protocol and fixture entrypoint also gained targeted
+negative-path tests; backup failure tests distinguish pg_dump's credential
+environment from credential-free archive inspection.
+
+**Limitations:** deterministic mutation and synthetic negative tests are
+not outside-host penetration testing, external application red-teaming,
+a general exploit detector, production certification, or 100% branch
+coverage. Full TITAN-20 deliverables, independent security assessment and
+remaining uncovered branches are still outstanding.
+
 ## P2 single-flight timeline reconciliation (22 November 2026)
 
 The React durable run timeline now admits only one authoritative snapshot and
