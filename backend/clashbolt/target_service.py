@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from clashbolt.experiment import SCHEDULES, Schedule, Variant, execute, execute_postgres
 from clashbolt.fixture_runner import _apply_fixed_resource_limits
+from clashbolt.target_db import _local_address
 
 SOCKET_PATH = "/run/clashbolt-target.sock"
 MAX_REQUEST = 2048
@@ -53,8 +54,12 @@ def request_fixture(
         settings = conninfo_to_dict(target_url)
         match = re.fullmatch(r"cb_target_([a-f0-9]{32})", settings["dbname"])
         if (
-            not match or settings["user"] != "cb_runner_" + match[1]
+            not match or settings.get("user") != "cb_runner_" + match[1]
             or settings.get("port") != "5433"
+            or not _local_address(settings.get("host", ""))
+            or (settings.get("hostaddr") and not _local_address(settings["hostaddr"]))
+            or settings.get("service")
+            or not settings.get("password")
         ):
             raise ValueError("Target does not match the deployed fixture cluster")
         payload["login"] = {"instance": match[1], "password": settings["password"]}
