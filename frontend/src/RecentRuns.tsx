@@ -110,14 +110,14 @@ export default function RecentRuns({
         Select a PostgreSQL run after reloading the page or restarting the coordinator.
         This is a local-only workspace.
       </p>
-      {operations && (
+      {operatorReady && operations && (
         <p className="help-text">
           Live workers: {operations.responsive_workers} ·
           Pending runs: {operations.runs.PENDING ?? 0} ·
           Verification queue: {operations.verifications.PENDING ?? 0}
         </p>
       )}
-      {operations?.diagnostics?.alerts.map((alert) => (
+      {operatorReady && operations?.diagnostics?.alerts.map((alert) => (
         <p className="error" role="status" key={alert.code}>
           Operator check: {alert.message}
         </p>
