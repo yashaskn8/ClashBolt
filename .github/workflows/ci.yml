@@ -223,6 +223,7 @@ jobs:
         run: |
           python -m pytest -q --timeout=30 \
             ci/tests/test_gate_validation.py \
+            ci/tests/test_deployment_security.py \
             backend/tests/test_adversarial_fixture.py \
             backend/tests/test_target_service_boundaries.py \
             backend/tests/test_fixture_runner_entrypoint.py \
@@ -249,6 +250,10 @@ jobs:
           # The unpublished local editable ClashBolt distribution is not on PyPI.
           python -m pip freeze --exclude-editable > /tmp/clashbolt-pip-freeze.txt
           python -m pip_audit --strict --no-deps -r /tmp/clashbolt-pip-freeze.txt
+      - name: Reject medium-or-higher confidence Python security findings
+        run: bandit -r backend/clashbolt -ll -ii -q
+      - name: Reject weakened systemd isolation and committed production credentials
+        run: python ci/check_deployment_security.py
       - name: Audit frontend runtime and build dependencies
         working-directory: frontend
         run: |
