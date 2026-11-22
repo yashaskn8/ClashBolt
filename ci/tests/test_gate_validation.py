@@ -139,6 +139,22 @@ def _change(workflow, kind):
             if "ci/check-target-service.sh" in step.get("run", ""):
                 step["run"] = "echo native host check disabled"
                 break
+    elif kind in ("remove_bandit", "remove_deployment_audit"):
+        needle = (
+            "bandit -r backend/clashbolt"
+            if kind == "remove_bandit" else "ci/check_deployment_security.py"
+        )
+        for step in jobs["security"]["steps"]:
+            if needle in step.get("run", ""):
+                step["run"] = "echo security check removed"
+                break
+    elif kind == "remove_isolation_mutation_tests":
+        for step in jobs["redteam"]["steps"]:
+            if "ci/tests/test_deployment_security.py" in step.get("run", ""):
+                step["run"] = step["run"].replace(
+                    "ci/tests/test_deployment_security.py", ""
+                )
+                break
     elif kind == "mask_failure":
         jobs["backend"]["steps"][0]["run"] = "echo tests failed || true"
     elif kind == "exclude_tests":
@@ -159,7 +175,8 @@ def test_current_workflow_passes_strict_audit():
     "write_permissions", "unpin_checkout", "skip_backend_on_error",
     "drop_backend_coverage", "remove_dependency_audit",
     "conditional_redteam", "remove_native_host_check",
-    "mask_failure", "exclude_tests",
+    "mask_failure", "exclude_tests", "remove_bandit",
+    "remove_deployment_audit", "remove_isolation_mutation_tests",
 ])
 def test_release_guard_rejects_bypass_mutations(kind):
     source = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
