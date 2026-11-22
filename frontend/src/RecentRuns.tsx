@@ -6,6 +6,7 @@ type Props = {
   operatorReady: boolean
   accountMode: boolean
   operatorToken: string
+  contextKey: string
 }
 type Operations = {
   responsive_workers: number
@@ -18,10 +19,14 @@ type Operations = {
 }
 
 export default function RecentRuns({
-  onSelect, operatorReady, accountMode, operatorToken,
+  onSelect, operatorReady, accountMode, operatorToken, contextKey,
 }: Props) {
-  const [runs, setRuns] = useState<DurableRun[]>([])
-  const [operations, setOperations] = useState<Operations | null>(null)
+  const [runs, setRuns] = useState<{ context: string; entries: DurableRun[] }>({
+    context: '', entries: [],
+  })
+  const [operations, setOperations] = useState<{
+    context: string; snapshot: Operations
+  } | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -30,7 +35,7 @@ export default function RecentRuns({
     let refreshAgain = false
     const controller = new AbortController()
     // Role, project, and credential changes invalidate the previous view.
-    setRuns([])
+    setRuns({ context: contextKey, entries: [] })
     setOperations(null)
     setError('')
 
@@ -43,7 +48,7 @@ export default function RecentRuns({
         if (!response.ok) throw new Error('Run index is not authoritative')
         const parsed = (await response.json()) as { runs: DurableRun[] }
         if (mounted) {
-          setRuns(parsed.runs)
+          setRuns({ context: contextKey, entries: parsed.runs })
           setError('')
         }
       } catch {
@@ -67,7 +72,7 @@ export default function RecentRuns({
         })
         if (!response.ok) throw new Error('Operator diagnostics no longer authorized')
         const status = (await response.json()) as Operations
-        if (mounted) setOperations(status)
+        if (mounted) setOperations({ context: contextKey, snapshot: status })
       } catch {
         if (mounted) {
           // A rejected or disconnected operator probe is not a healthy reading.
@@ -100,7 +105,11 @@ export default function RecentRuns({
       clearInterval(timer)
       controller.abort()
     }
-  }, [operatorReady, accountMode, operatorToken])
+  }, [operatorReady, accountMode, operatorToken, contextKey])
+
+  const currentRuns = runs.context === contextKey ? runs.entries : []
+  const currentOperations = operatorReady && operations?.context === contextKey
+    ? operations.snapshot : null
 
   return (
     <section className="panel recent-runs" aria-labelledby="recent-title"
@@ -111,22 +120,22 @@ export default function RecentRuns({
         Select a PostgreSQL run after reloading the page or restarting the coordinator.
         This is a local-only workspace.
       </p>
-      {operatorReady && operations && (
+      {currentOperations && (
         <p className="help-text">
-          Live workers: {operations.responsive_workers} ·
-          Pending runs: {operations.runs.PENDING ?? 0} ·
-          Verification queue: {operations.verifications.PENDING ?? 0}
+          Live workers: {currentOperations.responsive_workers} ·
+          Pending runs: {currentOperations.runs.PENDING ?? 0} ·
+          Verification queue: {currentOperations.verifications.PENDING ?? 0}
         </p>
       )}
-      {operatorReady && operations?.diagnostics?.alerts.map((alert) => (
+      {currentOperations?.diagnostics?.alerts.map((alert) => (
         <p className="error" role="status" key={alert.code}>
           Operator check: {alert.message}
         </p>
       ))}
       {error && <p className="error" role="alert">{error}</p>}
-      {runs.length === 0 && !error && <p className="help-text">No saved runs yet.</p>}
+      {currentRuns.length === 0 && !error && <p className="help-text">No saved runs yet.</p>}
       <div className="recent-list">
-        {runs.map((run) => (
+        {currentRuns.map((run) => (
           <button key={run.run_id} onClick={() => onSelect(run)} type="button">
             <code>{run.run_id.slice(0, 13)}…</code>
             <span>{run.variant} / {run.schedule}</span>
