@@ -26,29 +26,80 @@ export default function RecentRuns({
 
   useEffect(() => {
     let mounted = true
-    async function refresh() {
+    let refreshing = false
+    let refreshAgain = false
+    const controller = new AbortController()
+    // Role, project, and credential changes invalidate the previous view.
+    setRuns([])
+    setOperations(null)
+    setError('')
+
+    async function load() {
       try {
-        const response = await fetch('/api/runs?limit=10')
-        if (!response.ok) throw new Error('Could not refresh run index')
+        const response = await fetch('/api/runs?limit=10', {
+          signal: controller.signal,
+          cache: 'no-store',
+        })
+        if (!response.ok) throw new Error('Run index is not authoritative')
         const parsed = (await response.json()) as { runs: DurableRun[] }
-        if (mounted) { setRuns(parsed.runs); setError('') }
-        if (operatorReady) {
-          const status = await fetch('/api/operations', {
-            headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
-          })
-          if (mounted && status.ok) {
-            setOperations((await status.json()) as Operations)
-          }
-        } else if (mounted) {
-          setOperations(null)
+        if (mounted) {
+          setRuns(parsed.runs)
+          setError('')
         }
       } catch {
-        if (mounted) setError('Recent runs unavailable; check PostgreSQL and the API.')
+        if (mounted) {
+          // Never continue showing an index after authorization or DB loss.
+          setRuns([])
+          setOperations(null)
+          setError('Recent runs unavailable; check PostgreSQL and the API.')
+        }
+        return
+      }
+      if (!operatorReady) {
+        if (mounted) setOperations(null)
+        return
+      }
+      try {
+        const response = await fetch('/api/operations', {
+          signal: controller.signal,
+          cache: 'no-store',
+          headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
+        })
+        if (!response.ok) throw new Error('Operator diagnostics no longer authorized')
+        const status = (await response.json()) as Operations
+        if (mounted) setOperations(status)
+      } catch {
+        if (mounted) {
+          // A rejected or disconnected operator probe is not a healthy reading.
+          setOperations(null)
+          setError('Operator diagnostics unavailable; current state is unconfirmed.')
+        }
+      }
+    }
+
+    async function refresh() {
+      if (!mounted) return
+      if (refreshing) {
+        refreshAgain = true
+        return
+      }
+      refreshing = true
+      try {
+        do {
+          refreshAgain = false
+          await load()
+        } while (mounted && refreshAgain)
+      } finally {
+        refreshing = false
       }
     }
     void refresh()
     const timer = setInterval(() => void refresh(), 5000)
-    return () => { mounted = false; clearInterval(timer) }
+    return () => {
+      mounted = false
+      clearInterval(timer)
+      controller.abort()
+    }
   }, [operatorReady, accountMode, operatorToken])
 
   return (
