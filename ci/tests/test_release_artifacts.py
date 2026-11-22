@@ -111,6 +111,7 @@ def test_release_audit_blocks_malformed_or_sensitive_artifacts(tmp_path, problem
 def test_release_rejects_duplicate_archive_member_names(tmp_path):
     wheel, source, frontend = _fixture(tmp_path)
     with zipfile.ZipFile(wheel, "a") as archive:
-        archive.writestr("clashbolt/api.py", "shadowed code")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            archive.writestr("clashbolt/api.py", "shadowed code")
     with pytest.raises(ValueError, match="Duplicate"):
         validate(wheel, source, frontend)
