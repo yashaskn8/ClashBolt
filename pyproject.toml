@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "clashbolt"
 version = "0.2.0"
 description = "Local synthetic concurrency experiment lab"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
@@ -22,6 +23,7 @@ package-dir = {"" = "backend"}
 
 [tool.setuptools.packages.find]
 where = ["backend"]
+include = ["clashbolt", "clashbolt.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
