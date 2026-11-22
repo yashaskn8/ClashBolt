@@ -224,6 +224,7 @@ jobs:
           python -m pytest -q --timeout=30 \
             ci/tests/test_gate_validation.py \
             ci/tests/test_deployment_security.py \
+            ci/tests/test_release_artifacts.py \
             backend/tests/test_adversarial_fixture.py \
             backend/tests/test_target_service_boundaries.py \
             backend/tests/test_fixture_runner_entrypoint.py \
