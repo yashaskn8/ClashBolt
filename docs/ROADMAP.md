@@ -27,6 +27,44 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Mandatory compatibility, release-candidate and workflow lint gates (22 November 2026)
+
+The CI release gate now also requires three additional checks. The
+**compatibility matrix** installs the source and exercises the deterministic
+synthetic oracle, witness, held-out and fixed-target protocol on both Python
+3.11 (the declared minimum) and Python 3.13, while the main PostgreSQL,
+worker-crash and host-acceptance suite still runs on Python 3.12. Failure of
+either compatibility leg blocks the aggregate gate.
+
+The **release-candidate packaging** job independently builds an sdist and a
+wheel, applies Twine's strict metadata check and audits archive paths, exact
+core source-byte agreement between archives, project metadata, and the built
+Vite frontend. It installs the wheel and sdist separately into fresh
+virtual environments and imports shipped API, worker, verifier and target
+modules from outside the source checkout. It publishes a SHA-256-identified
+candidate artifact to the workflow run for review only, with a seven-day
+retention policy. A real release gap surfaced during this work: setuptools
+had included the backend test suite in its wheel, and long-description
+metadata was incomplete. Both are now fixed, without weakening package
+checks. The uploader is pinned by complete commit SHA to the current
+Node 24-compatible official Action.
+
+The **workflow lint** job uses a version-fixed Actionlint parser plus
+ShellCheck to validate Actions semantics and shell commands. The new lint
+caught and led to corrections in PostgreSQL version discovery and grouped
+GitHub environment-file writes. CI-policy mutation tests prevent removal
+of any of these jobs, matrix legs, archive checks, clean-install checks,
+artifact checks or release-gate dependencies. These checks are mandatory
+alongside frontend, Chromium, Postgres, security, red-team and native host
+tests. Neither packaging nor synthetic acceptance proves external target
+reproduction or production certification.
+
+There is **no automatic production deployment**: no trusted production
+destination, independent tenant isolation assessment or real-target
+approval has been supplied. CI produces an inspected release candidate;
+external deployment and acceptance remain separate unfinished TITAN-20
+milestones. Passing the gate does **not** imply 100% branch coverage.
+
 ## Static Python security and native host configuration drift gates (22 November 2026)
 
 The required dependency-security job also runs Bandit on shipped Python
