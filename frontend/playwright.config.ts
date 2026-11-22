@@ -9,6 +9,9 @@ export default defineConfig({
   testIgnore: process.env.CLASHBOLT_BROWSER_MODE === 'accounts'
     ? [] : ['**/*.accounts.spec.ts'],
   fullyParallel: false,
+  // A retry may provide diagnostics, but it must never turn flaky CI green.
+  forbidOnly: !!process.env.CI,
+  failOnFlakyTests: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   use: {
     baseURL: staticSite ? 'http://127.0.0.1:8000' : 'http://127.0.0.1:5173',
