@@ -260,22 +260,127 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm audit --audit-level=high
 
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '${{ matrix.python-version }}'
+      - name: Install source on supported Python boundary
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m pip check
+          python -m compileall -q backend/clashbolt
+      - name: Require synthetic oracle, evidence and target protocol compatibility
+        run: |
+          python -m pytest -q --timeout=30 \
+            backend/tests/test_experiment.py \
+            backend/tests/test_witness.py \
+            backend/tests/test_heldout.py \
+            backend/tests/test_adversarial_fixture.py \
+            backend/tests/test_target_service_boundaries.py \
+            backend/tests/test_fixture_runner_entrypoint.py
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+      - name: Install release validation tooling
+        run: |
+          python -m pip install 'build>=1.2,<2' 'twine>=6,<7'
+          python -m pip check
+      - name: Install locked frontend packages
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Compile production React TypeScript assets
+        working-directory: frontend
+        run: npm run build
+      - name: Build and validate release artifacts without publishing
+        run: |
+          set -euo pipefail
+          mkdir -p release/dist
+          python -m build --sdist --wheel --outdir release/dist
+          python -m twine check --strict release/dist/*
+          python ci/check_release_artifacts.py \
+            release/dist/*.whl release/dist/*.tar.gz frontend/dist
+          sha256sum release/dist/* > release/SHA256SUMS
+      - name: Install wheel and source package from clean virtual environments
+        run: |
+          set -euo pipefail
+          for kind in wheel source; do
+            ROOT="$RUNNER_TEMP/clashbolt-$kind-smoke"
+            python -m venv "$ROOT"
+            if [[ "$kind" == "wheel" ]]; then
+              "$ROOT/bin/python" -m pip install --no-cache-dir release/dist/*.whl
+            else
+              "$ROOT/bin/python" -m pip install --no-cache-dir release/dist/*.tar.gz
+            fi
+            "$ROOT/bin/python" -m pip check
+            ( cd "$RUNNER_TEMP" && "$ROOT/bin/python" -I -c \
+              "import importlib.metadata as m; import clashbolt.api; import clashbolt.worker; import clashbolt.target_service; import clashbolt.witness; assert m.version('clashbolt') == '0.2.0'" )
+          done
+      - name: Preserve checksum-identified candidate for review, not deployment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clashbolt-candidate-${{ github.sha }}
+          path: |
+            release/dist/*
+            release/SHA256SUMS
+            frontend/dist/**
+          if-no-files-found: error
+          retention-days: 7
+
+  workflowlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Validate Actions semantics and shell scripts with pinned linters
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml
+          shellcheck -S error ci/check-target-service.sh
+
   release-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: ${{ always() }}
-    needs: [backend, frontend, browser, security, redteam]
+    needs: [backend, frontend, browser, security, redteam, compatibility, package, workflowlint]
     steps:
-      - name: Require every quality, security, native-host, red-team, and browser job
+      - name: Require all integration, security, red-team, packaging and cross-version jobs
         env:
           BACKEND: ${{ needs.backend.result }}
           FRONTEND: ${{ needs.frontend.result }}
           BROWSER: ${{ needs.browser.result }}
           SECURITY: ${{ needs.security.result }}
           REDTEAM: ${{ needs.redteam.result }}
+          COMPATIBILITY: ${{ needs.compatibility.result }}
+          PACKAGE: ${{ needs.package.result }}
+          WORKFLOWLINT: ${{ needs.workflowlint.result }}
         run: |
           set -euo pipefail
-          for result in "$BACKEND" "$FRONTEND" "$BROWSER" "$SECURITY" "$REDTEAM"; do
+          for result in "$BACKEND" "$FRONTEND" "$BROWSER" "$SECURITY" "$REDTEAM" "$COMPATIBILITY" "$PACKAGE" "$WORKFLOWLINT"; do
             if [[ "$result" != "success" ]]; then
               echo "::error::ClashBolt release blocked: a required CI job returned $result"
               exit 1
