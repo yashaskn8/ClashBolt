@@ -52,7 +52,7 @@ def request_fixture(
     payload = {"variant": variant, "schedule": schedule, "gates": gates}
     if target_url is not None:
         settings = conninfo_to_dict(target_url)
-        match = re.fullmatch(r"cb_target_([a-f0-9]{32})", settings["dbname"])
+        match = re.fullmatch(r"cb_target_([a-f0-9]{32})", settings.get("dbname", ""))
         if (
             not match or settings.get("user") != "cb_runner_" + match[1]
             or settings.get("port") != "5433"
