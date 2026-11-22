@@ -21,11 +21,34 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | A6 Counterexample Replanner | Idempotent PostgreSQL feedback records and one bounded follow-up proposal based on a verified receipt, without automatic tool authority | Feedback across multiple unknown applications and held-out ablation |
 | A7 Agent Evaluation Gate | Hashed synthetic receipts, descriptive paired bootstrap, and strict data-only held-out comparison intake with digest binding, split separation, full baseline matrix and cost caps; never auto-promoted | Genuine preregistered external corpus, independently authenticated adjudication and cost evidence, promotion/rollback decisions |
 | P1 Experiment Composer | Named accounts, approved-oracle admission, per-account/per-project versioned drafts, React project selector, isolated Chromium project-switching regression, read-only project quota/approval/resource preview | Real general-target contracts, measured CPU/provider cost estimates and wider browser fault matrix |
-| P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing, lost-SSE Chromium tests, single-flight poll/SSE coalescing, abort-on-unmount cleanup and bounded transition-burst browser coverage | Sustained disconnects, multi-worker browser chaos and long-run tests |
+| P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing, lost-SSE Chromium tests, single-flight poll/SSE coalescing, abort-on-unmount cleanup, bounded transition-burst browser coverage, strict contiguous page/cursor validation and immutable accepted-history prefix fencing | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON evidence, deterministic ZIP bundle, immutable run-version/export SHA256 journal, independent checker, worker-queued replay/reduction, version-fenced reports and revocation, named reviewer-only immutable synthetic evidence decisions and React review desk | Externally supported application reproduction, externally verified reviewer identity and portable independent adjudication |
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P2 immutable transition pagination validation (22 November 2026)
+
+The React causal timeline now validates every authoritative paginated
+PostgreSQL history response before replacing its displayed events. Each
+page must belong to the selected run, contain no more than 100 transitions,
+carry the exact contiguous version sequence starting at admission v1,
+and report the matching advancing cursor and a well-formed has-more flag.
+A complete history must not be behind the fetched run snapshot. Each
+subsequent refresh must also preserve the entire previously accepted event
+prefix, including status, note and creation timestamp. A malformed,
+truncated, reordered, conflicting or inconsistent page leaves the
+previously verified timeline in place and makes the refresh error visible;
+the next valid fetch may reconcile it again. The pre-existing monotonic
+snapshot version fencing, single-flight SSE/interval coalescing and
+abort-on-unmount behavior remain enforced.
+
+The account-mode Chromium SSE regression now simulates a modified
+historical event followed by an incorrect page cursor, confirms neither
+rewrites the accepted terminal event, and checks recovery when the real
+authoritative page becomes available. This is bounded page-integrity and
+reconciliation validation, **not** independently verified multi-worker
+chaos, sustained transport disruption or complete TITAN-20 P2 acceptance.
 
 ## P5 identity-fenced, fail-closed operations refresh (22 November 2026)
 
