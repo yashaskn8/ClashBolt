@@ -30,10 +30,16 @@ COMMANDS = {
         "CLASHBOLT_BROWSER_MODE=accounts",
         "playwright test",
     ),
-    "security": ("pip_audit --strict", "npm audit --audit-level=high"),
+    "security": (
+        "pip_audit --strict",
+        "npm audit --audit-level=high",
+        "bandit -r backend/clashbolt -ll -ii -q",
+        "ci/check_deployment_security.py",
+    ),
     "redteam": (
         "ci/check_ci_policy.py",
         "ci/tests/test_gate_validation.py",
+        "ci/tests/test_deployment_security.py",
         "test_adversarial_fixture.py",
         "--timeout=30",
     ),
