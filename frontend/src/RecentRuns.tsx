@@ -103,7 +103,8 @@ export default function RecentRuns({
   }, [operatorReady, accountMode, operatorToken])
 
   return (
-    <section className="panel recent-runs" aria-labelledby="recent-title">
+    <section className="panel recent-runs" aria-labelledby="recent-title"
+      data-operator-ready={operatorReady ? 'true' : 'false'}>
       <div className="panel-kicker">03 / RECOVERY INDEX</div>
       <h2 id="recent-title">Reopen a durable run</h2>
       <p className="panel-description">
