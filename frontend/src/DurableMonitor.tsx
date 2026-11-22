@@ -66,48 +66,72 @@ export default function DurableMonitor({
 
   useEffect(() => {
     let mounted = true
+    let refreshing = false
+    let refreshAgain = false
+    let activeRequest: AbortController | null = null
     setEvents([])
 
     async function refresh() {
+      if (!mounted) return
+      // Coalesce SSE bursts and interval ticks into one follow-up refresh.
+      // Never let overlapping network responses race to update the timeline.
+      if (refreshing) {
+        refreshAgain = true
+        return
+      }
+      refreshing = true
       try {
-        const snapshotResponse = await fetch(`/api/runs/${runId}`)
-        if (!snapshotResponse.ok) throw new Error('Snapshot refresh failed')
-        const run = (await snapshotResponse.json()) as DurableRun
-        let cursor = 0
-        let more = true
-        const history: Event[] = []
-        for (let pageNumber = 0; pageNumber < 10 && more; pageNumber++) {
-          const response = await fetch(`/api/runs/${runId}/events?after=${cursor}`)
-          if (!response.ok) throw new Error('History refresh failed')
-          const page = (await response.json()) as {
-            events: Event[]
-            next_after: number
-            has_more: boolean
+        do {
+          refreshAgain = false
+          const controller = new AbortController()
+          activeRequest = controller
+          try {
+            const snapshotResponse = await fetch(`/api/runs/${runId}`, {
+              signal: controller.signal,
+            })
+            if (!snapshotResponse.ok) throw new Error('Snapshot refresh failed')
+            const run = (await snapshotResponse.json()) as DurableRun
+            let cursor = 0
+            let more = true
+            const history: Event[] = []
+            for (let pageNumber = 0; pageNumber < 10 && more; pageNumber++) {
+              const response = await fetch(`/api/runs/${runId}/events?after=${cursor}`, {
+                signal: controller.signal,
+              })
+              if (!response.ok) throw new Error('History refresh failed')
+              const page = (await response.json()) as {
+                events: Event[]
+                next_after: number
+                has_more: boolean
+              }
+              if (page.has_more && page.next_after <= cursor) {
+                throw new Error('Transition cursor did not advance')
+              }
+              history.push(...page.events)
+              cursor = page.next_after
+              more = page.has_more
+            }
+            if (mounted) {
+              onUpdate((current) => (
+                current?.run_id === runId && run.version > current.version
+                  ? run : current
+              ))
+              // Keep the longest authoritative event prefix.
+              setEvents((current) => {
+                const prior = current.at(-1)?.version ?? 0
+                const next = history.at(-1)?.version ?? 0
+                return next >= prior ? history : current
+              })
+              setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
+            }
+          } catch {
+            if (mounted) setError('Cannot refresh the authoritative run snapshot.')
+          } finally {
+            activeRequest = null
           }
-          if (page.has_more && page.next_after <= cursor) {
-            throw new Error('Transition cursor did not advance')
-          }
-          history.push(...page.events)
-          cursor = page.next_after
-          more = page.has_more
-        }
-        if (mounted) {
-          // Overlapping SSE and polling responses can arrive out of order.
-          // Never rewind a run or replace the active selection with an old one.
-          onUpdate((current) => (
-            current?.run_id === runId && run.version > current.version
-              ? run : current
-          ))
-          // Also keep the longest authoritative event prefix.
-          setEvents((current) => {
-            const prior = current.at(-1)?.version ?? 0
-            const next = history.at(-1)?.version ?? 0
-            return next >= prior ? history : current
-          })
-          setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
-        }
-      } catch {
-        if (mounted) setError('Cannot refresh the authoritative run snapshot.')
+        } while (mounted && refreshAgain)
+      } finally {
+        refreshing = false
       }
     }
 
@@ -119,6 +143,7 @@ export default function DurableMonitor({
     return () => {
       mounted = false
       clearInterval(timer)
+      activeRequest?.abort()
       stream.close()
     }
   }, [runId, onUpdate])
