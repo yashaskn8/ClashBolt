@@ -89,6 +89,15 @@ def audit(workflow: str, playwright: str) -> None:
                 raise ValueError(f"Malformed step in {name}")
             if "continue-on-error" in step:
                 raise ValueError("No CI step may downgrade a failure")
+            command = str(step.get("run", ""))
+            if any(
+                bypass in command
+                for bypass in (
+                    "|| true", "set +e", "--ignore=", "--deselect=",
+                    "--ignore-glob=", "--maxfail=", "--last-failed",
+                )
+            ):
+                raise ValueError("CI command attempts to mask errors or omit tests")
             condition = step.get("if")
             if condition is not None and not (
                 name == "browser"
