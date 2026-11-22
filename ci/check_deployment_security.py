@@ -126,10 +126,13 @@ def _parse_unit(source: str) -> dict[str, dict[str, str]]:
         if current is None or "=" not in line:
             raise ValueError("Malformed systemd directive")
         key, value = line.split("=", 1)
-        if key in sections[current] and key != "BindReadOnlyPaths":
-            raise ValueError(f"Repeated security-relevant directive: {key}")
-        # Repeated BindReadOnlyPaths entries are additive, unlike overrides.
-        sections[current][key] = value
+        if key in sections[current]:
+            if key not in {"BindReadOnlyPaths", "SystemCallFilter"}:
+                raise ValueError(f"Repeated security-relevant directive: {key}")
+            # systemd accumulates these list-valued directives in order.
+            sections[current][key] += " " + value
+        else:
+            sections[current][key] = value
     return sections
 
 
@@ -145,7 +148,8 @@ def audit_units(files: dict[str, str]) -> None:
                     raise ValueError(f"Deployment hardening changed: {name}:{key}")
         if name.endswith(".service"):
             command = sections["Service"].get("ExecStart", "")
-            if not command.startswith(("/opt/clashbolt/", "/opt/clashbolt-fixture/", "/usr/bin/env ")):
+            allowed = ("/opt/clashbolt/", "/opt/clashbolt-fixture/", "/usr/bin/env ")
+            if not command.startswith(allowed):
                 raise ValueError(f"Service has unexpected execution entrypoint: {name}")
             if any(token in command for token in ("/bin/sh", "/bin/bash", " -c ", "sudo ")):
                 raise ValueError("Shell or privilege escalation in service entrypoint")
@@ -155,11 +159,15 @@ def audit_units(files: dict[str, str]) -> None:
         or "@system-service" not in target["SystemCallFilter"]
         or "io_uring_setup" not in target["SystemCallFilter"]
         or "BindReadOnlyPaths" not in target
+        or "/opt/clashbolt-fixture" not in target["BindReadOnlyPaths"]
+        or "/run/postgresql/.s.PGSQL.5433:/run/clashbolt-db/.s.PGSQL.5433"
+        not in target["BindReadOnlyPaths"]
+        or "~@debug @mount @privileged io_uring_setup" not in target["SystemCallFilter"]
     ):
         raise ValueError("Missing isolated target syscall or socket mount boundary")
-    for name in ("clashbolt-api.service", "clashbolt-worker.service"):
-        if "--host 127.0.0.1" not in _parse_unit(files[name])["Service"]["ExecStart"] and name == "clashbolt-api.service":
-            raise ValueError("API may only bind loopback")
+    api_exec = _parse_unit(files["clashbolt-api.service"])["Service"]["ExecStart"]
+    if "--host 127.0.0.1" not in api_exec:
+        raise ValueError("API may only bind loopback")
 
 
 def audit_credentials(paths: dict[str, str]) -> None:
