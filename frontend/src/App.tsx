@@ -801,7 +801,9 @@ export default function App() {
           (catalog.access_mode === 'private' && sessionReady) ||
           (catalog.access_mode === 'accounts' && account !== null)) && (
           <RecentRuns
-            key={catalog.access_mode === 'accounts' ? account?.project_id : 'local'}
+            key={catalog.access_mode === 'accounts'
+              ? `${account?.username}:${account?.project_id}:${account?.role}`
+              : catalog.access_mode}
             operatorReady={operatorReady}
             accountMode={catalog.access_mode === 'accounts'}
             operatorToken={operatorToken}
