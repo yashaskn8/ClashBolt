@@ -81,7 +81,9 @@ test('operator diagnostics fail closed on a rejected refresh', async ({ page }) 
 test('a failed run-index refresh removes the previously selectable run', async ({ page }) => {
   test.setTimeout(45_000)
   let requests = 0
-  await page.route('**/api/runs?limit=10', async (route) => {
+  await page.route(
+    (url) => url.pathname === '/api/runs' && url.searchParams.get('limit') === '10',
+    async (route) => {
     requests++
     if (requests > 1) {
       await route.fulfill({ status: 503, body: 'Database unavailable' })
@@ -100,11 +102,14 @@ test('a failed run-index refresh removes the previously selectable run', async (
         }],
       }),
     })
-  })
+    },
+  )
   await page.goto('/')
   await page.getByLabel('Account name').fill('browser.operator')
   await page.getByLabel('Account password').fill('browser-local-password-000')
   await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
+  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(0)
   await expect(page.locator('.recent-list button')).toHaveCount(1)
   await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(1)
   await expect(page.locator('.recent-list button')).toHaveCount(0)
