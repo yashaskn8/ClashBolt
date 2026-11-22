@@ -24,8 +24,32 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P2 Causal Run Timeline | Cursor-paged PostgreSQL events, SSE/snapshot reconciliation, monotonic browser version fencing, lost-SSE Chromium tests, single-flight poll/SSE coalescing, abort-on-unmount cleanup and bounded transition-burst browser coverage | Sustained disconnects, multi-worker browser chaos and long-run tests |
 | P3 Witness Review Desk | JSON evidence, deterministic ZIP bundle, immutable run-version/export SHA256 journal, independent checker, worker-queued replay/reduction, version-fenced reports and revocation, named reviewer-only immutable synthetic evidence decisions and React review desk | Externally supported application reproduction, externally verified reviewer identity and portable independent adjudication |
 | P4 Approval Console | Named local roles, signed sessions, audited project grants, separate PostgreSQL resource schemas, transaction-locked authorization, scoped broker tokens, reviewer approval, browser cross-project checks and live role sync | General external targets, independent identity/SSO, hard security boundaries between database administrators and tenants |
-| P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
+| P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
+
+## P5 identity-fenced, fail-closed operations refresh (22 November 2026)
+
+The React recent-runs and operator diagnostics panel now uses one
+authoritative refresh at a time. Five-second scheduled ticks coalesce
+rather than overlapping in-flight fetches, and requests use no-store
+semantics plus an AbortController to stop when the panel unmounts or its
+role/credential context changes. Run-index fetch rejection clears the
+previously selectable run list and operator gauges; a rejected or lost
+operator diagnostics response clears the prior gauge/alert snapshot and
+labels the state **unconfirmed**, never healthy. The parent remounts the
+panel on the full named account, selected project and effective role;
+a different account using the same project cannot inherit the previous
+operator's private diagnostics state.
+
+Account-mode Chromium regression tests cover denied operations refresh
+after an earlier successful alert, PostgreSQL run-index unavailability
+after a previously selectable run, and a deliberately delayed old
+operator response arriving after login as a viewer. This is bounded
+browser fail-close and stale-read fencing, **not** independent
+multi-node chaos, notification delivery, real incident triage, or
+production load-tested UX. Server-side scoped authorization remains
+the actual security boundary; browser state management is defense in
+depth.
 
 ## Mandatory compatibility, release-candidate and workflow lint gates (22 November 2026)
 
