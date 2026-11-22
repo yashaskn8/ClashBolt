@@ -69,6 +69,7 @@ export default function DurableMonitor({
     let refreshing = false
     let refreshAgain = false
     let activeRequest: AbortController | null = null
+    let acceptedHistory: Event[] = []
     setEvents([])
 
     async function refresh() {
@@ -91,6 +92,10 @@ export default function DurableMonitor({
             })
             if (!snapshotResponse.ok) throw new Error('Snapshot refresh failed')
             const run = (await snapshotResponse.json()) as DurableRun
+            if (
+              run.run_id !== runId ||
+              !Number.isSafeInteger(run.version) || run.version < 1
+            ) throw new Error('Invalid authoritative run version')
             let cursor = 0
             let more = true
             const history: Event[] = []
@@ -100,28 +105,57 @@ export default function DurableMonitor({
               })
               if (!response.ok) throw new Error('History refresh failed')
               const page = (await response.json()) as {
+                run_id: string
                 events: Event[]
                 next_after: number
                 has_more: boolean
               }
-              if (page.has_more && page.next_after <= cursor) {
-                throw new Error('Transition cursor did not advance')
+              if (
+                page.run_id !== runId ||
+                !Array.isArray(page.events) || page.events.length > 100 ||
+                typeof page.has_more !== 'boolean' ||
+                !Number.isSafeInteger(page.next_after) ||
+                (page.has_more && page.events.length !== 100)
+              ) throw new Error('Invalid transition page')
+              // A durable transition must exist for each version, beginning at
+              // admission v1. Never render missing, repeated or reordered events.
+              for (const event of page.events) {
+                if (
+                  !event || !Number.isSafeInteger(event.version) ||
+                  event.version !== cursor + 1 ||
+                  typeof event.status !== 'string' ||
+                  typeof event.note !== 'string' ||
+                  typeof event.created_at !== 'string'
+                ) throw new Error('Noncontiguous transition history')
+                cursor = event.version
+              }
+              if (page.next_after !== cursor) {
+                throw new Error('Transition cursor does not match history')
               }
               history.push(...page.events)
-              cursor = page.next_after
               more = page.has_more
             }
+            if (!more && cursor < run.version) {
+              throw new Error('Transition history is behind run snapshot')
+            }
+            if (
+              history.length < acceptedHistory.length ||
+              acceptedHistory.some((event, index) => {
+                const candidate = history[index]
+                return !candidate ||
+                  candidate.version !== event.version ||
+                  candidate.status !== event.status ||
+                  candidate.note !== event.note ||
+                  candidate.created_at !== event.created_at
+              })
+            ) throw new Error('Authoritative transition prefix changed')
             if (mounted) {
+              acceptedHistory = history
               onUpdate((current) => (
                 current?.run_id === runId && run.version > current.version
                   ? run : current
               ))
-              // Keep the longest authoritative event prefix.
-              setEvents((current) => {
-                const prior = current.at(-1)?.version ?? 0
-                const next = history.at(-1)?.version ?? 0
-                return next >= prior ? history : current
-              })
+              setEvents(history)
               setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
             }
           } catch {
