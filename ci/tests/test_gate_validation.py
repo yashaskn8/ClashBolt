@@ -162,6 +162,41 @@ def _change(workflow, kind):
             if "python -m pytest" in step.get("run", ""):
                 step["run"] += " --ignore=backend/tests/test_api.py"
                 break
+    elif kind == "remove_compatibility":
+        del jobs["compatibility"]
+    elif kind == "remove_python_311":
+        jobs["compatibility"]["strategy"]["matrix"]["python-version"] = ["3.13"]
+    elif kind == "remove_package":
+        del jobs["package"]
+    elif kind == "remove_wheel_smoke":
+        for step in jobs["package"]["steps"]:
+            if "python -m venv" in step.get("run", ""):
+                step["run"] = "echo no wheel smoke"
+                break
+    elif kind == "ignore_missing_release_artifact":
+        for step in jobs["package"]["steps"]:
+            if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                step["with"]["if-no-files-found"] = "ignore"
+                break
+    elif kind == "remove_release_integrity_check":
+        for step in jobs["package"]["steps"]:
+            if "ci/check_release_artifacts.py" in step.get("run", ""):
+                step["run"] = "echo integrity check removed"
+                break
+    elif kind == "remove_workflow_linter":
+        for step in jobs["workflowlint"]["steps"]:
+            if "actionlint" in step.get("run", ""):
+                step["run"] = "echo lint skipped"
+                break
+    elif kind == "remove_release_dependency":
+        jobs["release-gate"]["needs"].remove("package")
+    elif kind == "remove_release_mutation_tests":
+        for step in jobs["redteam"]["steps"]:
+            if "ci/tests/test_release_artifacts.py" in step.get("run", ""):
+                step["run"] = step["run"].replace(
+                    "ci/tests/test_release_artifacts.py", ""
+                )
+                break
     else:
         raise AssertionError(f"Unknown mutation {kind}")
 
@@ -177,6 +212,10 @@ def test_current_workflow_passes_strict_audit():
     "conditional_redteam", "remove_native_host_check",
     "mask_failure", "exclude_tests", "remove_bandit",
     "remove_deployment_audit", "remove_isolation_mutation_tests",
+    "remove_compatibility", "remove_python_311", "remove_package",
+    "remove_wheel_smoke", "ignore_missing_release_artifact",
+    "remove_release_integrity_check", "remove_workflow_linter",
+    "remove_release_dependency", "remove_release_mutation_tests",
 ])
 def test_release_guard_rejects_bypass_mutations(kind):
     source = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
