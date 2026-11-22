@@ -12,7 +12,7 @@ ClashBolt is a Python/FastAPI + React/TypeScript research lab for **application-
 - **Agent boundary:** strict fixed-template oracle candidates and test vectors, named project-scoped viewer/operator/reviewer grants or legacy shared credentials, one-use scoped tool capabilities and audit; persisted evidence gaps, bounded feedback, synthetic conflict frontier, and optional local-model planning with reserved token budgets.
 - **React/TypeScript:** typed experiment composer, version-CAS drafts, named local account login and role switching, native isolation selection, witness export/minimization, paged run timeline, cancellation and reviewer/capability/frontier console.
 - **Evaluation:** repeatable synthetic strategy comparison with a hashed known-fixture manifest, equal gate budgets and per-trial receipts. It explicitly refuses AI policy promotion without held-out evidence.
-- **CI:** native PostgreSQL integration tests, Ruff, TypeScript and Vite build; no Docker.
+- **CI/CD gates:** PostgreSQL and native systemd acceptance, crash recovery, Python 3.11/3.13 compatibility, strict branch and test-skip thresholds, Ruff/Vulture/Bandit/dependency audits, Chromium role and SSE scenarios, adversarial mutation checks, Actionlint/ShellCheck, and clean wheel/sdist plus production Vite release-candidate builds. Every required job must pass before CI accepts the commit. Candidate artifacts are checksummed and retained for review; there is **no automatic production deployment** and no Docker.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the evidence-based 20-feature status and gaps. This is **not** the completed 20-feature AI discovery platform or a production-ready multi-tenant system.
 
