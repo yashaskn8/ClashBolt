@@ -10,6 +10,7 @@ from xml.etree import ElementTree
 
 import pytest
 import yaml
+
 from ci.check_ci_policy import audit
 from ci.check_quality_report import (
     EXPECTED_SKIPS,
