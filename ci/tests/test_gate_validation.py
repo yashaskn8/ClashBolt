@@ -139,6 +139,13 @@ def _change(workflow, kind):
             if "ci/check-target-service.sh" in step.get("run", ""):
                 step["run"] = "echo native host check disabled"
                 break
+    elif kind == "mask_failure":
+        jobs["backend"]["steps"][0]["run"] = "echo tests failed || true"
+    elif kind == "exclude_tests":
+        for step in jobs["backend"]["steps"]:
+            if "python -m pytest" in step.get("run", ""):
+                step["run"] += " --ignore=backend/tests/test_api.py"
+                break
     else:
         raise AssertionError(f"Unknown mutation {kind}")
 
@@ -152,6 +159,7 @@ def test_current_workflow_passes_strict_audit():
     "write_permissions", "unpin_checkout", "skip_backend_on_error",
     "drop_backend_coverage", "remove_dependency_audit",
     "conditional_redteam", "remove_native_host_check",
+    "mask_failure", "exclude_tests",
 ])
 def test_release_guard_rejects_bypass_mutations(kind):
     source = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
