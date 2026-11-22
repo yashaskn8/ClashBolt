@@ -40,3 +40,74 @@ test('snapshot and timeline recover when the SSE transport is unavailable', asyn
     'The approved synthetic oracle found two accepted orders for one item.',
   )).toBeVisible()
 })
+
+test('bursty SSE transitions never overlap authoritative refresh requests', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  // Keep genuine EventSource transport; only expose the created stream so
+  // a burst of advisory notifications can be tested deterministically.
+  await page.addInitScript(() => {
+    const NativeSource = window.EventSource
+    const streams: EventSource[] = []
+    ;(window as typeof window & { __testStreams?: EventSource[] })
+      .__testStreams = streams
+    window.EventSource = class extends NativeSource {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options)
+        streams.push(this)
+      }
+    }
+  })
+  await page.goto('/')
+  await signIn(page, 'operator')
+  await page.getByRole('button', { name: /Validate candidate rule/ }).click()
+  await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
+  await signIn(page, 'reviewer')
+  await page.getByRole('button', { name: /Approve exact hash/ }).click()
+  await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
+  await signIn(page, 'operator')
+
+  const admission = page.waitForResponse((response) =>
+    response.url().endsWith('/api/runs') && response.request().method() === 'POST'
+  )
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  const run = (await (await admission).json()) as { run_id: string }
+  await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
+    timeout: 20_000,
+  })
+  await expect.poll(() => page.evaluate(() =>
+    (window as typeof window & { __testStreams?: EventSource[] })
+      .__testStreams?.length ?? 0,
+  )).toBeGreaterThan(0)
+
+  let inFlight = 0
+  let peak = 0
+  let requests = 0
+  await page.route(`**/api/runs/${run.run_id}`, async (route) => {
+    inFlight += 1
+    requests += 1
+    peak = Math.max(peak, inFlight)
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    inFlight -= 1
+    await route.continue()
+  })
+  const notify = () => page.evaluate(() => {
+    const streams = (window as typeof window & { __testStreams?: EventSource[] })
+      .__testStreams ?? []
+    for (const stream of streams) stream.dispatchEvent(new Event('transition'))
+  })
+  await notify()
+  await expect.poll(() => requests).toBeGreaterThan(0)
+  for (let i = 0; i < 24; i++) await notify()
+  await expect.poll(() => requests >= 2 && inFlight === 0, {
+    timeout: 10_000,
+  }).toBe(true)
+  expect(peak).toBe(1)
+  expect(requests).toBeLessThan(5)
+  await expect(page.locator('.run-status')).toHaveText('COMPLETE')
+  await expect(page.locator('.transition-list li strong', {
+    hasText: 'COMPLETE',
+  })).toBeVisible()
+})
+
