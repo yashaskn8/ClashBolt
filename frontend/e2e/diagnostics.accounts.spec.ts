@@ -34,6 +34,7 @@ test('operator sees queue diagnostics but viewer does not', async ({ page }) => 
   await page.getByLabel('Account password').fill('browser-local-password-000')
   await page.getByRole('button', { name: 'Switch named account' }).click()
   await expect(page.getByText('Signed in: browser.viewer (viewer)')).toBeVisible()
+  await expect(page.locator('.recent-runs')).toHaveAttribute('data-operator-ready', 'false')
   await expect(page.getByText(
     'Operator check: Pending experiments have no recently responsive worker.',
   )).toHaveCount(0)
@@ -44,7 +45,7 @@ test('operator diagnostics fail closed on a rejected refresh', async ({ page }) 
   let requests = 0
   await page.route('**/api/operations', async (route) => {
     requests++
-    if (requests > 1) {
+    if (requests > 2) {
       await route.fulfill({ status: 403, body: 'Revoked' })
       return
     }
@@ -85,7 +86,7 @@ test('a failed run-index refresh removes the previously selectable run', async (
     (url) => url.pathname === '/api/runs' && url.searchParams.get('limit') === '10',
     async (route) => {
     requests++
-    if (requests > 1) {
+    if (requests > 2) {
       await route.fulfill({ status: 503, body: 'Database unavailable' })
       return
     }
@@ -111,7 +112,7 @@ test('a failed run-index refresh removes the previously selectable run', async (
   await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
   await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(0)
   await expect(page.locator('.recent-list button')).toHaveCount(1)
-  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(1)
+  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(2)
   await expect(page.locator('.recent-list button')).toHaveCount(0)
   await expect(page.getByText(
     'Recent runs unavailable; check PostgreSQL and the API.',
@@ -136,7 +137,7 @@ test('stale operator diagnostics do not survive account replacement', async ({ p
   }
   await page.route('**/api/operations', async (route) => {
     requests++
-    if (requests > 1) await blocked
+    if (requests > 2) await blocked
     try {
       await route.fulfill({
         status: 200, contentType: 'application/json',
@@ -154,11 +155,12 @@ test('stale operator diagnostics do not survive account replacement', async ({ p
     'Operator check: Pending experiments have no recently responsive worker.',
   )
   await expect(oldAlert).toBeVisible()
-  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(1)
+  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(2)
   await page.getByLabel('Account name').fill('browser.viewer')
   await page.getByLabel('Account password').fill('browser-local-password-000')
   await page.getByRole('button', { name: 'Switch named account' }).click()
   await expect(page.getByText('Signed in: browser.viewer (viewer)')).toBeVisible()
+  await expect(page.locator('.recent-runs')).toHaveAttribute('data-operator-ready', 'false')
   await expect(oldAlert).toHaveCount(0)
   release()
   await page.waitForTimeout(300)
