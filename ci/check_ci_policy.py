@@ -10,7 +10,10 @@ from pathlib import Path
 
 import yaml
 
-REQUIRED = {"backend", "frontend", "browser", "security", "redteam"}
+REQUIRED = {
+    "backend", "frontend", "browser", "security", "redteam",
+    "compatibility", "package", "workflowlint",
+}
 COMMANDS = {
     "backend": (
         "python -m ruff check .",
@@ -40,8 +43,31 @@ COMMANDS = {
         "ci/check_ci_policy.py",
         "ci/tests/test_gate_validation.py",
         "ci/tests/test_deployment_security.py",
+        "ci/tests/test_release_artifacts.py",
         "test_adversarial_fixture.py",
         "--timeout=30",
+    ),
+    "compatibility": (
+        "python -m pip check",
+        "python -m compileall",
+        "python -m pytest",
+        "--timeout=30",
+        "test_witness.py",
+        "test_adversarial_fixture.py",
+    ),
+    "package": (
+        "npm ci",
+        "npm run build",
+        "python -m build --sdist --wheel",
+        "python -m twine check --strict",
+        "ci/check_release_artifacts.py",
+        "sha256sum release/dist/*",
+        "python -m venv",
+        " -I -c ",
+    ),
+    "workflowlint": (
+        "github.com/rhysd/actionlint/cmd/actionlint@v1.7.12",
+        "shellcheck -S error",
     ),
 }
 PIN = re.compile(r"^[^\s@]+@[a-f0-9]{40}$")
@@ -74,6 +100,25 @@ def audit(workflow: str, playwright: str) -> None:
             raise ValueError(f"Missing or unreasonable timeout: {name}")
         if job.get("permissions", {"contents": "read"}) != {"contents": "read"}:
             raise ValueError(f"Job has elevated permissions: {name}")
+        if name == "compatibility":
+            strategy = job.get("strategy", {})
+            if (
+                strategy.get("fail-fast") != "false"
+                or strategy.get("matrix", {}).get("python-version")
+                != ["3.11", "3.13"]
+            ):
+                raise ValueError("Both declared Python compatibility boundaries must run")
+        if name == "package":
+            uploads = [
+                step for step in job.get("steps", [])
+                if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+            ]
+            if len(uploads) != 1 or uploads[0].get("with", {}).get(
+                "if-no-files-found"
+            ) != "error":
+                raise ValueError("Release candidate upload must fail if artifacts vanish")
+            if "release/SHA256SUMS" not in uploads[0].get("with", {}).get("path", ""):
+                raise ValueError("Release candidate must include its SHA-256 manifest")
         if name == "release-gate":
             if job.get("if") != "${{ always() }}":
                 raise ValueError("Release gate must run even when upstream fails")
@@ -121,10 +166,13 @@ def audit(workflow: str, playwright: str) -> None:
                         raise ValueError("Checkout credentials must not persist")
     gate = jobs["release-gate"]
     commands = "\n".join(str(x.get("run", "")) for x in gate["steps"])
-    for item in ("BACKEND", "FRONTEND", "BROWSER", "SECURITY", "REDTEAM"):
-        expected = "${{ needs." + item.lower() + ".result }}"
+    for name in REQUIRED:
+        item = name.upper()
+        expected = "${{ needs." + name + ".result }}"
         if expected not in str(gate["steps"][0].get("env", {}).get(item, "")):
             raise ValueError(f"Missing release dependency status: {item}")
+        if f'"${item}"' not in commands:
+            raise ValueError(f"Release gate does not check {item} result")
     if 'if [[ "$result" != "success" ]]' not in commands:
         raise ValueError("Release gate must explicitly reject non-success results")
     if not re.search(r"forbidOnly:\s*!!process\.env\.CI", playwright):
