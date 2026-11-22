@@ -152,9 +152,13 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
     hasText: 'FORGED',
   })).toHaveCount(0)
 
+  const firstCorruptCount = corruptedPages
   corruption = 'cursor'
   await notify()
-  await expect.poll(() => corruptedPages).toBeGreaterThan(1)
+  await expect.poll(() => corruptedPages).toBeGreaterThan(firstCorruptCount)
+  await expect(page.getByText(
+    'Cannot refresh the authoritative run snapshot.',
+  )).toBeVisible()
   await expect(terminal).toBeVisible()
   corruption = 'none'
   await notify()
