@@ -165,6 +165,7 @@ test('stale operator diagnostics do not survive account replacement', async ({ p
   release()
   await page.waitForTimeout(300)
   await expect(oldAlert).toHaveCount(0)
-  await expect(page.locator('.recent-list')).toBeVisible()
+  await expect(page.locator('.recent-runs')).toBeVisible()
+  await expect(page.locator('.recent-list button')).toHaveCount(0)
 })
 
