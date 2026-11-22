@@ -86,11 +86,17 @@ def test_failed_or_invalid_native_dump_leaves_no_archive(
     assert list(tmp_path.glob("*.partial")) == []
     assert list(tmp_path.glob(".*.partial")) == []
     assert commands and all("local-secret" not in str(command) for command in commands)
-    assert all(
-        env is not None and env["PGPASSWORD"] == "local-secret"
-        and "PGHOST" not in env
-        for env in environments
-    )
+    # Only pg_dump needs database credentials. pg_restore's local archive
+    # inspection deliberately receives no database environment at all.
+    assert len(commands) == len(environments)
+    for command, env in zip(commands, environments):
+        if command[0] == "pg_dump":
+            assert env is not None
+            assert env["PGPASSWORD"] == "local-secret"
+            assert "PGHOST" not in env
+        else:
+            assert command[0] == "pg_restore"
+            assert env is None
 
 
 def test_manifest_write_error_removes_just_created_archive(
