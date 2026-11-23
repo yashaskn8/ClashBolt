@@ -220,6 +220,7 @@ def test_project_grant_requires_active_account(accounts):
 def test_account_cli_grant_does_not_rerun_schema_migration(monkeypatch):
     """Live grant changes must not run DDL alongside API and worker traffic."""
     import sys
+
     import clashbolt.accounts as module
 
     calls = []
