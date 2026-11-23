@@ -72,7 +72,8 @@ test('operator diagnostics fail closed on a rejected refresh', async ({ page }) 
     'Operator check: Pending experiments have no recently responsive worker.',
   )
   await expect(alert).toBeVisible()
-  await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(1)
+  // The first two responses are healthy; only the third is rejected.
+  await expect.poll(() => requests, { timeout: 20_000 }).toBeGreaterThan(2)
   await expect(alert).toHaveCount(0)
   await expect(page.getByText(
     'Operator diagnostics unavailable; current state is unconfirmed.',
