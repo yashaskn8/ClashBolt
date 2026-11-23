@@ -78,7 +78,10 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
     branches = totals["num_branches"]
     if branches <= 0:
         raise ValueError("No branch decisions were measured")
-    branch_pct = 100 * totals["covered_branches"] / branches
+    covered = totals["covered_branches"]
+    if not isinstance(covered, int) or isinstance(covered, bool) or not 0 <= covered <= branches:
+        raise ValueError("Invalid covered branch count")
+    branch_pct = 100 * covered / branches
     combined_pct = totals["percent_covered"]
     if combined_pct < MIN_COMBINED_COVERAGE:
         raise ValueError(f"Combined coverage {combined_pct:.2f}% below floor")

@@ -74,7 +74,7 @@ def test_valid_synthetic_reports_pass(tmp_path):
     "hidden_failure", "reported_error", "new_skip", "skip_removed",
     "test_deleted", "duplicate_case", "unnamed_case",
     "falsified_test_count", "falsified_skip_count", "falsified_failure_count",
-    "branches_disabled", "branches_not_measured",
+    "branches_disabled", "branches_not_measured", "inflated_covered_branches",
     "branch_regression", "combined_regression", "critical_module_missing",
     "critical_module_regression", "missing_modules",
 ])
@@ -104,6 +104,8 @@ def test_quality_gate_rejects_tampered_reports(tmp_path, mutation):
         report["meta"]["branch_coverage"] = False
     elif mutation == "branches_not_measured":
         report["totals"]["num_branches"] = 0
+    elif mutation == "inflated_covered_branches":
+        report["totals"]["covered_branches"] = report["totals"]["num_branches"] + 1
     elif mutation == "branch_regression":
         report["totals"]["covered_branches"] = 10
     elif mutation == "combined_regression":
