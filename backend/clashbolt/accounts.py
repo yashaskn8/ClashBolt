@@ -784,8 +784,8 @@ def main() -> None:
     if not dsn:
         parser.error("Set CLASHBOLT_DATABASE_URL first")
     store = AccountStore(dsn)
-    store.migrate()
     if args.command == "migrate":
+        store.migrate()
         print("Local account schema ready")
         return
     if not args.username or not USERNAME.fullmatch(args.username):
