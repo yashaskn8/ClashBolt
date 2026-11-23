@@ -72,7 +72,8 @@ def test_valid_synthetic_reports_pass(tmp_path):
 
 @pytest.mark.parametrize("mutation", [
     "hidden_failure", "reported_error", "new_skip", "skip_removed",
-    "test_deleted", "branches_disabled", "branches_not_measured",
+    "test_deleted", "duplicate_case", "unnamed_case",
+    "branches_disabled", "branches_not_measured",
     "branch_regression", "combined_regression", "critical_module_missing",
     "critical_module_regression", "missing_modules",
 ])
@@ -88,6 +89,10 @@ def test_quality_gate_rejects_tampered_reports(tmp_path, mutation):
         suite[0].remove(suite[0][0])
     elif mutation == "test_deleted":
         suite.remove(suite[-1])
+    elif mutation == "duplicate_case":
+        suite[-1].set("name", suite[-2].get("name"))
+    elif mutation == "unnamed_case":
+        del suite[-1].attrib["name"]
     elif mutation == "branches_disabled":
         report["meta"]["branch_coverage"] = False
     elif mutation == "branches_not_measured":
