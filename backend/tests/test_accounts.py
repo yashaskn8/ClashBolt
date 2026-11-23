@@ -215,3 +215,34 @@ def test_project_grant_requires_active_account(accounts):
     assert not accounts.grant_local_role("unknown.operator", "operator")
     with pytest.raises(ValueError, match="username"):
         accounts.revoke_local_role("../invalid")
+
+
+def test_account_cli_grant_does_not_rerun_schema_migration(monkeypatch):
+    """Live grant changes must not run DDL alongside API and worker traffic."""
+    import sys
+    import clashbolt.accounts as module
+
+    calls = []
+
+    class FakeStore:
+        def __init__(self, dsn):
+            assert dsn == "postgresql://test-only"
+
+        def migrate(self):
+            calls.append("migrate")
+
+        def grant_project_role(self, username, role, project):
+            calls.append((username, role, project))
+            return True
+
+    monkeypatch.setattr(module, "AccountStore", FakeStore)
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", "postgresql://test-only")
+    monkeypatch.setattr(sys, "argv", [
+        "clashbolt.accounts", "grant-local", "browser.rolesync", "operator",
+    ])
+    module.main()
+    assert calls == [("browser.rolesync", "operator", "local")]
+
+    monkeypatch.setattr(sys, "argv", ["clashbolt.accounts", "migrate"])
+    module.main()
+    assert calls[-1] == "migrate"
