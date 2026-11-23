@@ -36,6 +36,19 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
         raise ValueError(
             f"Test report has {len(cases)} cases; at least {MIN_TEST_CASES} required"
         )
+    for suite in suites:
+        descendants = list(suite.iter("testcase"))
+        for field, actual in (
+            ("tests", len(descendants)),
+            ("skipped", sum(case.find("skipped") is not None for case in descendants)),
+            ("failures", sum(case.find("failure") is not None for case in descendants)),
+            ("errors", sum(case.find("error") is not None for case in descendants)),
+        ):
+            reported = suite.get(field)
+            if reported is None or not reported.isdecimal() or int(reported) != actual:
+                raise ValueError(
+                    f"JUnit suite {suite.get('name', '<unnamed>')} has inconsistent {field}"
+                )
     identities = [(case.get("classname"), case.get("name")) for case in cases]
     if any(not classname or not name for classname, name in identities):
         raise ValueError("JUnit contains test cases without stable identities")
