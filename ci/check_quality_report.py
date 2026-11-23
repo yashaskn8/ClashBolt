@@ -33,6 +33,9 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
     root = ElementTree.parse(junit_xml).getroot()
     suites = list(root.iter("testsuite"))
     cases = list(root.iter("testcase"))
+    suite_cases = {id(case) for suite in suites for case in suite.iter("testcase")}
+    if len(suite_cases) != len(cases):
+        raise ValueError("JUnit contains test cases outside a test suite")
     if not suites or len(cases) < MIN_TEST_CASES:
         raise ValueError(
             f"Test report has {len(cases)} cases; at least {MIN_TEST_CASES} required"

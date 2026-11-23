@@ -72,6 +72,7 @@ def test_valid_synthetic_reports_pass(tmp_path):
 
 @pytest.mark.parametrize("mutation", [
     "hidden_failure", "reported_error", "new_skip", "skip_removed",
+    "orphan_testcase",
     "test_deleted", "duplicate_case", "unnamed_case",
     "falsified_test_count", "falsified_skip_count", "falsified_failure_count",
     "branches_disabled", "branches_not_measured", "inflated_covered_branches",
@@ -86,6 +87,14 @@ def test_quality_gate_rejects_tampered_reports(tmp_path, mutation):
     junit, coverage, suite, report = _reports(tmp_path)
     if mutation == "hidden_failure":
         ElementTree.SubElement(suite[2], "failure", message="mutated failure")
+    elif mutation == "orphan_testcase":
+        wrapper = ElementTree.Element("testsuites")
+        wrapper.append(suite)
+        ElementTree.SubElement(
+            wrapper, "testcase", classname="backend.tests.test_synthetic",
+            name="test_orphan",
+        )
+        suite = wrapper
     elif mutation == "reported_error":
         suite.set("errors", "1")
     elif mutation == "new_skip":
