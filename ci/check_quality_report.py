@@ -5,6 +5,7 @@ This is a regression floor, not a claim of complete project coverage.
 """
 
 import json
+import math
 import sys
 from pathlib import Path
 from xml.etree import ElementTree
@@ -76,13 +77,19 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
         raise ValueError("Statement-only coverage is not acceptable")
     totals = report["totals"]
     branches = totals["num_branches"]
-    if branches <= 0:
+    if type(branches) is not int or branches <= 0:
         raise ValueError("No branch decisions were measured")
     covered = totals["covered_branches"]
     if not isinstance(covered, int) or isinstance(covered, bool) or not 0 <= covered <= branches:
         raise ValueError("Invalid covered branch count")
     branch_pct = 100 * covered / branches
     combined_pct = totals["percent_covered"]
+    if (
+        type(combined_pct) not in (int, float)
+        or not math.isfinite(combined_pct)
+        or not 0 <= combined_pct <= 100
+    ):
+        raise ValueError("Invalid combined coverage percentage")
     if combined_pct < MIN_COMBINED_COVERAGE:
         raise ValueError(f"Combined coverage {combined_pct:.2f}% below floor")
     if branch_pct < MIN_BRANCH_ONLY_COVERAGE:
@@ -95,6 +102,12 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
         if module not in files:
             raise ValueError(f"Missing critical module in coverage: {module}")
         percentage = files[module]["summary"]["percent_covered"]
+        if (
+            type(percentage) not in (int, float)
+            or not math.isfinite(percentage)
+            or not 0 <= percentage <= 100
+        ):
+            raise ValueError(f"Invalid critical module coverage: {module}")
         if percentage < minimum:
             raise ValueError(
                 f"Critical module {module} coverage {percentage:.2f}% < {minimum:.2f}%"

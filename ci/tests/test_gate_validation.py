@@ -75,6 +75,10 @@ def test_valid_synthetic_reports_pass(tmp_path):
     "test_deleted", "duplicate_case", "unnamed_case",
     "falsified_test_count", "falsified_skip_count", "falsified_failure_count",
     "branches_disabled", "branches_not_measured", "inflated_covered_branches",
+    "boolean_branch_total", "fractional_branch_total",
+    "nan_combined_coverage", "infinite_combined_coverage",
+    "boolean_combined_coverage", "overfull_combined_coverage",
+    "nan_critical_module", "overfull_critical_module",
     "branch_regression", "combined_regression", "critical_module_missing",
     "critical_module_regression", "missing_modules",
 ])
@@ -106,6 +110,22 @@ def test_quality_gate_rejects_tampered_reports(tmp_path, mutation):
         report["totals"]["num_branches"] = 0
     elif mutation == "inflated_covered_branches":
         report["totals"]["covered_branches"] = report["totals"]["num_branches"] + 1
+    elif mutation == "boolean_branch_total":
+        report["totals"]["num_branches"] = True
+    elif mutation == "fractional_branch_total":
+        report["totals"]["num_branches"] = 1000.5
+    elif mutation == "nan_combined_coverage":
+        report["totals"]["percent_covered"] = float("nan")
+    elif mutation == "infinite_combined_coverage":
+        report["totals"]["percent_covered"] = float("inf")
+    elif mutation == "boolean_combined_coverage":
+        report["totals"]["percent_covered"] = True
+    elif mutation == "overfull_combined_coverage":
+        report["totals"]["percent_covered"] = 101.0
+    elif mutation == "nan_critical_module":
+        report["files"][next(iter(MODULE_MINIMUMS))]["summary"]["percent_covered"] = float("nan")
+    elif mutation == "overfull_critical_module":
+        report["files"][next(iter(MODULE_MINIMUMS))]["summary"]["percent_covered"] = 101.0
     elif mutation == "branch_regression":
         report["totals"]["covered_branches"] = 10
     elif mutation == "combined_regression":

@@ -27,6 +27,16 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## CI coverage evidence numeric integrity (23 November 2026)
+
+The report verifier now rejects boolean or fractional measured-branch totals,
+non-finite or out-of-range combined percentages, and non-finite or out-of-range
+critical-module percentages. Eight synthetic adversarial mutations exercise
+these malformed inputs. This validates report shape, not whether a producer
+honestly executed tests. CI for the new commit must pass before this change is
+considered verified. The measured branch-only baseline remains 73.67%; no
+increase toward 100% is claimed from these validator checks.
+
 ## P2 immutable transition pagination validation (22 November 2026)
 
 The React causal timeline now validates every authoritative paginated
