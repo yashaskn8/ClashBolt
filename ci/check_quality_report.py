@@ -36,6 +36,11 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
         raise ValueError(
             f"Test report has {len(cases)} cases; at least {MIN_TEST_CASES} required"
         )
+    identities = [(case.get("classname"), case.get("name")) for case in cases]
+    if any(not classname or not name for classname, name in identities):
+        raise ValueError("JUnit contains test cases without stable identities")
+    if len(set(identities)) != len(identities):
+        raise ValueError("JUnit contains duplicate test cases")
     if any(
         int(suite.get(field, "0")) != 0
         for suite in suites for field in ("failures", "errors")
