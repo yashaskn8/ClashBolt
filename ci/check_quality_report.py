@@ -31,11 +31,15 @@ MODULE_MINIMUMS = {
 
 def validate(junit_xml: Path, coverage_json: Path) -> dict:
     root = ElementTree.parse(junit_xml).getroot()
+    if root.tag not in ("testsuite", "testsuites"):
+        raise ValueError("JUnit has an unexpected root element")
+    if root.tag == "testsuites" and any(child.tag != "testsuite" for child in root):
+        raise ValueError("JUnit contains unexpected top-level elements")
     suites = list(root.iter("testsuite"))
     cases = list(root.iter("testcase"))
-    suite_cases = {id(case) for suite in suites for case in suite.iter("testcase")}
-    if len(suite_cases) != len(cases):
-        raise ValueError("JUnit contains test cases outside a test suite")
+    direct_cases = {id(case) for suite in suites for case in suite if case.tag == "testcase"}
+    if len(direct_cases) != len(cases):
+        raise ValueError("JUnit contains test cases outside a direct test suite")
     if not suites or len(cases) < MIN_TEST_CASES:
         raise ValueError(
             f"Test report has {len(cases)} cases; at least {MIN_TEST_CASES} required"
