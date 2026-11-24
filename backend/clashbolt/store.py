@@ -295,6 +295,7 @@ class Ledger:
     def __init__(
         self, dsn: str, *, schema: str = "public", project_id: str = "local",
         actor_account_id: UUID | None = None, required_role: str = "viewer",
+        actor_session_epoch: int | None = None,
     ):
         # Only trusted project-registry schemas may be used for resources.
         # One instance holds one immutable scope, not a request-global context.
@@ -310,6 +311,7 @@ class Ledger:
         self.schema = schema
         self.project_id = project_id
         self.actor_account_id = actor_account_id
+        self.actor_session_epoch = actor_session_epoch
         self.required_role = required_role
 
     def connect(self) -> psycopg.Connection:
@@ -331,9 +333,10 @@ class Ledger:
                     JOIN public.project_membership m ON m.account_id = a.id
                     JOIN public.project_workspace w ON w.project_id = m.project_id
                     WHERE a.id = %s AND m.project_id = %s AND a.active = TRUE
+                      AND a.session_epoch = COALESCE(%s, a.session_epoch)
                     FOR SHARE OF a, m
                     """,
-                    (self.actor_account_id, self.project_id),
+                    (self.actor_account_id, self.project_id, self.actor_session_epoch),
                 ).fetchone()
                 effective = (
                     row["project_role"]

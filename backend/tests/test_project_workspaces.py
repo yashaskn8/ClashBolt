@@ -350,3 +350,62 @@ def test_admission_preview_remains_in_selected_project(workspace):
         _sign_in(client, "reviewer")
         _select(client, project_id, "reviewer")
         assert client.post("/api/runs/preview", json=payload).status_code == 403
+
+
+@pytest.mark.parametrize("revocation", ["grant", "session"])
+def test_verification_admission_rechecks_project_and_session_at_write(
+    workspace, monkeypatch, revocation,
+):
+    from clashbolt.verification_jobs import VerificationJobs
+
+    store, project_id, schema = workspace
+    project = Policy(store.dsn, project_id=project_id, schema=schema)
+    oracle_id = UUID(project.propose("fixture-author")["id"])
+    project.approve(oracle_id, ORACLE_HASH, "reviewer")
+    run_id = project.admit(
+        client_key=str(uuid4()), variant="locked", schedule="serial",
+        approved_oracle_id=oracle_id,
+    )["run_id"]
+    assert asyncio.run(process_one(project, "verification-permissions-worker"))
+    with store.connect() as conn:
+        account_id = conn.execute(
+            "SELECT id FROM local_account WHERE username = 'multi.operator'"
+        ).fetchone()["id"]
+    original = VerificationJobs.submit
+
+    def submit_after_revocation(queue, run, kind):
+        if revocation == "grant":
+            assert store.revoke_project_role("multi.operator", project_id)
+        else:
+            assert store.revoke_sessions(account_id)
+        return original(queue, run, kind)
+
+    monkeypatch.setattr(VerificationJobs, "submit", submit_after_revocation)
+    with TestClient(create_app()) as client:
+        _sign_in(client, "operator")
+        _select(client, project_id, "operator")
+        response = client.post(f"/api/runs/{run_id}/verification-jobs", json={"kind": "REPLAY"})
+        assert response.status_code == 403, response.text
+    with project.connect() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM verification_job").fetchone()["n"] == 0
+
+
+def test_draft_update_is_rejected_if_session_changes_before_write(workspace, monkeypatch):
+    store, project_id, _ = workspace
+    original = AccountStore.save_account_draft
+
+    def save_after_logout(accounts, account_id, *args, **kwargs):
+        assert store.revoke_sessions(account_id)
+        return original(accounts, account_id, *args, **kwargs)
+
+    monkeypatch.setattr(AccountStore, "save_account_draft", save_after_logout)
+    with TestClient(create_app()) as client:
+        _sign_in(client, "operator")
+        _select(client, project_id, "operator")
+        update = client.post("/api/experiment-draft", json={
+            "expected_version": 0, "variant": "locked", "schedule": "serial",
+        })
+        assert update.status_code == 403, update.text
+        _sign_in(client, "operator")
+        _select(client, project_id, "operator")
+        assert client.get("/api/experiment-draft").json() == {"saved": None}

@@ -144,11 +144,18 @@ export default function App() {
       }),
     })
       .then((response) => parseResponse<RunPreview>(response))
-      .then((data) => { if (!cancelled) setRunPreview(data) })
+      .then((data) => {
+        if (cancelled) return
+        if (data.project_id !== (account?.project_id ?? 'local')) {
+          setPreviewUnavailable(true)
+          return
+        }
+        setRunPreview(data)
+      })
       .catch(() => { if (!cancelled) setPreviewUnavailable(true) })
     return () => { cancelled = true }
   }, [
-    catalog?.storage, catalog?.access_mode, account?.role, account?.project_id,
+    catalog?.storage, catalog?.access_mode, account?.username, account?.role, account?.project_id,
     operatorToken, sessionReady, approvedOracleId, variant, schedule, executionBackend,
     durable?.run_id, durable?.status,
   ])

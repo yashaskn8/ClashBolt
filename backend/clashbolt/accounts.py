@@ -514,7 +514,7 @@ class AccountStore(Policy):
 
     @staticmethod
     def _lock_draft_grant(
-        conn, account_id: UUID, project_id: str, *, operator: bool
+        conn, account_id: UUID, project_id: str, *, operator: bool, session_epoch: int | None
     ) -> None:
         """Keep the draft's live project authority locked through read/write."""
         row = conn.execute(
@@ -524,9 +524,10 @@ class AccountStore(Policy):
             JOIN project_membership m ON m.account_id = a.id
             JOIN project_workspace w ON w.project_id = m.project_id
             WHERE a.id = %s AND m.project_id = %s AND a.active = TRUE
+              AND a.session_epoch = COALESCE(%s, a.session_epoch)
             FOR SHARE OF a, m
             """,
-            (account_id, project_id),
+            (account_id, project_id, session_epoch),
         ).fetchone()
         effective = (
             row["project_role"]
@@ -537,10 +538,12 @@ class AccountStore(Policy):
             raise PermissionError("Project access changed before draft transaction")
 
     def get_account_draft(
-        self, account_id: UUID, project_id: str = "local"
+        self, account_id: UUID, project_id: str = "local", *, session_epoch: int | None = None,
     ) -> dict | None:
         with self.connect() as conn:
-            self._lock_draft_grant(conn, account_id, project_id, operator=False)
+            self._lock_draft_grant(
+                conn, account_id, project_id, operator=False, session_epoch=session_epoch,
+            )
             row = conn.execute(
                 """
                 SELECT version, draft, updated_at
@@ -553,14 +556,16 @@ class AccountStore(Policy):
 
     def save_account_draft(
         self, account_id: UUID, draft: dict, expected_version: int,
-        project_id: str = "local",
+        project_id: str = "local", *, session_epoch: int | None = None,
     ) -> dict:
         """One CAS draft per account *and* project, without stale-form leakage."""
         if not USERNAME.fullmatch(project_id):
             raise ValueError("Invalid draft project identifier")
         self._validate_draft(draft, expected_version)
         with self.connect() as conn:
-            self._lock_draft_grant(conn, account_id, project_id, operator=True)
+            self._lock_draft_grant(
+                conn, account_id, project_id, operator=True, session_epoch=session_epoch,
+            )
             if expected_version == 0:
                 row = conn.execute(
                     """

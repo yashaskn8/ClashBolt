@@ -476,7 +476,7 @@ def create_app() -> FastAPI:
         )
         return Ledger(
             dsn, schema=account["schema"], project_id=account["project_id"],
-            actor_account_id=UUID(account["id"]),
+            actor_account_id=UUID(account["id"]), actor_session_epoch=account["epoch"],
             required_role=(
                 "reviewer" if reviewer_write else
                 "operator"
@@ -487,10 +487,7 @@ def create_app() -> FastAPI:
         )
 
     def require_verifications(http_request: Request) -> VerificationJobs:
-        scoped = require_ledger(http_request)
-        return VerificationJobs(
-            scoped.dsn, schema=scoped.schema, project_id=scoped.project_id
-        )
+        return VerificationJobs(require_ledger(http_request))
 
     @app.get("/api/health")
     def health() -> dict:
@@ -647,9 +644,9 @@ def create_app() -> FastAPI:
     @app.get("/api/experiment-draft")
     def get_experiment_draft(http_request: Request) -> dict:
         if access_mode == "accounts":
-            account_id = UUID(http_request.state.account["id"])
+            account = http_request.state.account
             return {"saved": account_store.get_account_draft(
-                account_id, http_request.state.account["project_id"]
+                UUID(account["id"]), account["project_id"], session_epoch=account["epoch"],
             )}
         return {"saved": require_ledger(http_request).get_draft()}
 
@@ -666,10 +663,10 @@ def create_app() -> FastAPI:
         }
         try:
             if access_mode == "accounts":
-                account_id = UUID(http_request.state.account["id"])
+                account = http_request.state.account
                 return account_store.save_account_draft(
-                    account_id, draft, request.expected_version,
-                    http_request.state.account["project_id"],
+                    UUID(account["id"]), draft, request.expected_version,
+                    account["project_id"], session_epoch=account["epoch"],
                 )
             return require_ledger(http_request).save_draft(draft, request.expected_version)
         except ValueError as error:

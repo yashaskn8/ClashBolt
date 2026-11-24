@@ -54,6 +54,17 @@ test('real browser switches isolated projects without carrying stale rule or dra
   await enterProject(page, 'browser-workspace')
   await expect(page.getByRole('status', { name: 'Run resource preview' }))
     .toContainText('No known blockers now; submission still rechecks')
+  await page.route('**/api/runs/preview', async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({ response, json: { ...await response.json(), project_id: 'local' } })
+  })
+  await page.getByLabel('Implementation').selectOption('locked')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('Preview unavailable')
+  await page.unroute('**/api/runs/preview')
+  await page.getByLabel('Implementation').selectOption('racy')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('No known blockers now; submission still rechecks')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
     timeout: 20_000,
@@ -74,4 +85,36 @@ test('real browser switches isolated projects without carrying stale rule or dra
   await expect(page.getByLabel('Implementation')).toHaveValue('racy')
   const restored = await page.request.get(`/api/runs/${tenantRunId}`)
   expect(restored.status()).toBe(200)
+
+  // Let approval commit in the workspace, then delay delivery until the browser
+  // has switched to the local operator context.
+  await page.getByRole('button', { name: /Validate candidate rule/ }).click()
+  await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
+  await signIn(page, 'reviewer')
+  await enterProject(page, 'browser-workspace')
+  const approvalPattern = '**/api/oracle/proposals/*/approve'
+  let deliverApproval: () => void = () => {}
+  const delivery = new Promise<void>((resolve) => { deliverApproval = resolve })
+  let approvedRule = ''
+  await page.route(approvalPattern, async (route) => {
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    approvedRule = new URL(route.request().url()).pathname.split('/').at(-2) ?? ''
+    await delivery
+    await route.fulfill({ response })
+  })
+  await page.getByRole('button', { name: /Approve exact hash/ }).click()
+  await expect.poll(() => approvedRule).not.toBe('')
+  await signIn(page, 'operator')
+  await enterProject(page, 'local')
+  const approvalResponse = page.waitForResponse(approvalPattern)
+  deliverApproval()
+  expect(await (await approvalResponse).finished()).toBe(null)
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  const preview = page.waitForRequest((request) => request.url().endsWith('/api/runs/preview'))
+  await page.getByLabel('Implementation').selectOption('racy')
+  const submitted = (await preview).postDataJSON() as { approved_oracle_id: string | null }
+  expect(submitted.approved_oracle_id).not.toBe(approvedRule)
 })

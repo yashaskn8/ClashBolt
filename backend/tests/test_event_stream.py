@@ -70,13 +70,19 @@ def test_stream_rejects_invalid_resume_header(timeline, last_id):
     assert client.get(f"{url}/stream", headers={"Last-Event-ID": last_id}).status_code == 422
 
 
-def test_stream_resumes_then_closes_when_active_project_grant_is_revoked(timeline, monkeypatch):
+@pytest.mark.parametrize("revocation,status", [("grant", 403), ("session", 401)])
+def test_stream_resumes_then_closes_when_access_is_revoked(
+    timeline, monkeypatch, revocation, status,
+):
     accounts, client, url, _ = timeline
     original = Ledger.transition_page
 
     def revoke_after_read(ledger, run_id, after=0, limit=100):
         page = original(ledger, run_id, after, limit)
-        assert accounts.revoke_local_role("timeline.viewer")
+        if revocation == "grant":
+            assert accounts.revoke_local_role("timeline.viewer")
+        else:
+            assert accounts.revoke_sessions(ledger.actor_account_id)
         return page
 
     monkeypatch.setattr(Ledger, "transition_page", revoke_after_read)
@@ -86,4 +92,4 @@ def test_stream_resumes_then_closes_when_active_project_grant_is_revoked(timelin
     assert "id: 2\nevent: transition" in event.text
     assert event.text.count("event: transition") == 1
     assert "CANCELLED" in event.text
-    assert client.get(f"{url}/events").status_code == 403
+    assert client.get(f"{url}/events").status_code == status

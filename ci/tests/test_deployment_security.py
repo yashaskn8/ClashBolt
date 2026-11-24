@@ -1,5 +1,9 @@
 """Mutation tests for native systemd isolation and secret-leak policy."""
 
+import errno
+import os
+import runpy
+import socket
 from pathlib import Path
 
 import pytest
@@ -101,3 +105,49 @@ def test_ordinary_fixed_fixture_markers_not_mistaken_for_secrets():
             "scope = 'SYNTHETIC_ONLY'\n"
         )
     })
+
+
+@pytest.mark.parametrize("ip_errno", [errno.EPERM, errno.EAFNOSUPPORT, errno.EACCES, None])
+def test_native_preflight_requires_kernel_ip_denial(monkeypatch, ip_errno):
+    resource = pytest.importorskip("resource")
+    calls = []
+    closed = []
+    original_exists = Path.exists
+
+    class Probe:
+        def close(self):
+            closed.append(True)
+
+    def socket_probe(family, kind):
+        calls.append((family, kind))
+        if ip_errno is not None:
+            raise OSError(ip_errno, "simulated native isolation")
+        return Probe()
+
+    hidden = {
+        "/etc/clashbolt-host-canary", "/run/clashbolt-target.sock",
+        "/run/postgresql/.s.PGSQL.5432", "/proc/1/environ",
+    }
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "geteuid", lambda: 1000)
+        patch.setattr(resource, "getrlimit", lambda key: (
+            (64, 64) if key == resource.RLIMIT_NOFILE else (3, 3)
+        ))
+        patch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+        patch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+        patch.setattr(Path, "is_socket", lambda p: str(p) == "/run/clashbolt-db/.s.PGSQL.5433")
+        patch.setattr(Path, "exists", lambda p: False if str(p) in hidden else original_exists(p))
+        patch.setattr(socket, "socket", socket_probe)
+        if ip_errno is None:
+            with pytest.raises(AssertionError, match="could open an IP socket"):
+                runpy.run_path("ci/fixture_preflight.py")
+        else:
+            runpy.run_path("ci/fixture_preflight.py")
+
+    assert calls[0] == (socket.AF_INET, socket.SOCK_STREAM)
+    if ip_errno is None:
+        assert closed == [True]
+    else:
+        assert calls[1:] == [(socket.AF_INET6, socket.SOCK_STREAM)]
+        assert closed == []

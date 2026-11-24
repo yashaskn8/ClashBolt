@@ -149,7 +149,7 @@ def policy_router(dsn: str | None) -> APIRouter:
         )
         return Policy(
             dsn, schema=selected["schema"], project_id=selected["project_id"],
-            actor_account_id=UUID(actor["id"]),
+            actor_account_id=UUID(actor["id"]), actor_session_epoch=actor["epoch"],
             required_role=(
                 "reviewer" if reviewer_write else "operator"
                 if http_request.method not in ("GET", "HEAD", "OPTIONS")

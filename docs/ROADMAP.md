@@ -27,6 +27,17 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Project and session authorization through transaction commit
+
+- P1 discards delayed approval responses from an earlier reviewer context and
+  rejects resource previews for a different project.
+- P4 rechecks the named session epoch with the live project grant in PostgreSQL.
+  Verification requests now use the same scoped ledger as other project
+  operations. The tests revoke sessions and grants after authentication and
+  verify that no draft or verification job is written.
+- B3 tests the deployment preflight's rejection path when a simulated IP socket
+  opens. The systemd host check remains part of CI.
+
 ## Malformed result recovery and timeline consistency
 
 - B5 validates exact stock-count types before certifying synthetic evidence.

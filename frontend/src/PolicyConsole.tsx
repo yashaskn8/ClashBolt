@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 type Variant = 'racy' | 'locked'
 type Schedule = 'overlap' | 'serial'
@@ -77,6 +77,12 @@ export default function PolicyConsole({
   const [error, setError] = useState('')
   const [reviewerToken, setReviewerToken] = useState('')
   const [busy, setBusy] = useState(false)
+  const active = useRef(false)
+  useLayoutEffect(() => {
+    active.current = true
+    return () => { active.current = false }
+  }, [])
+
   const canOperate = accountRole ? accountRole === 'operator' : !!operator
   const canReview = accountRole ? accountRole === 'reviewer' : !!operator
 
@@ -136,7 +142,7 @@ export default function PolicyConsole({
       setProposals((current) => current.map((item) =>
         item.id === rule.id ? { ...item, state: result.state } : item
       ))
-      onApproved(rule.id)
+      if (active.current) onApproved(rule.id)
       return result
     })
   }
