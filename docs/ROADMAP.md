@@ -27,6 +27,15 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Timeline and coverage gates
+
+- P2 uses the PostgreSQL bigint cursor range for stream resumption and paginated
+  history. Streaming database reads run off the event loop and the stream closes
+  cleanly if a project grant is revoked.
+- Chromium measures branches in all frontend TypeScript source modules. CI
+  requires coverage from the local and account browser suites and at least 73%
+  branch coverage. The backend branch floor is 78.5%.
+
 ## Portable witness and review validation
 
 - B6 rejects malformed oracle fields in portable archives and bounds the CLI read.

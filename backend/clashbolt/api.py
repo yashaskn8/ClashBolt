@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import Error as DatabaseError
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from clashbolt.accounts import (
     ACCOUNT_SCHEMA_VERSION,
@@ -43,7 +44,7 @@ from clashbolt.ops_alerts import diagnose_operations
 from clashbolt.policy import POLICY_SCHEMA_VERSION
 from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
-from clashbolt.store import BASE_SCHEMA_VERSION, Ledger
+from clashbolt.store import BASE_SCHEMA_VERSION, MAX_EVENT_VERSION, Ledger
 from clashbolt.verification_jobs import VerificationJobs
 from clashbolt.witness import verify
 from clashbolt.witness_bundle import create_bundle
@@ -726,7 +727,7 @@ def create_app() -> FastAPI:
     def get_events(
         run_id: UUID, http_request: Request, after: int = 0, limit: int = 100
     ) -> dict:
-        if after < 0 or not 1 <= limit <= 100:
+        if not 0 <= after <= MAX_EVENT_VERSION or not 1 <= limit <= 100:
             raise HTTPException(422, "Invalid event cursor or limit")
         store = require_ledger(http_request)
         if not store.get(run_id):
@@ -739,15 +740,18 @@ def create_app() -> FastAPI:
     @app.get("/api/runs/{run_id}/stream")
     async def stream_events(request: Request, run_id: UUID, after: int = 0):
         store = require_ledger(request)
-        if not store.get(run_id):
-            raise HTTPException(404, "Run not found")
+        if not 0 <= after <= MAX_EVENT_VERSION:
+            raise HTTPException(422, "Invalid event cursor")
         resume = request.headers.get("Last-Event-ID")
         if resume is not None:
-            if not resume.isascii() or not resume.isdigit() or len(resume) > 18:
+            if (
+                not resume.isascii() or not resume.isdigit() or len(resume) > 19
+                or int(resume) > MAX_EVENT_VERSION
+            ):
                 raise HTTPException(422, "Malformed Last-Event-ID")
             after = max(after, int(resume))
-        if after < 0:
-            raise HTTPException(422, "Cursor cannot be negative")
+        if not await run_in_threadpool(store.get, run_id):
+            raise HTTPException(404, "Run not found")
 
         async def messages():
             cursor = after
@@ -757,7 +761,12 @@ def create_app() -> FastAPI:
                     break
                 # Replay all pending pages before waiting for another hint.
                 for _ in range(20):
-                    page = store.transition_page(run_id, cursor)
+                    try:
+                        page = await run_in_threadpool(store.transition_page, run_id, cursor)
+                    except PermissionError:
+                        # Response headers were already sent. End the stream
+                        # without disclosing further project transitions.
+                        return
                     for event in page["events"]:
                         cursor = event["version"]
                         payload = json.dumps(event, separators=(",", ":"))

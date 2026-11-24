@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './coverage'
 
 test('operator sees queue diagnostics but viewer does not', async ({ page }) => {
   await page.route('**/api/operations', async (route) => {

@@ -32,6 +32,8 @@ COMMANDS = {
         "CLASHBOLT_BROWSER_MODE=static",
         "CLASHBOLT_BROWSER_MODE=accounts",
         "playwright test",
+        "CLASHBOLT_BROWSER_COVERAGE=1 npm run test:e2e",
+        "node check-branch-coverage.mjs",
     ),
     "security": (
         "pip_audit --strict",

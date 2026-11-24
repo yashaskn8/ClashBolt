@@ -101,7 +101,7 @@ jobs:
         working-directory: frontend
       - run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - run: npm run test:e2e
+      - run: CLASHBOLT_BROWSER_COVERAGE=1 npm run test:e2e
         working-directory: frontend
       - name: Build frontend assets for same-origin deployment smoke test
         run: npm run build
@@ -153,6 +153,8 @@ jobs:
             > /tmp/clashbolt-browser-worker.log 2>&1 &
       - name: Verify named roles and durable execution in Chromium
         working-directory: frontend
+        env:
+          CLASHBOLT_BROWSER_COVERAGE: '1'
         run: |
           set -euo pipefail
           # Browser test accounts share a single CI loopback peer. Keep each
@@ -181,6 +183,9 @@ jobs:
           PY
           CLASHBOLT_BROWSER_MODE=accounts npx playwright test --workers=1 \
             e2e/reviews.accounts.spec.ts
+      - name: Require frontend branch coverage
+        working-directory: frontend
+        run: node check-branch-coverage.mjs
       - name: Diagnose native worker if account browser verification fails
         if: ${{ failure() }}
         run: |

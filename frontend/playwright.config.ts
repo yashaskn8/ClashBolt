@@ -30,7 +30,8 @@ export default defineConfig({
       timeout: 30_000,
     },
     ...staticSite ? [] : [{
-      command: 'npm run dev',
+      command: process.env.CLASHBOLT_BROWSER_COVERAGE === '1'
+        ? 'npm run dev -- --config vite.coverage.config.mts' : 'npm run dev',
       url: 'http://127.0.0.1:5173',
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,

@@ -24,6 +24,7 @@ GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
 MAX_CLAIM_GENERATIONS = 3
 BASE_SCHEMA_VERSION = 8
+MAX_EVENT_VERSION = 2**63 - 1
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
 _SCHEMA = (
@@ -979,7 +980,7 @@ class Ledger:
         self, run_id: UUID, after: int = 0, limit: int = 100
     ) -> dict:
         """Sequence-ordered pages; a missing SSE notification never loses history."""
-        if after < 0 or not 1 <= limit <= 100:
+        if not 0 <= after <= MAX_EVENT_VERSION or not 1 <= limit <= 100:
             raise ValueError("Invalid event cursor or page limit")
         with self.connect() as conn:
             events = conn.execute(

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './coverage'
 
 async function signIn(page: Page, role: 'operator' | 'reviewer' | 'viewer') {
   await page.getByLabel('Account name').fill(`browser.${role}`)

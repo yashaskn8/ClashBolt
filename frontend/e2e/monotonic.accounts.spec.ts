@@ -1,5 +1,5 @@
 // This test exercises the native PostgreSQL API through a real browser.
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './coverage'
 
 async function signIn(page: Page, role: 'operator' | 'reviewer') {
   await page.getByLabel('Account name').fill(`browser.${role}`)

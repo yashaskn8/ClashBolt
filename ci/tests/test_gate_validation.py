@@ -175,6 +175,11 @@ def _change(workflow, kind):
         jobs["backend"]["steps"][0]["uses"] = "actions/checkout@main"
     elif kind == "skip_backend_on_error":
         jobs["backend"]["steps"][0]["continue-on-error"] = "true"
+    elif kind == "drop_browser_coverage":
+        jobs["browser"]["steps"] = [
+            step for step in jobs["browser"]["steps"]
+            if step.get("name") != "Require frontend branch coverage"
+        ]
     elif kind == "drop_backend_coverage":
         for step in jobs["backend"]["steps"]:
             if "--cov-fail-under=82" in step.get("run", ""):
@@ -261,7 +266,7 @@ def test_current_workflow_passes_strict_audit():
 @pytest.mark.parametrize("kind", [
     "remove_security", "omit_redteam_from_release", "skip_release_on_failure",
     "write_permissions", "unpin_checkout", "skip_backend_on_error",
-    "drop_backend_coverage", "remove_dependency_audit",
+    "drop_backend_coverage", "drop_browser_coverage", "remove_dependency_audit",
     "conditional_redteam", "remove_native_host_check",
     "mask_failure", "exclude_tests", "remove_bandit",
     "remove_deployment_audit", "remove_isolation_mutation_tests",
