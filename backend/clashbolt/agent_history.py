@@ -30,7 +30,7 @@ def _digest(plan_id: UUID | str, sequence: int, event: str, payload: dict,
         "previous_sha256": previous_sha256,
     }
     return hashlib.sha256(
-        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
 
 
@@ -38,7 +38,10 @@ def append_history(conn, plan_id: UUID, event: str, payload: dict) -> None:
     """Write an event in the same transaction as the associated state change."""
     if event not in EVENT_TYPES or not isinstance(payload, dict):
         raise ValueError("Unsupported agent history entry")
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    try:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError, RecursionError) as error:
+        raise ValueError("Invalid agent history payload") from error
     if len(encoded) > 16_384:
         raise ValueError("Agent history payload exceeds the fixed size limit")
     previous = conn.execute(
@@ -69,7 +72,9 @@ def verify_history(plan_id: UUID, entries: list[dict]) -> dict:
     for sequence, entry in enumerate(entries, 1):
         try:
             intact = (
-                entry.get("sequence") == sequence
+                isinstance(entry, dict)
+                and type(entry.get("sequence")) is int
+                and entry["sequence"] == sequence
                 and entry.get("event") in EVENT_TYPES
                 and isinstance(entry.get("payload"), dict)
                 and entry.get("previous_sha256") == previous
@@ -77,7 +82,7 @@ def verify_history(plan_id: UUID, entries: list[dict]) -> dict:
                     plan_id, sequence, entry["event"], entry["payload"], previous
                 )
             )
-        except (ValueError, TypeError, KeyError):
+        except (ValueError, TypeError, KeyError, RecursionError):
             intact = False
         if not intact:
             return {"status": "INVALID", "reason": "Decision history integrity failure"}

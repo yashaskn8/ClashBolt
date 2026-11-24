@@ -37,3 +37,18 @@ def test_mutated_or_agent_injected_rule_cannot_become_approved_evidence():
     evidence = evaluate_candidate(RuleCandidate())
     evidence["candidate"]["source_ref"] = "untrusted-log"
     assert not valid_evidence(evidence)
+
+
+@pytest.mark.parametrize("case,field,value", [
+    (None, "verified", 1), (0, "complete", 1), (2, "complete", 0),
+    (0, "initial_stock", True), (0, "confirmed_count", 1.0),
+])
+def test_approval_preserves_exact_json_types(case, field, value):
+    evidence = evaluate_candidate(RuleCandidate())
+    if case is None:
+        evidence[field] = value
+    elif field == "complete":
+        evidence["test_vectors"][case][field] = value
+    else:
+        evidence["test_vectors"][case]["state"][field] = value
+    assert valid_evidence(evidence) is False

@@ -247,3 +247,38 @@ def test_account_cli_grant_does_not_rerun_schema_migration(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["clashbolt.accounts", "migrate"])
     module.main()
     assert calls[-1] == "migrate"
+
+
+def test_legacy_draft_migration_can_resume_and_preserves_existing_draft(accounts):
+    account = UUID(accounts.create_account(
+        "legacy.drafts", "operator", "legacy-draft-account-password"
+    ))
+    with accounts.connect() as conn:
+        conn.execute("ALTER TABLE account_experiment_draft DROP COLUMN project_id")
+        conn.execute("ALTER TABLE account_experiment_draft ADD PRIMARY KEY (account_id)")
+        conn.execute(
+            """
+            INSERT INTO account_experiment_draft(account_id, version, draft)
+            VALUES (%s, 4, '{"variant": "locked"}')
+            """,
+            (account,),
+        )
+        conn.execute("UPDATE schema_revision SET version = 5 WHERE component = 'accounts'")
+    accounts.migrate()
+    with accounts.connect() as conn:
+        conn.execute("UPDATE schema_revision SET version = 5 WHERE component = 'accounts'")
+    accounts.migrate()
+    with accounts.connect() as conn:
+        assert conn.execute(
+            "SELECT project_id, version, draft FROM account_experiment_draft WHERE account_id = %s",
+            (account,),
+        ).fetchone() == {"project_id": "local", "version": 4, "draft": {"variant": "locked"}}
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with accounts.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_experiment_draft(project_id, account_id, draft)
+                VALUES ('missing', %s, '{}')
+                """,
+                (account,),
+            )

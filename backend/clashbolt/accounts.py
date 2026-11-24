@@ -198,13 +198,21 @@ class AccountStore(Policy):
                     ADD PRIMARY KEY(project_id, account_id)
                     """
                 )
-                conn.execute(
+                if not conn.execute(
                     """
-                    ALTER TABLE account_experiment_draft
-                    ADD CONSTRAINT account_draft_project_reference
-                    FOREIGN KEY(project_id) REFERENCES project_workspace(project_id)
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'account_experiment_draft'::regclass
+                      AND confrelid = 'project_workspace'::regclass
+                      AND contype = 'f'
                     """
-                )
+                ).fetchone():
+                    conn.execute(
+                        """
+                        ALTER TABLE account_experiment_draft
+                        ADD CONSTRAINT account_draft_project_reference
+                        FOREIGN KEY(project_id) REFERENCES project_workspace(project_id)
+                        """
+                    )
             if previous is None or previous["version"] < 4:
                 # One-time migration of existing named accounts. Never repeat
                 # this backfill or it would silently restore revoked grants.

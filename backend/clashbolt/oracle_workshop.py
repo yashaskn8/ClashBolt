@@ -81,6 +81,13 @@ def valid_evidence(evidence: dict | None) -> bool:
         return False
     try:
         candidate = RuleCandidate.model_validate(evidence["candidate"])
-    except (ValueError, KeyError, TypeError):
+        # Python considers True == 1 and 1 == 1.0. Preserve JSON types
+        # when comparing review evidence against the canonical test vectors.
+        encoded = json.dumps(evidence, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        expected = json.dumps(
+            evaluate_candidate(candidate), sort_keys=True, separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (ValueError, KeyError, TypeError, RecursionError):
         return False
-    return evidence == evaluate_candidate(candidate) and evidence["verified"]
+    return encoded == expected and evidence["verified"] is True

@@ -114,8 +114,12 @@ def backup_control(destination: Path, dsn: str) -> dict:
         os.link(temporary, destination)
         try:
             fd = os.open(manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as output:
-                json.dump(manifest, output, sort_keys=True, indent=2)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as output:
+                    json.dump(manifest, output, sort_keys=True, indent=2)
+            except BaseException:
+                manifest_path.unlink(missing_ok=True)
+                raise
         except BaseException:
             destination.unlink(missing_ok=True)
             raise
@@ -139,9 +143,16 @@ def verify_disposable_restore(
         raise ValueError("Archive and SHA-256 manifest are both required")
     if archive.stat().st_size > 100_000_000:
         raise ValueError("Restore drills are limited to 100 MB archives")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest_path.stat().st_size > 16_384:
+        raise ValueError("Backup manifest exceeds the size limit")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeError) as error:
+        raise ValueError("Invalid backup manifest") from error
     if (
-        manifest.get("format") != "clashbolt-control-backup-v1"
+        not isinstance(manifest, dict)
+        or type(manifest.get("archive_bytes")) is not int
+        or manifest.get("format") != "clashbolt-control-backup-v1"
         or manifest.get("archive_bytes") != archive.stat().st_size
         or manifest.get("archive_sha256")
             != hashlib.sha256(archive.read_bytes()).hexdigest()

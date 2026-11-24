@@ -191,3 +191,62 @@ def test_failed_disposable_restore_drops_only_its_scratch_database(
             )
         }
     assert after == before
+
+
+def test_partial_manifest_write_can_be_retried(tmp_path, monkeypatch):
+    _mock_native_dump(monkeypatch)
+    destination = tmp_path / "control.dump"
+    dsn = "postgresql://worker:local-secret@127.0.0.1:5432/control"
+
+    def interrupted(_manifest, output, **_kwargs):
+        output.write("{")
+        raise OSError("storage full")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(json, "dump", interrupted)
+        with pytest.raises(OSError, match="storage full"):
+            backup.backup_control(destination, dsn)
+    assert list(tmp_path.iterdir()) == []
+    manifest = backup.backup_control(destination, dsn)
+    assert json.loads(destination.with_suffix(".sha256.json").read_text()) == manifest
+
+
+@pytest.mark.parametrize("manifest", [None, [], True, {"archive_bytes": False}])
+def test_invalid_restore_manifest_is_an_input_error(tmp_path, manifest):
+    archive = tmp_path / "invalid.dump"
+    archive.write_bytes(b"PGDMP")
+    archive.with_suffix(".sha256.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="manifest"):
+        backup.verify_disposable_restore(
+            archive, "postgresql://u:p@127.0.0.1:5432/control",
+            "postgresql://u:p@127.0.0.1:5433/postgres",
+        )
+
+
+def test_restore_rejects_oversized_manifest_before_reading_it(tmp_path):
+    archive = tmp_path / "invalid.dump"
+    archive.write_bytes(b"PGDMP")
+    archive.with_suffix(".sha256.json").write_text(" " * 16_385)
+    with pytest.raises(ValueError, match="size limit"):
+        backup.verify_disposable_restore(
+            archive, "postgresql://u:p@127.0.0.1:5432/control",
+            "postgresql://u:p@127.0.0.1:5433/postgres",
+        )
+
+
+def test_backup_preserves_manifest_that_wins_publication_race(tmp_path, monkeypatch):
+    _mock_native_dump(monkeypatch)
+    destination = tmp_path / "control.dump"
+    sidecar = destination.with_suffix(".sha256.json")
+    original_open = backup.os.open
+
+    def concurrent_manifest(path, flags, mode=0o777, **kwargs):
+        if path == sidecar:
+            sidecar.write_text("preexisting manifest")
+        return original_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(backup.os, "open", concurrent_manifest)
+    with pytest.raises(FileExistsError):
+        backup.backup_control(destination, "postgresql://worker:local-secret@127.0.0.1/control")
+    assert not destination.exists()
+    assert sidecar.read_text() == "preexisting manifest"

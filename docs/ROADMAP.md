@@ -27,6 +27,20 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Backup recovery, evidence validation and account migration
+
+- B1 backup cleanup preserves a pre-existing manifest if publication races. Failed
+  writes clear the partial output so a retry can use the same destination. Restore
+  validation rejects oversized and malformed manifests before opening a target connection.
+- A1 approval compares canonical JSON to keep booleans, integers and floats distinct.
+  A5 rejects malformed sequence identifiers and non-finite decision payloads.
+- P1/P4 draft migration preserves existing account drafts as local project drafts and
+  retains their foreign key when the older migration is replayed.
+
+External acceptance stays **BLOCKED** for independent held-out evaluation and
+adjudication, external application reproduction, independent deployment review,
+and production or multi-host recovery validation. Each track remains partial.
+
 ## P5 explicit review hints for ambiguous outcomes (24 November 2026)
 
 The operator diagnostics now report ATTENTION and distinct review hints when
