@@ -7,7 +7,6 @@ does not independently authenticate results or prove prior registration.
 import argparse
 import hashlib
 import json
-import math
 import re
 from pathlib import Path
 
@@ -112,7 +111,6 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
         cpu, tokens = row["cpu_seconds"], row["model_tokens"]
         if (
             type(cpu) not in (float, int)
-            or not math.isfinite(cpu)
             or not 0 <= cpu <= manifest["cpu_seconds_per_trial"]
             or type(tokens) is not int
             or not 0 <= tokens <= manifest["model_tokens_per_trial"]
@@ -180,10 +178,21 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
     }
 
 
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 def _read_json(path: Path) -> dict:
-    if path.stat().st_size > 4_000_000:
+    with path.open("rb") as stream:
+        raw = stream.read(4_000_001)
+    if len(raw) > 4_000_000:
         raise ValueError("Evaluation input exceeds four megabytes")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     return data

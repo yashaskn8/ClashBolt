@@ -154,3 +154,93 @@ def test_observation_identifier_types_are_checked_before_dict_keys():
         changed["observations"][0][field] = invalid
         with pytest.raises(ValueError, match="Untrusted observation identifiers"):
             compare_reported_observations(manifest, changed)
+
+
+@pytest.mark.parametrize("value", [10**400, -(10**400)])
+def test_huge_integer_cpu_cost_is_rejected_as_invalid_budget(value):
+    manifest, submitted = example()
+    submitted["observations"][0]["cpu_seconds"] = value
+    with pytest.raises(ValueError, match="budget"):
+        compare_reported_observations(manifest, submitted)
+
+
+@pytest.mark.parametrize("duplicate_in", ["manifest", "observations"])
+def test_cli_rejects_duplicate_json_keys(tmp_path, monkeypatch, capsys, duplicate_in):
+    import json
+    import sys
+
+    from clashbolt.heldout import main
+
+    manifest, submitted = example()
+    first, second = tmp_path / "manifest.json", tmp_path / "results.json"
+    manifest_json, observations_json = json.dumps(manifest), json.dumps(submitted)
+    if duplicate_in == "manifest":
+        manifest_json = manifest_json.replace(
+            '"suite_id":', '"suite_id": "overwritten", "suite_id":', 1
+        )
+    else:
+        observations_json = observations_json.replace(
+            '"cpu_seconds":', '"cpu_seconds": 999, "cpu_seconds":', 1
+        )
+    first.write_text(manifest_json, encoding="utf-8")
+    second.write_text(observations_json, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clashbolt-heldout", str(first), str(second)])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "Duplicate JSON object key" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload, message", [
+    (b" " * 4_000_001, "exceeds four megabytes"),
+    (b"[]", "Expected a JSON object"),
+    (b"{", "Expecting property name"),
+])
+def test_cli_rejects_invalid_input_files(tmp_path, monkeypatch, capsys, payload, message):
+    import sys
+
+    from clashbolt.heldout import main
+
+    path = tmp_path / "invalid.json"
+    path.write_bytes(payload)
+    monkeypatch.setattr(sys, "argv", ["clashbolt-heldout", str(path), str(path)])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("field, value, message", [
+    ("protocol", "unknown", "Unsupported"),
+    ("suite_id", [], "Invalid suite"),
+    ("heldout_targets", ["sample-a", "sample-a"], "unique target"),
+    ("cpu_seconds_per_trial", True, "CPU-seconds"),
+    ("model_tokens_per_trial", -1, "model-token"),
+])
+def test_invalid_manifest_fields_are_rejected(field, value, message):
+    manifest, _ = example()
+    manifest[field] = value
+    with pytest.raises(ValueError, match=message):
+        validate_manifest(manifest)
+
+
+@pytest.mark.parametrize("field, value, message", [
+    ("status", "RUNNING", "Invalid experiment status"),
+    ("evidence_sha256", "not-a-digest", "Malformed evidence"),
+])
+def test_invalid_observation_fields_are_rejected(field, value, message):
+    manifest, submitted = example()
+    row = next(row for row in submitted["observations"] if not row["bug_ids"])
+    row[field] = value
+    with pytest.raises(ValueError, match=message):
+        compare_reported_observations(manifest, submitted)
+
+
+
+def test_unexpected_manifest_and_observation_shapes_are_rejected():
+    with pytest.raises(ValueError, match="manifest shape"):
+        validate_manifest({})
+    manifest, submitted = example()
+    submitted["observations"][0] = {}
+    with pytest.raises(ValueError, match="result record shape"):
+        compare_reported_observations(manifest, submitted)

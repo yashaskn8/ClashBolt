@@ -27,6 +27,24 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## A7 bounded, unambiguous held-out JSON intake (24 November 2026)
+
+Data-only evaluation now rejects duplicate JSON object keys at every nesting
+level, bounds the actual input read to four megabytes plus one detection byte,
+and rejects out-of-range integer CPU costs without converting them to floats.
+This prevents ambiguous last-key-wins interpretation and avoids an uncaught
+overflow on oversized integer costs. No external target or model is executed.
+
+A focused local run using source and test files reconstructed from verified
+Git blob identities passed 23 held-out tests (15 new cases). The held-out
+module alone covered 49 of 50 branches (98%) and 103 of 104 statements.
+The earlier eight-test subset measured 82% combined coverage for this
+module; the new subset measures 98.70% combined. These are module-local
+measurements, not full-suite coverage. Full CI on the new commit is still
+required; the repository-wide baseline and all twenty partial statuses
+remain unchanged. Independent adjudication and model promotion remain
+unverified and blocked.
+
 ## CI coverage evidence numeric integrity (23 November 2026)
 
 The report verifier now rejects boolean or fractional measured-branch totals,
