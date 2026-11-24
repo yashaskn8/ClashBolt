@@ -27,6 +27,16 @@ def diagnose_operations(snapshot: dict) -> dict:
             "code": "QUARANTINED_AGENT_CONTEXT",
             "message": "Invalid agent history was quarantined; inspect plan evidence gaps.",
         })
+    if runs.get("UNKNOWN", 0) > 0:
+        alerts.append({
+            "code": "UNKNOWN_RUN_OUTCOMES",
+            "message": "Experiments have unknown outcomes; review their recorded evidence.",
+        })
+    if verifications.get("UNKNOWN", 0) > 0:
+        alerts.append({
+            "code": "UNKNOWN_VERIFICATION_OUTCOMES",
+            "message": "Verification outcomes are unknown; review their recorded evidence.",
+        })
     return {
         "status": "ATTENTION" if alerts else "NORMAL",
         "alerts": alerts,

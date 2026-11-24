@@ -27,6 +27,24 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## P5 explicit review hints for ambiguous outcomes (24 November 2026)
+
+The operator diagnostics now report ATTENTION and distinct review hints when
+the current ledger snapshot contains UNKNOWN experiment or verification
+outcomes, even when no work is queued and responsive workers are available.
+The existing dashboard displays these fixed messages. UNKNOWN is neither
+completion nor proof of a fresh incident; the hints remain visible while
+UNKNOWN records are present. No notification, replay or remediation is
+triggered and the stored outcomes are unchanged.
+
+Three new focused test cases failed against the previous source. The updated
+source passes all 11 new boundary cases and the two existing metrics tests
+under Python 3.13.5, covering 29/29 statements and 16/16 branches across
+ops_alerts.py and metrics.py. The tested source was reconstructed against
+verified Git blob hashes. This is focused unit evidence, not a full database
+or browser run, production alert tuning, or repository-wide 100% coverage.
+Full CI on this change remains required and all twenty tracks remain partial.
+
 ## A7 clean JSON failure and focused evaluation coverage (24 November 2026)
 
 Malformed deeply nested JSON that exceeds the decoder's recursion capacity
