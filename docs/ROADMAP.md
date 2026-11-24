@@ -27,6 +27,26 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## A7 uncertainty-aware reported evaluation (24 November 2026)
+
+The data-only evaluation report now distinguishes targets with a reported
+finding, targets with all trials complete and no reported finding, and
+targets whose outcome remains unresolved. It preserves the existing
+reported-findings bootstrap for compatibility and explicitly labels its
+basis. For each of the four fixed baselines the new paired outcome bounds
+show the range consistent with unresolved reports, alongside resolved and
+unresolved pair counts. These are missing-outcome sensitivity bounds, not
+confidence intervals or independent evidence of superiority. No model
+promotion or target execution is enabled.
+
+All seven new tests fail on the prior report schema and pass after the
+implementation. The 43-case focused suite on Python 3.13.5 covers 130/130
+statements and 54/54 branches across heldout.py and evaluation_stats.py.
+The original module and existing test files were reconstructed and checked
+against their remote Git blob hashes. This is local, focused evidence; full
+CI and independent operational acceptance are still required. All twenty
+tracks remain partial.
+
 ## Current certification for JSON witness downloads
 
 - P3 checks current ledger adjudication before downloading JSON evidence.

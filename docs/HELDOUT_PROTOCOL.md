@@ -19,8 +19,16 @@ must contain `target_id`, `seed`, `strategy`, `status` (COMPLETE/UNKNOWN),
 
 The report deduplicates reported bug IDs per target, counts UNKNOWN trials,
 reports observed costs, and computes a paired descriptive bootstrap interval
-by target against the strongest *reported* baseline. It is not a statistical
-claim of discovery or a publication gate. A digest is **not an independent
+by target against the strongest *reported* baseline. This interval is labelled
+`reported_findings_only`: it describes reported findings, not latent outcomes.
+Each strategy also counts reported-positive targets, completed targets without
+reported findings, and unresolved targets (no reported finding and at least
+one UNKNOWN trial). For each fixed baseline, `paired_outcome_uncertainty`
+reports resolved/unresolved pair counts and the minimum and maximum possible
+paired mean difference when unresolved binary outcomes are allowed to vary.
+These are sensitivity bounds, not confidence intervals. Neither the
+descriptive interval nor these bounds constitute independent evidence of
+discovery or a publication gate. A digest is **not an independent
 signature**; anyone able to rewrite both files can forge their contents.
 The tool does not validate witness bytes, preregistration timestamps,
 actual CPU/provider billing or independent adjudication. It always reports

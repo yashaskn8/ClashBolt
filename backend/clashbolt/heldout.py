@@ -148,15 +148,27 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
             "reported_model_tokens": sum(r["model_tokens"] for r in rows),
             "trials": len(rows),
         }
-        per_target[strategy] = [
-            any(t == target for t, _ in unique)
+        positive = {target for target, _ in unique}
+        uncertain = {r["target_id"] for r in rows if r["status"] == "UNKNOWN"}
+        outcomes = [
+            True if target in positive else None if target in uncertain else False
             for target in manifest["heldout_targets"]
         ]
+        per_target[strategy] = outcomes
+        summary[strategy].update({
+            "reported_positive_targets": outcomes.count(True),
+            "reported_negative_targets": outcomes.count(False),
+            "unresolved_targets": outcomes.count(None),
+        })
 
     strongest = max(
         STRATEGIES[1:],
         key=lambda strategy: summary[strategy]["reported_unique_bugs"],
     )
+    uncertainty = {
+        strategy: _paired_outcome_bounds(per_target["semantic"], per_target[strategy])
+        for strategy in STRATEGIES[1:]
+    }
     return {
         "protocol": PROTOCOL,
         "manifest_sha256": digest,
@@ -165,8 +177,11 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
         "strategies": summary,
         "strongest_reported_baseline": strongest,
         "paired_descriptive_interval": paired_bootstrap(
-            per_target["semantic"], per_target[strongest]
+            [value is True for value in per_target["semantic"]],
+            [value is True for value in per_target[strongest]],
         ),
+        "paired_descriptive_interval_basis": "reported_findings_only",
+        "paired_outcome_uncertainty": uncertainty,
         "costs_are_self_reported": True,
         "independent_reproduction_verified": False,
         "preregistration_timestamp_verified": False,
@@ -175,6 +190,21 @@ def compare_reported_observations(manifest: dict, submission: dict) -> dict:
             "A digest and self-reported evidence IDs do not certify independent "
             "reproduction, trusted cost measurements, or pre-registered target splits"
         ),
+    }
+
+
+def _paired_outcome_bounds(candidate: list[bool | None], baseline: list[bool | None]) -> dict:
+    """Bound the paired difference without imputing unresolved outcomes."""
+    lower = upper = resolved = 0
+    for a, b in zip(candidate, baseline, strict=True):
+        lower += int(a is True) - int(b is not False)
+        upper += int(a is not False) - int(b is True)
+        resolved += int(a is not None and b is not None)
+    count = len(candidate)
+    return {
+        "possible_mean_difference": [round(lower / count, 6), round(upper / count, 6)],
+        "resolved_pairs": resolved,
+        "unresolved_pairs": count - resolved,
     }
 
 
