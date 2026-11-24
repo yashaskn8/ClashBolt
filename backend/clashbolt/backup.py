@@ -147,7 +147,7 @@ def verify_disposable_restore(
         raise ValueError("Backup manifest exceeds the size limit")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (ValueError, UnicodeError) as error:
+    except (ValueError, RecursionError) as error:
         raise ValueError("Invalid backup manifest") from error
     if (
         not isinstance(manifest, dict)

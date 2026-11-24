@@ -1,10 +1,12 @@
 import asyncio
+import hashlib
 import io
 import json
 import subprocess
 import sys
 import zipfile
 
+import pytest
 from clashbolt.experiment import execute
 from clashbolt.witness_bundle import create_bundle, verify_bundle
 
@@ -62,3 +64,46 @@ def test_incomplete_evidence_cannot_be_packaged():
         pass
     else:
         raise AssertionError("Incomplete evidence was accepted")
+
+
+def _replace_witness(contents, value):
+    with zipfile.ZipFile(io.BytesIO(contents)) as original:
+        entries = {name: original.read(name) for name in original.namelist()}
+    raw = json.dumps(value).encode()
+    manifest = json.loads(entries["manifest.json"])
+    manifest["witness_file_sha256"] = hashlib.sha256(raw).hexdigest()
+    entries.update({"witness.json": raw, "manifest.json": json.dumps(manifest)})
+    updated = io.BytesIO()
+    with zipfile.ZipFile(updated, "w") as bundle:
+        for name, payload in entries.items():
+            bundle.writestr(name, payload)
+    return updated.getvalue()
+
+
+@pytest.mark.parametrize("value", [None, [], {"oracle": ["bad"]}, {"oracle": "bad"}])
+def test_malformed_witness_is_rejected_as_data(value):
+    original = create_bundle(asyncio.run(execute("locked", "serial")))
+    result = asyncio.run(verify_bundle(_replace_witness(original, value)))
+    assert result["status"] == "INVALID"
+
+
+def test_archive_with_unexpected_entry_is_rejected():
+    original = io.BytesIO(create_bundle(asyncio.run(execute("locked", "serial"))))
+    with zipfile.ZipFile(original, "a") as archive:
+        archive.writestr("unexpected.txt", "not part of the verifier contract")
+    assert asyncio.run(verify_bundle(original.getvalue())) == {
+        "status": "INVALID", "reason": "Unexpected archive entries",
+    }
+
+
+def test_bundle_cli_reports_invalid_data_and_missing_path(tmp_path, monkeypatch, capsys):
+    from clashbolt.witness_bundle import main
+
+    path = tmp_path / "local.zip"
+    monkeypatch.setattr(sys, "argv", ["witness_bundle", "verify", str(path)])
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "ZIP bundle" in capsys.readouterr().err
+    path.write_bytes(b"not a zip")
+    assert main() == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "INVALID"

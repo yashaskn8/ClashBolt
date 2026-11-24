@@ -33,24 +33,39 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
   const [refresh, setRefresh] = useState(0)
   const [error, setError] = useState('')
 
+  const runId = run.run_id
+  const runVersion = run.version
+  const evidenceHash = run.witness?.evidence_sha256 ?? null
+  const currentSnapshot = snapshot?.run_id === runId
+    && snapshot.project_id === projectId
+    && snapshot.run_version === runVersion
+    && snapshot.evidence_sha256 === evidenceHash ? snapshot : null
+
   useEffect(() => {
-    let cancelled = false
+    const controller = new AbortController()
     setSnapshot(null)
     setError('')
-    fetch(`/api/runs/${run.run_id}/reviews`, { cache: 'no-store' })
+    fetch(`/api/runs/${runId}/reviews`, {
+      cache: 'no-store', signal: controller.signal,
+    })
       .then(async (response) => {
         if (!response.ok) throw new Error('Review evidence is unavailable')
-        return (await response.json()) as Snapshot
+        const data = (await response.json()) as Snapshot
+        if (data.run_id !== runId || data.project_id !== projectId
+          || data.run_version !== runVersion || data.evidence_sha256 !== evidenceHash
+          || data.scope !== 'SYNTHETIC_ONLY' || data.independent_external_reproduction !== false
+          || !Array.isArray(data.reviews) || typeof data.replay_verified !== 'boolean'
+        ) throw new Error('Review data did not match the current witness')
+        if (!controller.signal.aborted) setSnapshot(data)
       })
-      .then((data) => { if (!cancelled) setSnapshot(data) })
       .catch(() => {
-        if (!cancelled) setError('Review data is unavailable for this project.')
+        if (!controller.signal.aborted) setError('Review data is unavailable for this project.')
       })
-    return () => { cancelled = true }
-  }, [run.run_id, run.version, projectId, replayStatus, refresh])
+    return () => controller.abort()
+  }, [runId, runVersion, evidenceHash, projectId, replayStatus, refresh])
 
   async function decide(decision: Decision) {
-    if (!snapshot || reason.trim().length < 12) return
+    if (!currentSnapshot || reason.trim().length < 12) return
     setBusy(true)
     setError('')
     try {
@@ -58,8 +73,8 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          expected_run_version: snapshot.run_version,
-          expected_evidence_sha256: snapshot.evidence_sha256,
+          expected_run_version: currentSnapshot.run_version,
+          expected_evidence_sha256: currentSnapshot.evidence_sha256,
           decision,
           reason: reason.trim(),
         }),
@@ -86,20 +101,20 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
         synthetic replay. This is not external application reproduction.
       </p>
       <p className="help-text" aria-label="Synthetic replay readiness">
-        Worker replay: {snapshot?.replay_verified ? 'VERIFIED SYNTHETIC REPLAY'
+        Worker replay: {currentSnapshot?.replay_verified ? 'VERIFIED SYNTHETIC REPLAY'
           : 'NOT VERIFIED'} · External reproduction: NOT ESTABLISHED.
       </p>
       <button className="secondary-button" type="button"
         onClick={() => setRefresh((current) => current + 1)}>
         Refresh evidence review
       </button>
-      {snapshot?.reviews.map((entry) => (
+      {currentSnapshot?.reviews.map((entry) => (
         <p className="help-text" key={entry.review_id}>
           {entry.decision} · {entry.current ? 'CURRENT' : 'SUPERSEDED'} ·
           {' '}{entry.reason}
         </p>
       ))}
-      {role === 'reviewer' && snapshot && (
+      {role === 'reviewer' && currentSnapshot && (
         <>
           <label className="field-label" htmlFor="review-reason">
             Your review reason (at least 12 characters)
@@ -115,7 +130,7 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
               Withhold synthetic review
             </button>
             <button type="button" disabled={busy || reason.trim().length < 12
-              || !snapshot.replay_verified || run.status !== 'COMPLETE'
+              || !currentSnapshot.replay_verified || run.status !== 'COMPLETE'
               || run.verdict !== 'FAIL'}
               onClick={() => void decide('SUPPORTED')}>
               Support verified synthetic replay

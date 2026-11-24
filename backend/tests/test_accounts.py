@@ -1,6 +1,7 @@
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -219,7 +220,6 @@ def test_project_grant_requires_active_account(accounts):
 
 def test_account_cli_grant_does_not_rerun_schema_migration(monkeypatch):
     """Live grant changes must not run DDL alongside API and worker traffic."""
-    import sys
 
     import clashbolt.accounts as module
 
@@ -282,3 +282,89 @@ def test_legacy_draft_migration_can_resume_and_preserves_existing_draft(accounts
                 """,
                 (account,),
             )
+
+
+def test_account_cli_provisions_updates_and_revokes_project_access(accounts, monkeypatch, capsys):
+    import clashbolt.accounts as module
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", accounts.dsn)
+    passwords = iter(["local-operator-password-123"] * 2 + ["local-reset-password-456"] * 2)
+    monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: next(passwords))
+    project = f"cli-{uuid4().hex[:12]}"
+
+    def invoke(*args):
+        monkeypatch.setattr(sys, "argv", ["clashbolt.accounts", *args])
+        module.main()
+
+    invoke("create-project", project)
+    invoke("create", "cli.operator", "operator")
+    identity = accounts.authenticate("cli.operator", "local-operator-password-123")
+    account_id = UUID(identity["id"])
+    invoke("grant-project", "cli.operator", "operator", "--project", project)
+    assert accounts.project_role(account_id, project) == "operator"
+    invoke("reset", "cli.operator")
+    assert accounts.get_active(account_id, identity["epoch"]) is None
+    assert accounts.authenticate("cli.operator", "local-reset-password-456") is not None
+    invoke("revoke-project", "cli.operator", "--project", project)
+    assert accounts.project_role(account_id, project) is None
+    invoke("disable", "cli.operator")
+    assert accounts.authenticate("cli.operator", "local-reset-password-456") is None
+    assert "disable completed for cli.operator" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("args", "message"), [
+    (["disable", "../invalid"], "Specify a lowercase account or project ID"),
+    (["disable", "no.account"], "Account not found or already disabled"),
+    (["revoke-local", "no.account"], "Project grant not found"),
+    (["revoke-project", "no.account", "--project", "../invalid"], "Invalid username"),
+    (["grant-local", "no.account"], "Project grant requires"),
+    (["grant-project", "no.account", "viewer", "--project", "../invalid"], "Invalid username"),
+    (["grant-local", "no.account", "viewer"], "Active account not found"),
+    (["create", "cli.viewer"], "Account creation requires"),
+    (["create-project", "local"], "Invalid new project identifier"),
+    (["create", "cli.viewer", "viewer"], "Passwords do not match"),
+])
+def test_account_cli_rejects_invalid_operations(accounts, args, message, monkeypatch, capsys):
+    import clashbolt.accounts as module
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", accounts.dsn)
+    monkeypatch.setattr(sys, "argv", ["clashbolt.accounts", *args])
+    passwords = iter(["initial-local-password", "mismatched-local-password"])
+    monkeypatch.setattr(module.getpass, "getpass", lambda _prompt: next(passwords))
+    with pytest.raises(SystemExit, match="2"):
+        module.main()
+    assert message in capsys.readouterr().err
+
+
+def test_account_cli_requires_explicit_database(monkeypatch, capsys):
+    from clashbolt.accounts import main
+
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["clashbolt.accounts", "migrate"])
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "Set CLASHBOLT_DATABASE_URL first" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("variant", ["expired", "malformed", "wrong-signature", "oversized"])
+def test_invalid_named_sessions_do_not_reach_the_database(monkeypatch, variant):
+    import clashbolt.accounts as module
+
+    timestamp = 1_700_000_000
+    monkeypatch.setattr(module.time, "time", lambda: timestamp)
+    secret = "synthetic-session-signing-key-for-tests"
+    signed = sign_session({"id": str(uuid4()), "epoch": 1}, secret)
+
+    class NoDatabase:
+        def get_active(self, *_args):
+            pytest.fail("Invalid session reached the database")
+
+    if variant == "expired":
+        monkeypatch.setattr(module.time, "time", lambda: timestamp + 3600)
+    if variant == "malformed":
+        signed = "bad"
+    if variant == "wrong-signature":
+        signed = signed[:-64] + "z" * 64
+    if variant == "oversized":
+        signed = "x" * 401
+    assert verify_session(signed, secret, NoDatabase()) is None

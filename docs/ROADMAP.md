@@ -27,6 +27,14 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Portable witness and review validation
+
+- B6 rejects malformed oracle fields in portable archives and bounds the CLI read.
+- P3 checks the run, project, version, evidence hash and synthetic scope before
+  displaying reviews. The browser regression verifies recovery after mismatches.
+- P4 exercises account provisioning, role changes, password reset and rejection
+  paths through the CLI against disposable PostgreSQL.
+
 ## Backup recovery, evidence validation and account migration
 
 - B1 backup cleanup preserves a pre-existing manifest if publication races. Failed

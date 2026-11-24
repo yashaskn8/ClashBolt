@@ -83,12 +83,14 @@ async def verify_bundle(contents: bytes) -> dict:
             witness = json.loads(raw)
             if not isinstance(manifest, dict) or not isinstance(witness, dict):
                 return {"status": "INVALID", "reason": "Malformed bundle JSON"}
+            oracle = witness.get("oracle")
+            if not isinstance(oracle, dict):
+                return {"status": "INVALID", "reason": "Missing immutable oracle binding"}
             if (
                 manifest.get("format") != "clashbolt-synthetic-bundle-v1"
                 or manifest.get("scope") != "SYNTHETIC_ONLY"
                 or manifest.get("target_revision") != witness.get("target_revision")
-                or manifest.get("oracle_sha256")
-                    != (witness.get("oracle") or {}).get("sha256")
+                or manifest.get("oracle_sha256") != oracle.get("sha256")
                 or manifest.get("evidence_sha256") != witness.get("evidence_sha256")
                 or manifest.get("execution_backend")
                     != witness.get("execution_backend", "memory")
@@ -108,7 +110,9 @@ def main() -> int:
     args = parser.parse_args()
     if not args.archive.is_file() or args.archive.stat().st_size > 1_000_000:
         parser.error("A ZIP bundle smaller than 1 MB is required")
-    result = asyncio.run(verify_bundle(args.archive.read_bytes()))
+    with args.archive.open("rb") as archive:
+        contents = archive.read(1_000_001)
+    result = asyncio.run(verify_bundle(contents))
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] == "REPRODUCED" else 2
 

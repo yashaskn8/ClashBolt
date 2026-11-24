@@ -85,6 +85,28 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
     .toContainText('VERIFIED SYNTHETIC REPLAY')
   await expect(panel.getByLabel('Synthetic replay readiness'))
     .toContainText('External reproduction: NOT ESTABLISHED')
+  const reviewPath = `**/api/runs/${runId}/reviews`
+  const mismatches = [
+    { project_id: 'wrong-project' },
+    { run_id: 'wrong-run' },
+    { run_version: 1 },
+    { evidence_sha256: 'wrong-digest' },
+    { independent_external_reproduction: true },
+  ]
+  for (const mismatch of mismatches) {
+    await page.route(reviewPath, async (route) => {
+      const response = await route.fetch()
+      await route.fulfill({ response, json: { ...await response.json(), ...mismatch } })
+    })
+    await panel.getByRole('button', { name: 'Refresh evidence review' }).click()
+    await expect(panel.getByRole('alert')).toContainText('Review data is unavailable')
+    await expect(panel.getByRole('button', { name: 'Support verified synthetic replay' }))
+      .toHaveCount(0)
+    await page.unroute(reviewPath)
+    await panel.getByRole('button', { name: 'Refresh evidence review' }).click()
+    await expect(panel.getByLabel('Synthetic replay readiness'))
+      .toContainText('VERIFIED SYNTHETIC REPLAY')
+  }
   await panel.getByLabel('Your review reason').fill(
     'This exact synthetic replay was inspected against the bound witness.',
   )
