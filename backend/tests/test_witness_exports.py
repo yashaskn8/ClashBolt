@@ -53,6 +53,9 @@ def test_export_sha_is_a_current_immutable_idempotent_record(export_lab):
     with TestClient(create_app()) as client:
         assert client.post(f"{url}/exports").status_code == 403
         assert client.get(f"{url}/exports").json()["exports"] == []
+        downloaded = client.get(f"{url}/witness")
+        assert downloaded.status_code == 200
+        assert downloaded.json() == run["witness"]
         # A plain GET downloads evidence without mutating the export journal.
         initial_bundle = client.get(f"{url}/bundle")
         assert initial_bundle.status_code == 200
@@ -102,5 +105,6 @@ def test_export_sha_is_a_current_immutable_idempotent_record(export_lab):
         history = client.get(f"{url}/exports").json()
         assert history["exports"][0]["current"] is False
         assert client.get(f"{url}/bundle").status_code == 409
+        assert client.get(f"{url}/witness").status_code == 409
         assert client.post(f"{url}/exports", headers=headers).status_code == 409
         assert client.get(f"/api/runs/{uuid4()}/exports").status_code == 404

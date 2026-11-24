@@ -35,6 +35,22 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
   expect(runs.ok()).toBe(true)
   const runId = ((await runs.json()) as { runs: { run_id: string }[] }).runs[0].run_id
 
+  const jsonExport = page.getByRole('button', { name: 'Export synthetic evidence (JSON)' })
+  const witnessPath = `**/api/runs/${runId}/witness`
+  await page.route(witnessPath, (route) => route.fulfill({ status: 409, json: {} }))
+  await jsonExport.click()
+  await expect(page.getByRole('alert')).toContainText(
+    'Current certified evidence could not be downloaded.',
+  )
+  await page.unroute(witnessPath)
+  const [jsonEvidence] = await Promise.all([page.waitForEvent('download'), jsonExport.click()])
+  expect(jsonEvidence.suggestedFilename()).toBe(`clashbolt-synthetic-${runId}.json`)
+  const witness = JSON.parse(await readFile(await jsonEvidence.path(), 'utf8')) as {
+    scope: string
+    verdict: string
+  }
+  expect(witness).toMatchObject({ scope: 'SYNTHETIC_ONLY', verdict: 'FAIL' })
+
   const [bundle] = await Promise.all([
     page.waitForEvent('download'),
     page.getByRole('button', { name: 'Export verifier bundle (ZIP)' }).click(),

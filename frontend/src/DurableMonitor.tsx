@@ -253,14 +253,25 @@ export default function DurableMonitor({
   }
 
   async function exportEvidence() {
-    if (!initial.witness) return
-    const bytes = JSON.stringify(initial.witness, null, 2)
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/json' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `clashbolt-synthetic-${runId}.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    if (!initial.witness || initial.status !== 'COMPLETE') return
+    setError('')
+    try {
+      const response = await fetch(`/api/runs/${runId}/witness`, { cache: 'no-store' })
+      if (!response.ok) throw new Error('Witness is no longer certified')
+      const witness = (await response.json()) as NonNullable<DurableRun['witness']>
+      if (witness.evidence_sha256 !== initial.witness.evidence_sha256) {
+        throw new Error('The witness changed during export')
+      }
+      const bytes = JSON.stringify(witness, null, 2)
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/json' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `clashbolt-synthetic-${runId}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('Current certified evidence could not be downloaded.')
+    }
   }
 
   const finished = ['COMPLETE', 'UNKNOWN', 'CANCELLED'].includes(initial.status)
@@ -297,7 +308,7 @@ export default function DurableMonitor({
         </button>
         <button
           type="button" className="secondary-button"
-          onClick={() => void exportEvidence()} disabled={!initial.witness}
+          onClick={() => void exportEvidence()} disabled={!initial.witness || initial.status !== 'COMPLETE'}
         >
           Export synthetic evidence (JSON)
         </button>

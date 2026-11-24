@@ -46,7 +46,7 @@ from clashbolt.reducer import reduce_witness
 from clashbolt.routes_policy import policy_router, require_operator
 from clashbolt.store import BASE_SCHEMA_VERSION, MAX_EVENT_VERSION, Ledger
 from clashbolt.verification_jobs import VerificationJobs
-from clashbolt.witness import verify
+from clashbolt.witness import validate_contract, verify
 from clashbolt.witness_bundle import create_bundle
 
 
@@ -870,9 +870,14 @@ def create_app() -> FastAPI:
         result = require_ledger(http_request).get(run_id)
         if result is None:
             raise HTTPException(404, "Run not found")
-        if result["witness"] is None:
-            raise HTTPException(409, "No complete witness exists yet")
-        return result["witness"]
+        witness = result["witness"]
+        if (
+            result["status"] != "COMPLETE" or result["verdict"] not in ("PASS", "FAIL")
+            or validate_contract(witness) is not None
+            or not witness["complete"] or witness["verdict"] != result["verdict"]
+        ):
+            raise HTTPException(409, "No currently certified witness to download")
+        return witness
 
     @app.post("/api/runs/{run_id}/verification-jobs", status_code=202)
     def enqueue_verification(

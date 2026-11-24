@@ -27,6 +27,12 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Current certification for JSON witness downloads
+
+- P3 checks current ledger adjudication before downloading JSON evidence.
+  The browser requests a fresh copy and checks it against the selected witness.
+  Revoked evidence remains available in run history for review.
+
 ## Expired authority and malformed planning evidence
 
 - B2/B6 check the live database clock after acquiring receipt locks. A lease
