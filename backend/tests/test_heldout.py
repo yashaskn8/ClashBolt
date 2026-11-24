@@ -244,3 +244,36 @@ def test_unexpected_manifest_and_observation_shapes_are_rejected():
     submitted["observations"][0] = {}
     with pytest.raises(ValueError, match="result record shape"):
         compare_reported_observations(manifest, submitted)
+
+
+def test_cli_deeply_nested_json_fails_cleanly(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from clashbolt.heldout import main
+
+    path = tmp_path / "nested.json"
+    depth = 10_000
+    path.write_text("[" * depth + "0" + "]" * depth, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clashbolt-heldout", str(path), str(path)])
+    with pytest.raises(SystemExit) as error:
+        main()
+    assert error.value.code == 2
+    assert "Evaluation JSON nesting is too deep" in capsys.readouterr().err
+
+
+def test_module_entrypoint_reads_valid_files(tmp_path, monkeypatch, capsys):
+    import json
+    import runpy
+    import sys
+
+    from clashbolt import heldout
+
+    manifest, submitted = example()
+    first, second = tmp_path / "manifest.json", tmp_path / "results.json"
+    first.write_text(json.dumps(manifest), encoding="utf-8")
+    second.write_text(json.dumps(submitted), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["clashbolt-heldout", str(first), str(second)])
+    runpy.run_path(heldout.__file__, run_name="__main__")
+    report = json.loads(capsys.readouterr().out)
+    assert report["manifest_sha256"] == canonical_hash(manifest)
+    assert report["promotion_eligible"] is False

@@ -192,7 +192,10 @@ def _read_json(path: Path) -> dict:
         raw = stream.read(4_000_001)
     if len(raw) > 4_000_000:
         raise ValueError("Evaluation input exceeds four megabytes")
-    data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+    try:
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object)
+    except RecursionError as error:
+        raise ValueError("Evaluation JSON nesting is too deep") from error
     if not isinstance(data, dict):
         raise ValueError("Expected a JSON object")
     return data

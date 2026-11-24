@@ -27,6 +27,22 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## A7 clean JSON failure and focused evaluation coverage (24 November 2026)
+
+Malformed deeply nested JSON that exceeds the decoder's recursion capacity
+now produces a normal CLI validation error rather than an uncaught traceback.
+Tests also exercise the actual module entrypoint, invalid paired-vector and
+seed boundaries, and positive, negative and zero constant outcome differences.
+No external target or model is invoked.
+
+On Python 3.13.5, the focused held-out and statistics-boundary subset
+reproduced one failing regression on the previous source (35 passed).
+With the fix, all 36 tests passed, covering 107/107 statements and 50/50
+branches in heldout.py and 10/10 statements and 2/2 branches in
+evaluation_stats.py. These are two-module measurements, not full-suite
+coverage. Full CI and independent held-out acceptance remain outstanding;
+no strategy is promoted, and all twenty architecture tracks remain partial.
+
 ## A7 bounded, unambiguous held-out JSON intake (24 November 2026)
 
 Data-only evaluation now rejects duplicate JSON object keys at every nesting
