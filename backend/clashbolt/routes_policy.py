@@ -57,7 +57,7 @@ class LocalModelPlanInput(StrictModel):
 
 
 class FeedbackInput(StrictModel):
-    remaining_budget: int = Field(ge=0, le=32)
+    remaining_budget: int = Field(ge=0, le=32, strict=True)
 
 
 class EvaluationInput(StrictModel):

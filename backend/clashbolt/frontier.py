@@ -18,13 +18,16 @@ def rank_frontier(receipts: list[dict], variant: Literal["racy", "locked"]) -> l
         for name in SCHEDULES
     }
     for item in receipts:
-        plan = item.get("plan") or {}
-        result = item.get("result") or {}
+        if not isinstance(item, dict):
+            continue
+        plan, result = item.get("plan"), item.get("result")
+        if not isinstance(plan, dict) or not isinstance(result, dict):
+            continue
         schedule = plan.get("schedule")
         if (
             plan.get("variant") != variant
             or plan.get("target_revision") != TARGET_REVISION
-            or schedule not in counts
+            or not isinstance(schedule, str) or schedule not in counts
         ):
             continue
         verdict = result.get("verdict")

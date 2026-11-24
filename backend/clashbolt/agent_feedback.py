@@ -20,7 +20,7 @@ def gap_class(reason: str) -> str:
 
 def decide_feedback(plan: dict, result: dict, budget_remaining: int) -> dict:
     """Choose at most one new *proposal*, never automatically dispatch it."""
-    if not 0 <= budget_remaining <= 32:
+    if type(budget_remaining) is not int or not 0 <= budget_remaining <= 32:
         raise ValueError("Remaining gate budget must be between 0 and 32")
     previous = {
         "verdict": result.get("verdict", "UNKNOWN"),

@@ -175,3 +175,37 @@ def test_opt_in_same_origin_react_build_is_static_and_api_remains_separate(
     monkeypatch.setenv("CLASHBOLT_FRONTEND_DIST", str(tmp_path))
     with pytest.raises(ValueError, match="built Vite"):
         create_app()
+
+
+@pytest.mark.parametrize("mode", ["local", "private"])
+def test_legacy_modes_reject_named_account_routes_without_server_errors(monkeypatch, mode):
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", mode)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "private-synthetic-only-key")
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with TestClient(create_app()) as client:
+        headers = {"X-Operator-Token": "private-synthetic-only-key"}
+        if mode == "private":
+            assert client.post("/api/session", headers=headers).status_code == 200
+        for path in ("/api/auth/me", "/api/auth/projects"):
+            assert client.get(path).status_code == 404
+        assert client.post("/api/auth/select-project", json={"project_id": "local"},
+                           headers=headers).status_code == 404
+        assert client.post("/api/auth/logout", headers=headers).status_code == 404
+        assert client.post("/api/auth/login", json={
+            "username": "synthetic.operator", "password": "local-boundary-password",
+        }, headers=headers).status_code == 404
+
+
+def test_unsupported_access_mode_stops_app_initialization(monkeypatch):
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "unrecognized")
+    with pytest.raises(ValueError, match="Unsupported CLASHBOLT_ACCESS_MODE"):
+        create_app()
+
+
+def test_memory_only_mode_rejects_requests_for_the_durable_ledger(monkeypatch):
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with TestClient(create_app()) as client:
+        failure = client.get("/api/runs")
+        assert failure.status_code == 503
+        assert "CLASHBOLT_DATABASE_URL" in failure.json()["detail"]

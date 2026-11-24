@@ -350,7 +350,7 @@ class Policy(Ledger):
                 UPDATE model_reservation
                 SET observed_tokens = %s,
                     state = CASE
-                        WHEN %s::integer IS NOT NULL AND deadline_at > now()
+                        WHEN %s::integer IS NOT NULL AND deadline_at > clock_timestamp()
                         THEN 'COMPLETE' ELSE 'UNKNOWN'
                     END,
                     finalized_at = now()
@@ -816,7 +816,8 @@ class Policy(Ledger):
                 and row["target_revision"] == TARGET_REVISION
                 and not row["revoked"]
                 and row["used_calls"] < row["max_calls"]
-                and row["expires_at"] > conn.execute("SELECT now() AS now").fetchone()["now"]
+                and row["expires_at"]
+                    > conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
                 and row["variant"] == variant
                 and row["schedule"] == schedule
             )
@@ -1245,7 +1246,7 @@ class Policy(Ledger):
 
     def record_feedback(self, plan_id: UUID, remaining_budget: int) -> dict:
         """One idempotent proposal after a terminal observation, no tool authority."""
-        if not 0 <= remaining_budget <= 32:
+        if type(remaining_budget) is not int or not 0 <= remaining_budget <= 32:
             raise ValueError("Remaining gate budget must be 0-32")
         with self.connect() as conn:
             binding = conn.execute(
@@ -1364,7 +1365,7 @@ class Policy(Ledger):
             if (
                 plan["deadline_at"] is None
                 or plan["deadline_at"]
-                    <= conn.execute("SELECT now() AS now").fetchone()["now"]
+                    <= conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
             ):
                 invalid = invalid or "Tool receipt arrived after deadline"
             if (

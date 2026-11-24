@@ -93,3 +93,21 @@ def test_stream_resumes_then_closes_when_access_is_revoked(
     assert event.text.count("event: transition") == 1
     assert "CANCELLED" in event.text
     assert client.get(f"{url}/events").status_code == status
+
+
+def test_account_mode_disables_process_global_scratch_and_legacy_unlock(timeline):
+    _, client, _, _ = timeline
+    assert client.post("/api/session").status_code == 404
+    assert client.post("/api/experiments", json={
+        "variant": "locked", "schedule": "serial",
+    }).status_code == 403
+    assert client.get("/api/experiments/missing").status_code == 404
+    denied = client.post("/api/auth/select-project", json={"project_id": "missing"})
+    assert denied.status_code == 403
+
+
+def test_timeline_reports_missing_runs_and_invalid_stream_cursors(timeline):
+    _, client, url, _ = timeline
+    assert client.get(f"/api/runs/{uuid4()}/stream").status_code == 404
+    for after in (-1, MAX_EVENT_VERSION + 1):
+        assert client.get(f"{url}/stream", params={"after": after}).status_code == 422

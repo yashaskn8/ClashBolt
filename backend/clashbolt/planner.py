@@ -55,9 +55,10 @@ def choose_plan(
 
 def propose_follow_up(previous: dict, *, budget_remaining: int) -> dict:
     """Never reinterpret UNKNOWN or expand budget while replanning."""
-    if budget_remaining < 4 or previous.get("verdict") == "UNKNOWN":
+    verdict = previous.get("verdict")
+    if budget_remaining < 4 or verdict not in ("PASS", "FAIL"):
         return {"action": "ABSTAIN", "reason": "Insufficient budget or evidence"}
-    if previous.get("verdict") == "FAIL":
+    if verdict == "FAIL":
         return {"action": "STOP", "reason": "A controlled failing witness exists"}
     if previous.get("variant") != "racy":
         return {"action": "ABSTAIN", "reason": "No untried synthetic conflict selected"}

@@ -52,3 +52,8 @@ def test_approval_preserves_exact_json_types(case, field, value):
     else:
         evidence["test_vectors"][case]["state"][field] = value
     assert valid_evidence(evidence) is False
+
+
+@pytest.mark.parametrize("evidence", [None, [], "unexpected"])
+def test_workshop_rejects_missing_evidence_objects(evidence):
+    assert valid_evidence(evidence) is False

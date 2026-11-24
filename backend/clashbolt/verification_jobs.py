@@ -139,15 +139,18 @@ class VerificationJobs:
         with self.ledger.connect() as conn:
             current = conn.execute(
                 """
-                SELECT id FROM verification_job
+                SELECT lease_until FROM verification_job
                 WHERE id = %s AND status = 'RUNNING'
                   AND lease_owner = %s AND lease_generation = %s
-                  AND lease_until > now()
                 FOR SHARE
                 """,
                 (job_id, owner, generation),
             ).fetchone()
-            if not current:
+            if (
+                not current or current["lease_until"] is None
+                or current["lease_until"]
+                    <= conn.execute("SELECT clock_timestamp() AS clock").fetchone()["clock"]
+            ):
                 return False
             conn.execute(
                 """
@@ -218,8 +221,7 @@ class VerificationJobs:
                 not job or job["status"] != "RUNNING"
                 or job["lease_owner"] != owner
                 or job["lease_generation"] != generation
-                or job["lease_until"]
-                    <= conn.execute("SELECT now() AS clock").fetchone()["clock"]
+                or job["lease_until"] is None
             ):
                 return False
             run = conn.execute(
@@ -229,6 +231,10 @@ class VerificationJobs:
                 """,
                 (job["run_id"],),
             ).fetchone()
+            if job["lease_until"] <= conn.execute(
+                "SELECT clock_timestamp() AS clock"
+            ).fetchone()["clock"]:
+                return False
             current = bool(
                 run and run["status"] == "COMPLETE"
                 and run["version"] == job["run_version"]

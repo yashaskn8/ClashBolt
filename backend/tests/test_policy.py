@@ -428,3 +428,33 @@ def test_oracle_audit_is_transactional_and_append_only(policy):
                 (approval_id,),
             )
     assert len(policy.oracle_audit()) == 2
+
+
+def test_capability_cannot_be_used_after_expiry_inside_existing_transaction(policy, monkeypatch):
+    from uuid import UUID
+
+    proposal = policy.propose("deadline-author")
+    proposal_id = UUID(proposal["id"])
+    policy.approve(proposal_id, ORACLE_HASH, "reviewer")
+    cap = policy.issue(proposal_id, "locked", "serial")
+    cap_id = UUID(cap["capability_id"])
+    original = policy.connect
+
+    def transaction_before_expiry():
+        transaction = original()
+        now = transaction.execute("SELECT now() AS started").fetchone()["started"]
+        with original() as conn:
+            conn.execute(
+                """
+                UPDATE tool_capability
+                SET expires_at = %s::timestamptz + interval '1 microsecond'
+                WHERE id = %s
+                """,
+                (now, cap_id),
+            )
+        return transaction
+
+    with monkeypatch.context() as patch:
+        patch.setattr(policy, "connect", transaction_before_expiry)
+        assert policy.authorize(cap["token"], "locked", "serial") is False
+    assert [event["decision"] for event in policy.audit()] == ["DENY"]

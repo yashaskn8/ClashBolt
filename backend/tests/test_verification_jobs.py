@@ -230,3 +230,41 @@ def test_expired_verification_read_is_unconfirmed_before_worker_reconciliation(
             "SELECT status FROM verification_job WHERE id = %s", (job_id,),
         ).fetchone()["status"] == "UNKNOWN"
 
+
+
+def test_verification_rejects_receipts_expired_after_transaction_started(
+    completed_run, monkeypatch,
+):
+    ledger, run_id, _ = completed_run
+    queue = VerificationJobs(ledger)
+    queue.submit(run_id, "REPLAY")
+    job = queue.claim("deadline-verifier")
+    job_id = UUID(job["job_id"])
+    evidence = ledger.get(run_id)["witness"]["evidence_sha256"]
+    report = {
+        "status": "REPRODUCED", "scope": "SYNTHETIC_ONLY", "verdict": "FAIL",
+        "original_sha256": evidence, "replay_sha256": evidence,
+    }
+    original = ledger.connect
+
+    def transaction_before_expiry():
+        transaction = original()
+        now = transaction.execute("SELECT now() AS started").fetchone()["started"]
+        with original() as conn:
+            conn.execute(
+                """
+                UPDATE verification_job
+                SET lease_until = %s::timestamptz + interval '1 microsecond'
+                WHERE id = %s
+                """,
+                (now, job_id),
+            )
+        return transaction
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ledger, "connect", transaction_before_expiry)
+        assert not queue.finish(job_id, "deadline-verifier", job["lease_generation"], report)
+        assert not queue.track_target(
+            job_id, "deadline-verifier", job["lease_generation"], uuid4(),
+        )
+    assert queue.get(job_id)["status"] == "UNKNOWN"

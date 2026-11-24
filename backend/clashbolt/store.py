@@ -1164,7 +1164,7 @@ class Ledger:
                 or run["lease_owner"] != owner
                 or run["lease_generation"] != generation
                 or run["lease_until"]
-                    <= conn.execute("SELECT now() AS now").fetchone()["now"]
+                    <= conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
             ):
                 return False
             conn.execute(
@@ -1266,7 +1266,8 @@ class Ledger:
                 or current["lease_owner"] != owner
                 or current["lease_generation"] != generation
                 or current["lease_until"] is None
-                or current["lease_until"] <= conn.execute("SELECT now() AS now").fetchone()["now"]
+                or current["lease_until"]
+                    <= conn.execute("SELECT clock_timestamp() AS now").fetchone()["now"]
                 or current["status"] not in ("RUNNING", "CANCELLING")
             ):
                 return False

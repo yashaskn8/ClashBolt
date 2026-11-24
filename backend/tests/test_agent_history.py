@@ -275,3 +275,31 @@ def test_nonobject_tool_receipt_terminates_as_unknown(policy):
     assert current["state"] == "UNKNOWN"
     assert current["result"]["evidence_sha256"] is None
     assert policy.plan_history(plan_id)["integrity"]["status"] == "VERIFIED"
+
+
+def test_agent_receipt_uses_deadline_after_transaction_started(policy, monkeypatch):
+    rule_id, plan_id = _approved_plan(policy)
+    cap = policy.issue(rule_id, "racy", "overlap", plan_id=plan_id)
+    assert policy.authorize(cap["token"], "racy", "overlap", plan_id)
+    witness = asyncio.run(execute("racy", "overlap"))
+    original = policy.connect
+
+    def transaction_before_expiry():
+        transaction = original()
+        now = transaction.execute("SELECT now() AS started").fetchone()["started"]
+        with original() as conn:
+            conn.execute(
+                """
+                UPDATE agent_plan SET deadline_at = %s::timestamptz + interval '1 microsecond'
+                WHERE id = %s
+                """,
+                (now, plan_id),
+            )
+        return transaction
+
+    with monkeypatch.context() as patch:
+        patch.setattr(policy, "connect", transaction_before_expiry)
+        assert policy.record_outcome(plan_id, witness)
+    current = policy.get_plan(plan_id)
+    assert current["state"] == "UNKNOWN"
+    assert current["result"]["evidence_gap"] == "Tool receipt arrived after deadline"

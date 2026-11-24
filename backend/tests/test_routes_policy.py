@@ -194,6 +194,11 @@ def test_feedback_route_requires_operator_and_preserves_missing_evidence(policy_
     plan_id = created["id"]
     url = f"/api/agent/plans/{plan_id}/feedback"
     assert policy_client.post(url, json={"remaining_budget": 8}).status_code == 403
+    for invalid_budget in (True, "4", 4.0):
+        rejected = policy_client.post(
+            url, json={"remaining_budget": invalid_budget}, headers=header,
+        )
+        assert rejected.status_code == 422
     assert policy_client.post(
         url, json={"remaining_budget": 8}, headers=header,
     ).status_code == 409

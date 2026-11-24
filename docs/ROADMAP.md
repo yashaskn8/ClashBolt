@@ -27,6 +27,19 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Expired authority and malformed planning evidence
+
+- B2/B6 check the live database clock after acquiring receipt locks. A lease
+  that expires during a transaction cannot authorize finalization or target
+  tracking. A2/A3/A5 apply the same clock to model budgets, capabilities and
+  tool receipts.
+- A4/A6 abstain on malformed verdicts and require an integer gate budget.
+  S1 skips malformed stored observations when ranking the fixed fixture.
+- B1/B4 and A1/A2 exercise invalid CLI configuration, rule evidence and model
+  response boundaries.
+- P4 consistently returns an unavailable route response for named account
+  operations when the server uses a legacy access mode.
+
 ## Project and session authorization through transaction commit
 
 - P1 discards delayed approval responses from an earlier reviewer context and
@@ -55,7 +68,7 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
   cleanly if a project grant is revoked.
 - Chromium measures branches in all frontend TypeScript source modules. CI
   requires coverage from the local and account browser suites and at least 73%
-  branch coverage. The backend branch floor is 78.5%.
+  branch coverage. The backend branch floor is 80%.
 
 ## Portable witness and review validation
 

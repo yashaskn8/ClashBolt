@@ -1,3 +1,4 @@
+import pytest
 from clashbolt.experiment import TARGET_REVISION
 from clashbolt.frontier import next_frontier_plan, rank_frontier
 
@@ -41,3 +42,20 @@ def test_unknown_or_external_observations_never_count_as_failures():
         }
     ]
     assert rank_frontier(injected, "racy") == rank_frontier([], "racy")
+
+
+def test_frontier_ignores_malformed_persisted_receipts():
+    valid = _receipt("overlap", "PASS")
+    invalid = [
+        None,
+        {"plan": ["overlap"], "result": {"verdict": "FAIL"}},
+        {"plan": valid["plan"], "result": []},
+        _receipt(["overlap"], "FAIL"),
+        _receipt("serial", "UNRECOGNIZED"),
+    ]
+    assert rank_frontier([*invalid, valid], "racy") == rank_frontier([valid], "racy")
+
+
+def test_frontier_rejects_unknown_fixture_variants():
+    with pytest.raises(ValueError, match="Unknown fixture variant"):
+        rank_frontier([], "unknown")

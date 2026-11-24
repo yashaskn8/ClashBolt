@@ -81,3 +81,21 @@ def test_ungated_cli_is_reachable_and_does_not_print_target_credentials():
     assert report["pass_count"] == 1
     assert "password=" not in result.stdout.lower()
     assert "postgresql://" not in result.stdout.lower()
+
+
+def test_ungated_cli_rejects_missing_cluster_settings_and_invalid_trial_budget(
+    monkeypatch, capsys,
+):
+    from clashbolt.ungated import main
+
+    monkeypatch.setattr(sys, "argv", ["ungated", "--trials", "21"])
+    monkeypatch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "Set separate local" in capsys.readouterr().err
+    monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", "postgresql://127.0.0.1:5433/postgres")
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", "postgresql://127.0.0.1:5432/control")
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "Only 1-20 trials" in capsys.readouterr().err

@@ -632,3 +632,30 @@ def test_invalid_worker_witness_becomes_unknown_without_attachment(ledger, witne
         "UNKNOWN", "UNKNOWN", None,
     )
     assert ledger.transitions(run_id)[-1]["note"] == "invalid or mismatched witness"
+
+
+def test_run_cannot_finalize_with_lease_expired_after_transaction_started(ledger, monkeypatch):
+    run = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
+    claim = ledger.claim("deadline-worker")
+    run_id = UUID(run["run_id"])
+    witness = asyncio.run(execute("locked", "serial"))
+    original = ledger.connect
+
+    def transaction_before_expiry():
+        transaction = original()
+        now = transaction.execute("SELECT now() AS started").fetchone()["started"]
+        with original() as conn:
+            conn.execute(
+                """
+                UPDATE experiment_run
+                SET lease_until = %s::timestamptz + interval '1 microsecond'
+                WHERE id = %s
+                """,
+                (now, run_id),
+            )
+        return transaction
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ledger, "connect", transaction_before_expiry)
+        assert not ledger.finish(run_id, "deadline-worker", claim["lease_generation"], witness)
+    assert ledger.get(run_id)["status"] == "RUNNING"

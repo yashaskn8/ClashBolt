@@ -396,6 +396,8 @@ def create_app() -> FastAPI:
 
     @app.get("/api/auth/projects")
     def account_projects(request: Request) -> dict:
+        if account_store is None:
+            raise HTTPException(404, "Named accounts are not enabled")
         identity = request.state.account
         return {
             "projects": account_store.accessible_projects(UUID(identity["id"])),
@@ -406,6 +408,8 @@ def create_app() -> FastAPI:
     def account_select_project(
         selection: ProjectSelection, request: Request
     ):
+        if account_store is None:
+            raise HTTPException(404, "Named accounts are not enabled")
         identity = request.state.account
         available = account_store.accessible_projects(UUID(identity["id"]))
         selected = next(

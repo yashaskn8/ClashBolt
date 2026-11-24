@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from clashbolt.model_planner import MODEL_URL, propose_model_plan
 
 
@@ -83,3 +84,13 @@ def test_model_without_configuration_never_calls_http(monkeypatch):
     monkeypatch.delenv("CLASHBOLT_LOCAL_MODEL", raising=False)
     plan = asyncio.run(propose_model_plan("racy"))
     assert plan["model_status"] == "NOT_CONFIGURED"
+
+
+@pytest.mark.parametrize("body", [None, {}, {"response": []}, {"response": "x" * 50_000}])
+def test_invalid_model_envelope_never_becomes_an_authoritative_plan(monkeypatch, body):
+    monkeypatch.setenv("CLASHBOLT_LOCAL_MODEL", "test-fixture-model")
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=body))
+    plan = asyncio.run(propose_model_plan("locked", transport=transport))
+    assert plan["planner_kind"] == "DETERMINISTIC_FALLBACK"
+    assert plan["model_status"] == "UNAVAILABLE_OR_INVALID"
+    assert plan["max_steps"] == 4

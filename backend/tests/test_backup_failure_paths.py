@@ -250,3 +250,22 @@ def test_backup_preserves_manifest_that_wins_publication_race(tmp_path, monkeypa
         backup.backup_control(destination, "postgresql://worker:local-secret@127.0.0.1/control")
     assert not destination.exists()
     assert sidecar.read_text() == "preexisting manifest"
+
+
+def test_backup_cli_requires_local_database_and_preserves_existing_output(
+    tmp_path, monkeypatch, capsys,
+):
+    import sys
+
+    dest = tmp_path / "existing.dump"
+    dest.write_bytes(b"existing archive")
+    monkeypatch.setattr(sys, "argv", ["backup", str(dest)])
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    with pytest.raises(SystemExit, match="2"):
+        backup.main()
+    assert "CLASHBOLT_DATABASE_URL must be configured" in capsys.readouterr().err
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", "postgresql://ci:local@localhost/controls")
+    with pytest.raises(SystemExit, match="2"):
+        backup.main()
+    assert "already exists" in capsys.readouterr().err
+    assert dest.read_bytes() == b"existing archive"
