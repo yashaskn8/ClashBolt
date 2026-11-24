@@ -1268,7 +1268,8 @@ class Ledger:
             ):
                 return False
 
-            observed = witness.get("observed_steps")
+            valid_witness = validate_contract(witness) is None
+            observed = witness.get("observed_steps") if isinstance(witness, dict) else None
             consumed = len(observed) if isinstance(observed, list) else 0
             if current["cancel_requested"]:
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "cancelled during execution"
@@ -1282,12 +1283,12 @@ class Ledger:
             ):
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "oracle approval withdrawn"
             elif (
-                witness.get("oracle", {}).get("sha256") != current["oracle_hash"]
+                not valid_witness
+                or witness["oracle"]["sha256"] != current["oracle_hash"]
                 or witness.get("variant") != current["variant"]
                 or witness.get("schedule") != current["schedule"]
                 or witness.get("execution_backend", "memory")
                     != current["execution_backend"]
-                or validate_contract(witness) is not None
             ):
                 status, verdict, note = "UNKNOWN", "UNKNOWN", "invalid or mismatched witness"
             else:
@@ -1304,7 +1305,7 @@ class Ledger:
                     lease_until = NULL, updated_at = now()
                 WHERE id = %s RETURNING *
                 """,
-                (status, verdict, Jsonb(witness), consumed, run_id),
+                (status, verdict, Jsonb(witness) if valid_witness else None, consumed, run_id),
             ).fetchone()
             _event(conn, updated, note)
             return True

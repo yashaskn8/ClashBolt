@@ -1337,6 +1337,8 @@ class Policy(Ledger):
         from clashbolt.witness import validate_contract
 
         invalid = validate_contract(witness)
+        if not isinstance(witness, dict):
+            witness = {}
         with self.connect() as conn:
             # Rule first, plan second: matches approval/revocation lock order.
             binding = conn.execute(

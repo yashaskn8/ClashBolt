@@ -12,7 +12,7 @@ import json
 import zipfile
 from pathlib import Path
 
-from clashbolt.witness import validate_contract, verify
+from clashbolt.witness import parse_evidence_json, validate_contract, verify
 
 README = (
     "ClashBolt synthetic evidence bundle v1\n"
@@ -78,9 +78,9 @@ async def verify_bundle(contents: bytes) -> dict:
                 )
             ):
                 return {"status": "INVALID", "reason": "Unexpected archive entries"}
-            manifest = json.loads(bundle.read("manifest.json"))
+            manifest = parse_evidence_json(bundle.read("manifest.json"))
             raw = bundle.read("witness.json")
-            witness = json.loads(raw)
+            witness = parse_evidence_json(raw)
             if not isinstance(manifest, dict) or not isinstance(witness, dict):
                 return {"status": "INVALID", "reason": "Malformed bundle JSON"}
             oracle = witness.get("oracle")

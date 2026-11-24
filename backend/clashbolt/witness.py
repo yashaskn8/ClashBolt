@@ -29,9 +29,25 @@ from clashbolt.target_db import TargetLease, disposable_target
 from clashbolt.target_service import request_fixture, service_enabled
 
 
+def parse_evidence_json(contents: bytes) -> object:
+    """Reject ambiguous JSON before interpreting or hashing evidence."""
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate evidence field: {key}")
+            result[key] = value
+        return result
+
+    return json.loads(contents, object_pairs_hook=unique_object)
+
+
 def evidence_digest(witness: dict) -> str:
     payload = {k: v for k, v in witness.items() if k not in ("evidence_sha256", "scope")}
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    serialized = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode()
     return sha256(serialized).hexdigest()
 
 
@@ -99,7 +115,10 @@ def _history_error(witness: dict) -> str | None:
         "remaining_stock": remaining,
         "confirmed_count": confirmed,
     }
-    if witness.get("final_state") != expected_state:
+    final_state = witness.get("final_state")
+    if final_state != expected_state or any(
+        type(value) is not int for value in final_state.values()
+    ):
         return "Final state disagrees with the independently replayed history"
     if type(witness.get("complete")) is not bool:
         return "Completion status must be a boolean"
@@ -114,6 +133,7 @@ def validate_contract(witness: dict) -> str | None:
     if not isinstance(witness, dict):
         return "Expected a JSON object"
     oracle = witness.get("oracle")
+    fixture = witness.get("fixture")
     variant, schedule = witness.get("variant"), witness.get("schedule")
     if not isinstance(oracle, dict):
         return "Missing immutable oracle binding"
@@ -123,7 +143,9 @@ def validate_contract(witness: dict) -> str | None:
         or witness.get("scope") != "SYNTHETIC_ONLY"
         or witness.get("target_id") != TARGET_ID
         or witness.get("target_revision") != TARGET_REVISION
-        or witness.get("fixture") != FIXTURE
+        or fixture != FIXTURE
+        or type(fixture["initial_stock"]) is not int
+        or type(fixture["quantity_each"]) is not int
         or witness.get("fixture_hash") != FIXTURE_HASH
         or oracle != {
             "id": ORACLE_ID,
@@ -220,8 +242,12 @@ def main() -> int:
     if not args.witness.is_file() or args.witness.stat().st_size > 100_000:
         parser.error("Witness must exist and be 100 KB or smaller")
     try:
-        value = json.loads(args.witness.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        with args.witness.open("rb") as source:
+            contents = source.read(100_001)
+        if len(contents) > 100_000:
+            parser.error("Witness must be 100 KB or smaller")
+        value = parse_evidence_json(contents)
+    except (OSError, ValueError, RecursionError) as error:
         parser.error(f"Cannot parse witness JSON: {error}")
     result = asyncio.run(verify(value))
     print(json.dumps(result, sort_keys=True))

@@ -1,10 +1,13 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
 
+const runStatuses = ['PENDING', 'RUNNING', 'CANCELLING', 'CANCELLED', 'COMPLETE', 'UNKNOWN'] as const
+type RunStatus = typeof runStatuses[number]
+
 export type DurableRun = {
   run_id: string
   variant: 'racy' | 'locked'
   schedule: 'overlap' | 'serial'
-  status: 'PENDING' | 'RUNNING' | 'CANCELLING' | 'CANCELLED' | 'COMPLETE' | 'UNKNOWN'
+  status: RunStatus
   version: number
   verdict: 'PASS' | 'FAIL' | 'UNKNOWN' | null
   cancel_requested: boolean
@@ -39,7 +42,7 @@ export type DurableRun = {
 
 type Event = {
   version: number
-  status: string
+  status: RunStatus
   note: string
   created_at: string
 }
@@ -94,7 +97,8 @@ export default function DurableMonitor({
             const run = (await snapshotResponse.json()) as DurableRun
             if (
               run.run_id !== runId ||
-              !Number.isSafeInteger(run.version) || run.version < 1
+              !Number.isSafeInteger(run.version) || run.version < 1 ||
+              !runStatuses.includes(run.status)
             ) throw new Error('Invalid authoritative run version')
             let cursor = 0
             let more = true
@@ -123,7 +127,7 @@ export default function DurableMonitor({
                 if (
                   !event || !Number.isSafeInteger(event.version) ||
                   event.version !== cursor + 1 ||
-                  typeof event.status !== 'string' ||
+                  !runStatuses.includes(event.status) ||
                   typeof event.note !== 'string' ||
                   typeof event.created_at !== 'string'
                 ) throw new Error('Noncontiguous transition history')
@@ -137,6 +141,10 @@ export default function DurableMonitor({
             }
             if (!more && cursor < run.version) {
               throw new Error('Transition history is behind run snapshot')
+            }
+            const snapshotEvent = history[run.version - 1]
+            if (snapshotEvent && snapshotEvent.status !== run.status) {
+              throw new Error('Transition history disagrees with run snapshot')
             }
             if (
               history.length < acceptedHistory.length ||

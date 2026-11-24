@@ -113,7 +113,7 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
 
   // Deliberately corrupt authoritative pages after an intact prefix has
   // already been accepted. Rehashing/cursor changes cannot rewrite history.
-  let corruption: 'prefix' | 'cursor' | 'none' = 'prefix'
+  let corruption: 'prefix' | 'cursor' | 'snapshot' | 'status' | 'none' = 'none'
   let corruptedPages = 0
   await page.route(
     (url) => url.pathname === `/api/runs/${run.run_id}/events`,
@@ -124,17 +124,23 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
       }
       const response = await route.fetch()
       const original = (await response.json()) as {
-        events: { version: number; status: string }[]
+        events: { version: number; status: string; note: string }[]
         next_after: number
       }
-      const payload = corruption === 'prefix'
-        ? {
-            ...original,
-            events: original.events.map((event, index) =>
-              index === 0 ? { ...event, status: 'FORGED' } : event,
-            ),
+      const payload = {
+        ...original,
+        events: original.events.map((event, index) => {
+          if (corruption === 'prefix' && index === 0) {
+            return { ...event, note: 'Altered first event' }
           }
-        : { ...original, next_after: original.next_after + 1 }
+          if (index === original.events.length - 1) {
+            if (corruption === 'status') return { ...event, status: 'INVALID' }
+            if (corruption === 'snapshot') return { ...event, status: 'PENDING' }
+          }
+          return event
+        }),
+        next_after: original.next_after + (corruption === 'cursor' ? 1 : 0),
+      }
       corruptedPages++
       await route.fulfill({
         response, contentType: 'application/json',
@@ -142,29 +148,18 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
       })
     },
   )
-  await notify()
-  await expect.poll(() => corruptedPages).toBeGreaterThan(0)
-  await expect(page.getByText(
-    'Cannot refresh the authoritative run snapshot.',
-  )).toBeVisible()
-  await expect(terminal).toBeVisible()
-  await expect(page.locator('.transition-list li strong', {
-    hasText: 'FORGED',
-  })).toHaveCount(0)
-
-  const firstCorruptCount = corruptedPages
-  corruption = 'cursor'
-  await notify()
-  await expect.poll(() => corruptedPages).toBeGreaterThan(firstCorruptCount)
-  await expect(page.getByText(
-    'Cannot refresh the authoritative run snapshot.',
-  )).toBeVisible()
-  await expect(terminal).toBeVisible()
-  corruption = 'none'
-  await notify()
-  await expect(page.getByText(
-    'Cannot refresh the authoritative run snapshot.',
-  )).toHaveCount(0, { timeout: 12_000 })
-  await expect(terminal).toBeVisible()
+  const integrityError = page.getByText('Cannot refresh the authoritative run snapshot.')
+  for (const mutation of ['prefix', 'cursor', 'status', 'snapshot'] as const) {
+    const count = corruptedPages
+    corruption = mutation
+    await notify()
+    await expect.poll(() => corruptedPages).toBeGreaterThan(count)
+    await expect(integrityError).toBeVisible()
+    await expect(terminal).toBeVisible()
+    await expect(page.getByText('Altered first event')).toHaveCount(0)
+    corruption = 'none'
+    await notify()
+    await expect(integrityError).toHaveCount(0, { timeout: 12_000 })
+    await expect(terminal).toBeVisible()
+  }
 })
-

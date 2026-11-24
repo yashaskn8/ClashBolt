@@ -619,3 +619,16 @@ def test_120_crash_and_duplicate_injections_fence_every_terminal_result(ledger):
             "UNKNOWN" if final["status"] == "UNKNOWN" else "PASS"
         )
     assert outcomes == {"COMPLETE": 80, "UNKNOWN": 40}
+
+
+@pytest.mark.parametrize("witness", [None, {"oracle": []}, {"oracle": None}, {"bad": float("nan")}])
+def test_invalid_worker_witness_becomes_unknown_without_attachment(ledger, witness):
+    run = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
+    claim = ledger.claim("malformed-result-worker")
+    run_id = UUID(run["run_id"])
+    assert ledger.finish(run_id, "malformed-result-worker", claim["lease_generation"], witness)
+    current = ledger.get(run_id)
+    assert (current["status"], current["verdict"], current["witness"]) == (
+        "UNKNOWN", "UNKNOWN", None,
+    )
+    assert ledger.transitions(run_id)[-1]["note"] == "invalid or mismatched witness"

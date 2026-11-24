@@ -264,3 +264,14 @@ def test_missing_legacy_decision_history_is_never_treated_as_verified(policy):
     assert record["state"] == "UNKNOWN"
     assert record["result"]["quarantined"] is True
     assert record["result"]["evidence_sha256"] is None
+
+
+def test_nonobject_tool_receipt_terminates_as_unknown(policy):
+    rule_id, plan_id = _approved_plan(policy)
+    cap = policy.issue(rule_id, "racy", "overlap", plan_id=plan_id)
+    assert policy.authorize(cap["token"], "racy", "overlap", plan_id)
+    assert policy.record_outcome(plan_id, None)
+    current = policy.get_plan(plan_id)
+    assert current["state"] == "UNKNOWN"
+    assert current["result"]["evidence_sha256"] is None
+    assert policy.plan_history(plan_id)["integrity"]["status"] == "VERIFIED"

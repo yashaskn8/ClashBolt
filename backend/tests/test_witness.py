@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 
+import pytest
 from clashbolt.experiment import execute
 from clashbolt.witness import evidence_digest, verify
 
@@ -77,3 +78,50 @@ def test_malformed_types_fail_closed():
     malformed["observed_steps"][0]["sequence"] = True
     malformed["evidence_sha256"] = evidence_digest(malformed)
     assert asyncio.run(verify(malformed))["status"] == "INVALID"
+
+
+@pytest.mark.parametrize("section,field,value", [
+    ("fixture", "initial_stock", True),
+    ("fixture", "quantity_each", 1.0),
+    ("final_state", "remaining_stock", False),
+    ("final_state", "confirmed_count", 1.0),
+])
+def test_witness_rejects_rehashed_noninteger_counts(section, field, value):
+    evidence = asyncio.run(execute("locked", "serial"))
+    evidence[section] = {**evidence[section], field: value}
+    evidence["evidence_sha256"] = evidence_digest(evidence)
+    assert asyncio.run(verify(evidence))["status"] == "INVALID"
+
+
+def test_witness_rejects_nonfinite_extras():
+    evidence = asyncio.run(execute("locked", "serial"))
+    evidence["unexpected"] = float("nan")
+    assert asyncio.run(verify(evidence)) == {
+        "status": "INVALID", "reason": "Witness cannot be serialized",
+    }
+
+
+def test_witness_cli_handles_deeply_nested_data(tmp_path, monkeypatch, capsys):
+    from clashbolt.witness import main
+
+    path = tmp_path / "nested.json"
+    path.write_text("[" * 10_000 + "null" + "]" * 10_000, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["witness", str(path)])
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "Cannot parse witness JSON" in capsys.readouterr().err
+
+
+def test_witness_cli_rejects_duplicate_nested_keys(tmp_path, monkeypatch, capsys):
+    from clashbolt.witness import main
+
+    evidence = asyncio.run(execute("locked", "serial"))
+    text = json.dumps(evidence).replace(
+        '"initial_stock": 1', '"initial_stock": 2, "initial_stock": 1',
+    )
+    path = tmp_path / "duplicate.json"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["witness", str(path)])
+    with pytest.raises(SystemExit, match="2"):
+        main()
+    assert "Duplicate evidence field: initial_stock" in capsys.readouterr().err
