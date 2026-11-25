@@ -27,6 +27,27 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## CI coverage count reconciliation (25 November 2026)
+
+The coverage gate now checks nonnegative integer statement/branch counts,
+valid covered-count bounds and agreement of reported percentages with
+their denominators for every source file and the aggregate report. It also
+requires aggregate counts to equal the sum of source-file counts. This
+uses the documented coverage.py JSON arithmetic:
+https://coverage.readthedocs.io/en/latest/faq.html
+No existing minimum, skip rule or workflow check is relaxed. A consistent
+report is not proof that its producer executed tests honestly.
+
+Ten locally constructed regression cases failed against the original,
+blob-verified checker and passed after the fix. The focused reconstructed
+quality-report test subset (including existing quality tests, ten new
+count regressions and three explicit floor checks) passed 43/43 under
+Python 3.13.5 and coverage.py 7.13.3: 83/94 statements and 48/56 branches
+of the checker. The checker also accepted the actual coverage.py summary
+counts produced by that run. Workflow-policy tests outside this subset
+and all native/browser/full CI gates remain required. This is not a
+repository-wide coverage measurement or independent acceptance.
+
 ## P5 active-work heartbeat diagnostics (25 November 2026)
 
 PDF revision 3 November 2026, pp. 22–23: live operations must expose

@@ -28,6 +28,27 @@ MODULE_MINIMUMS = {
     "backend/clashbolt/witness.py": 70.0,
 }
 
+COUNT_FIELDS = ("num_statements", "covered_lines", "num_branches", "covered_branches")
+
+
+def _coverage_counts(summary: dict, label: str) -> tuple[int, int, int, int]:
+    counts = tuple(summary.get(field) for field in COUNT_FIELDS)
+    if any(type(value) is not int or value < 0 for value in counts):
+        raise ValueError(f"Invalid coverage counts: {label}")
+    statements, lines, branches, covered = counts
+    if lines > statements or covered > branches:
+        raise ValueError(f"Covered count exceeds total: {label}")
+    total = statements + branches
+    expected = 100 * ((lines + covered) / total) if total else 100.0
+    percentage = summary.get("percent_covered")
+    if (
+        type(percentage) not in (int, float)
+        or not 0 <= percentage <= 100
+        or not math.isclose(percentage, expected, rel_tol=0, abs_tol=1e-8)
+    ):
+        raise ValueError(f"Coverage percentage disagrees with counts: {label}")
+    return counts
+
 
 def validate(junit_xml: Path, coverage_json: Path) -> dict:
     root = ElementTree.parse(junit_xml).getroot()
@@ -83,20 +104,12 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
     if report.get("meta", {}).get("branch_coverage") is not True:
         raise ValueError("Statement-only coverage is not acceptable")
     totals = report["totals"]
-    branches = totals["num_branches"]
-    if type(branches) is not int or branches <= 0:
+    total_counts = _coverage_counts(totals, "totals")
+    _, _, branches, covered = total_counts
+    if branches <= 0:
         raise ValueError("No branch decisions were measured")
-    covered = totals["covered_branches"]
-    if not isinstance(covered, int) or isinstance(covered, bool) or not 0 <= covered <= branches:
-        raise ValueError("Invalid covered branch count")
     branch_pct = 100 * covered / branches
     combined_pct = totals["percent_covered"]
-    if (
-        type(combined_pct) not in (int, float)
-        or not math.isfinite(combined_pct)
-        or not 0 <= combined_pct <= 100
-    ):
-        raise ValueError("Invalid combined coverage percentage")
     if combined_pct < MIN_COMBINED_COVERAGE:
         raise ValueError(f"Combined coverage {combined_pct:.2f}% below floor")
     if branch_pct < MIN_BRANCH_ONLY_COVERAGE:
@@ -105,16 +118,13 @@ def validate(junit_xml: Path, coverage_json: Path) -> dict:
     files = report["files"]
     if len(files) < 25:
         raise ValueError("Coverage input has unexpectedly few source modules")
+    file_counts = [_coverage_counts(row["summary"], name) for name, row in files.items()]
+    if tuple(map(sum, zip(*file_counts, strict=True))) != total_counts:
+        raise ValueError("Coverage totals disagree with per-file counts")
     for module, minimum in MODULE_MINIMUMS.items():
         if module not in files:
             raise ValueError(f"Missing critical module in coverage: {module}")
         percentage = files[module]["summary"]["percent_covered"]
-        if (
-            type(percentage) not in (int, float)
-            or not math.isfinite(percentage)
-            or not 0 <= percentage <= 100
-        ):
-            raise ValueError(f"Invalid critical module coverage: {module}")
         if percentage < minimum:
             raise ValueError(
                 f"Critical module {module} coverage {percentage:.2f}% < {minimum:.2f}%"

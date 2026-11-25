@@ -40,22 +40,26 @@ def _reports(tmp_path):
         )
         if index < len(skips):
             ElementTree.SubElement(test, "skipped")
+    names = list(MODULE_MINIMUMS) + [
+        f"backend/clashbolt/dummy_{index}.py" for index in range(25 - len(MODULE_MINIMUMS))
+    ]
+    files = {}
+    for index, name in enumerate(names):
+        covered = 40 if index < 21 else 5
+        files[name] = {"summary": {
+            "num_statements": 40, "covered_lines": 40,
+            "num_branches": 40, "covered_branches": covered,
+            "percent_covered": 100 * (40 + covered) / 80,
+        }}
     report = {
         "meta": {"branch_coverage": True},
         "totals": {
-            "num_branches": 1000,
-            "covered_branches": 810,
-            "percent_covered": 83.0,
+            "num_statements": 1000, "covered_lines": 1000,
+            "num_branches": 1000, "covered_branches": 860,
+            "percent_covered": 93.0,
         },
-        "files": {
-            name: {"summary": {"percent_covered": max(minimum, 95.0)}}
-            for name, minimum in MODULE_MINIMUMS.items()
-        },
+        "files": files,
     }
-    for index in range(25 - len(report["files"])):
-        report["files"][f"backend/clashbolt/dummy_{index}.py"] = {
-            "summary": {"percent_covered": 95.0}
-        }
     junit = tmp_path / "test-results.xml"
     coverage = tmp_path / "coverage.json"
     ElementTree.ElementTree(suite).write(junit, encoding="unicode")
@@ -67,7 +71,8 @@ def test_valid_synthetic_reports_pass(tmp_path):
     junit, coverage, _suite, _report = _reports(tmp_path)
     outcome = validate(junit, coverage)
     assert outcome["tests_executed"] == MIN_TEST_CASES - len(EXPECTED_SKIPS)
-    assert outcome["branch_only_coverage"] == 81.0
+    assert outcome["branch_only_coverage"] == 86.0
+    assert outcome["combined_coverage"] == 93.0
 
 
 @pytest.mark.parametrize("mutation", [
@@ -158,6 +163,72 @@ def test_quality_gate_rejects_tampered_reports(tmp_path, mutation):
     ElementTree.ElementTree(suite).write(junit, encoding="unicode")
     coverage.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError):
+        validate(junit, coverage)
+
+
+@pytest.mark.parametrize("mutation", [
+    "totals_percentage", "totals_counts", "file_percentage", "file_counts",
+    "missing_count", "boolean_count", "negative_count", "overfull_count",
+    "fractional_count", "extra_file",
+])
+def test_inconsistent_coverage_counts(tmp_path, mutation):
+    junit, coverage, _suite, report = _reports(tmp_path)
+    summary = report["files"]["backend/clashbolt/dummy_0.py"]["summary"]
+    totals = report["totals"]
+    if mutation == "totals_percentage":
+        totals["percent_covered"] = 99
+    elif mutation == "totals_counts":
+        totals["num_statements"] += 1
+        totals["percent_covered"] = 100 * 1860 / 2001
+    elif mutation == "file_percentage":
+        summary["percent_covered"] = 99
+    elif mutation == "file_counts":
+        summary["covered_lines"] -= 1
+        summary["percent_covered"] = 98.75
+    elif mutation == "missing_count":
+        del summary["covered_lines"]
+    elif mutation == "boolean_count":
+        summary["covered_lines"] = True
+    elif mutation == "negative_count":
+        summary["num_statements"] = -1
+    elif mutation == "overfull_count":
+        summary["covered_lines"] = 41
+    elif mutation == "fractional_count":
+        summary["num_branches"] = 40.5
+    else:
+        report["files"]["extra.py"] = {"summary": dict(summary)}
+    coverage.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError):
+        validate(junit, coverage)
+
+
+@pytest.mark.parametrize("kind, message", [
+    ("branch", "Branch-only coverage"),
+    ("combined", "Combined coverage"),
+    ("critical", "Critical module"),
+])
+def test_consistent_reports_still_enforce_floors(tmp_path, kind, message):
+    junit, coverage, _suite, report = _reports(tmp_path)
+    summaries = [row["summary"] for row in report["files"].values()]
+    if kind == "branch":
+        for summary in summaries:
+            summary["covered_branches"] = 30
+    elif kind == "combined":
+        for summary in summaries:
+            summary["covered_lines"] = 20
+    else:
+        summaries[0]["covered_lines"] = 0
+        summaries[0]["covered_branches"] = 0
+    for summary in summaries:
+        summary["percent_covered"] = 100 * (
+            summary["covered_lines"] + summary["covered_branches"]
+        ) / 80
+    totals = report["totals"]
+    for field in ("covered_lines", "covered_branches"):
+        totals[field] = sum(summary[field] for summary in summaries)
+    totals["percent_covered"] = 100 * (totals["covered_lines"] + totals["covered_branches"]) / 2000
+    coverage.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
         validate(junit, coverage)
 
 
