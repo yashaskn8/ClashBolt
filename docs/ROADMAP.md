@@ -27,6 +27,27 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## P5 active-work heartbeat diagnostics (25 November 2026)
+
+PDF revision 3 November 2026, pp. 22–23: live operations must expose
+recoverable state without false certainty. The existing diagnostics could
+report NORMAL when a run was RUNNING or CANCELLING, or verification was
+RUNNING, despite zero recently responsive workers. The two new read-only
+review hints consume existing counts via the existing operations endpoint;
+no database, dependency, worker, notification or authorization changes.
+Fleet heartbeat recovery clears the hint, not the underlying run state.
+A responsive fleet does not establish an individual claim's liveness.
+Following Prometheus alerting guidance, these are dashboard review prompts,
+not incident pages or automatic recovery:
+https://prometheus.io/docs/practices/alerting/
+
+Seven of nine initial regression cases failed before the correction.
+All twelve focused cases passed afterwards (including three compatibility
+cases); 22/22 statements and 16/16 branches in ops_alerts.py were covered
+on Python 3.13.5. Original source matched the pinned Git blob; the updated
+code and new tests were checked against their locally tested blob hashes.
+Full CI and independent deployment acceptance remain outstanding.
+
 ## A7 uncertainty-aware reported evaluation (24 November 2026)
 
 The data-only evaluation report now distinguishes targets with a reported

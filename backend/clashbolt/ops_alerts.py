@@ -22,6 +22,16 @@ def diagnose_operations(snapshot: dict) -> dict:
             "code": "VERIFICATION_NEEDS_WORKER",
             "message": "Pending verification jobs have no recently responsive worker.",
         })
+    if responsive == 0 and (runs.get("RUNNING", 0) > 0 or runs.get("CANCELLING", 0) > 0):
+        alerts.append({
+            "code": "ACTIVE_RUN_NEEDS_REVIEW",
+            "message": "Active experiments have no recently responsive worker; review recovery.",
+        })
+    if responsive == 0 and verifications.get("RUNNING", 0) > 0:
+        alerts.append({
+            "code": "ACTIVE_VERIFICATION_NEEDS_REVIEW",
+            "message": "Active verification jobs lack a responsive worker; review recovery.",
+        })
     if snapshot.get("quarantined_agent_plans", 0) > 0:
         alerts.append({
             "code": "QUARANTINED_AGENT_CONTEXT",

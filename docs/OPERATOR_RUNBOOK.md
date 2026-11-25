@@ -19,6 +19,10 @@ native worker service, PostgreSQL availability, journal logs and target-cluster
 connection without exposing database credentials. If queue age reaches two
 minutes, check admission quotas, target cleanup and current target slots.
 Review pending verification jobs after the separate worker recovers.
+RUNNING or CANCELLING experiments and RUNNING verifications also produce
+review hints when the fleet has no recently responsive worker. Inspect
+recovery and authoritative run records. A recovered fleet heartbeat clears
+the hint, not the run status; it cannot prove individual claim liveness.
 UNKNOWN experiment or verification records produce an ATTENTION hint even
 when the queue is idle. Review their recorded evidence; the hint may refer
 to historical records and does not establish a new incident or authorize replay.
