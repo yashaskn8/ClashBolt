@@ -228,8 +228,10 @@ jobs:
         run: python ci/check_ci_policy.py
       - name: Adversarial CI-gate mutation and synthetic target abuse regressions
         run: |
+          python ci/check_traceability.py
           python -m pytest -q --timeout=30 \
             ci/tests/test_gate_validation.py \
+            ci/tests/test_traceability.py \
             ci/tests/test_deployment_security.py \
             ci/tests/test_release_artifacts.py \
             backend/tests/test_adversarial_fixture.py \

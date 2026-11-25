@@ -1,0 +1,525 @@
+{
+  "specification": "INTERLEAVE TITAN-20 Architecture",
+  "revision": "2026-11-03",
+  "reviewed_head": "8b7a08d0ed85122e34e3706951c6f24dd7e2fcdf",
+  "last_successful_ci": {
+    "commit": "d9e3231c17a0b8a31202df1b9830af6080b01e82",
+    "run_id": 45602906318
+  },
+  "scope": "File-level candidate traceability; mappings are not acceptance evidence.",
+  "requirements": [
+    {
+      "id": "B1",
+      "title": "Durable Experiment Ledger",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B4"
+      ],
+      "code": [
+        "backend/clashbolt/store.py",
+        "backend/clashbolt/backup.py"
+      ],
+      "tests": [
+        "backend/tests/test_store.py",
+        "backend/tests/test_cold_restore.py",
+        "backend/tests/test_migration_rollback.py"
+      ],
+      "acceptance": "No lost accepted runs or duplicate terminal states",
+      "blockers": [
+        "Independent multi-node recovery and production migration validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B2",
+      "title": "Fenced Worker Claims",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1"
+      ],
+      "code": [
+        "backend/clashbolt/store.py",
+        "backend/clashbolt/worker.py"
+      ],
+      "tests": [
+        "backend/tests/test_fault_matrix.py",
+        "backend/tests/test_native_worker_crash.py"
+      ],
+      "acceptance": "Zero accepted stale-generation results in the declared fault matrix",
+      "blockers": [
+        "Independent partition and failover validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B3",
+      "title": "Disposable Target Isolation",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [],
+      "code": [
+        "backend/clashbolt/target_db.py",
+        "backend/clashbolt/target_service.py"
+      ],
+      "tests": [
+        "backend/tests/test_target_db.py",
+        "backend/tests/test_target_host.py",
+        "backend/tests/test_target_service.py"
+      ],
+      "acceptance": "No cross-run contamination; measure reset latency",
+      "blockers": [
+        "Independent host isolation and multi-host recovery validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B4",
+      "title": "Bounded Schedule Controller",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B5"
+      ],
+      "code": [
+        "backend/clashbolt/experiment.py",
+        "backend/clashbolt/fixture_runner.py"
+      ],
+      "tests": [
+        "backend/tests/test_experiment.py",
+        "backend/tests/test_fault_matrix.py"
+      ],
+      "acceptance": "Measure controlled reproduction and gate overhead",
+      "blockers": [
+        "Independent supported-boundary reproduction"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B5",
+      "title": "Independent Invariant Oracle",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B3"
+      ],
+      "code": [
+        "backend/clashbolt/witness.py",
+        "backend/clashbolt/oracle_workshop.py"
+      ],
+      "tests": [
+        "backend/tests/test_witness.py",
+        "backend/tests/test_oracle_workshop.py"
+      ],
+      "acceptance": "Measure false-positive rate and mutation sensitivity; approved versions only",
+      "blockers": [
+        "Independent adjudication and broader rule validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B6",
+      "title": "Minimal Witness Reproducer",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1",
+        "B4",
+        "B5"
+      ],
+      "code": [
+        "backend/clashbolt/reducer.py",
+        "backend/clashbolt/witness_bundle.py",
+        "backend/clashbolt/verification_jobs.py"
+      ],
+      "tests": [
+        "backend/tests/test_reducer.py",
+        "backend/tests/test_witness_bundle.py",
+        "backend/tests/test_verification_jobs.py"
+      ],
+      "acceptance": "Independent replay success and trace size",
+      "blockers": [
+        "Cold-machine independent reproduction"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "B7",
+      "title": "Budgeted Admission and Recovery",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1"
+      ],
+      "code": [
+        "backend/clashbolt/store.py",
+        "backend/clashbolt/worker.py"
+      ],
+      "tests": [
+        "backend/tests/test_queue_load.py",
+        "backend/tests/test_multi_project_fair_load.py",
+        "backend/tests/test_retry_storm.py"
+      ],
+      "acceptance": "Bounded fair load, queue age, start latency and overspend rate",
+      "blockers": [
+        "Independent sustained workload and measured resource cost"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A1",
+      "title": "Invariant Hypothesis Workshop",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [],
+      "code": [
+        "backend/clashbolt/oracle_workshop.py",
+        "backend/clashbolt/policy.py"
+      ],
+      "tests": [
+        "backend/tests/test_oracle_workshop.py",
+        "backend/tests/test_policy.py"
+      ],
+      "acceptance": "Approved rule precision and useful-rule recall",
+      "blockers": [
+        "Independent ground truth and rule review"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A2",
+      "title": "Budgeted Test Planner",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "A3"
+      ],
+      "code": [
+        "backend/clashbolt/planner.py",
+        "backend/clashbolt/model_planner.py"
+      ],
+      "tests": [
+        "backend/tests/test_model_planner.py",
+        "backend/tests/test_model_obligations.py"
+      ],
+      "acceptance": "Adjudicated yield per total cost within authorized budgets",
+      "blockers": [
+        "Independent held-out cost evidence"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A3",
+      "title": "Capability Tool Broker",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [],
+      "code": [
+        "backend/clashbolt/policy.py",
+        "backend/clashbolt/routes_policy.py"
+      ],
+      "tests": [
+        "backend/tests/test_policy.py",
+        "backend/tests/test_revocation_atomicity.py",
+        "backend/tests/test_routes_policy.py"
+      ],
+      "acceptance": "Zero unauthorized accepted calls in declared tests",
+      "blockers": [
+        "Independent authorization and tenancy validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A4",
+      "title": "Evidence-Calibrated Abstention",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B5"
+      ],
+      "code": [
+        "backend/clashbolt/agent_feedback.py",
+        "backend/clashbolt/policy.py"
+      ],
+      "tests": [
+        "backend/tests/test_agent_feedback.py",
+        "backend/tests/test_agent_obligations.py"
+      ],
+      "acceptance": "Measure false claims and appropriate abstention",
+      "blockers": [
+        "Independent adjudication of ambiguous outcomes"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A5",
+      "title": "Durable Agent Decision Record",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [],
+      "code": [
+        "backend/clashbolt/agent_history.py",
+        "backend/clashbolt/policy.py"
+      ],
+      "tests": [
+        "backend/tests/test_agent_history.py",
+        "backend/tests/test_history_boundaries.py",
+        "backend/tests/test_agent_obligations.py"
+      ],
+      "acceptance": "Measure duplicate actions and obligation loss",
+      "blockers": [
+        "Independent signature and recovery validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A6",
+      "title": "Counterexample-Guided Replanner",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "A3",
+        "A5"
+      ],
+      "code": [
+        "backend/clashbolt/agent_feedback.py",
+        "backend/clashbolt/policy.py"
+      ],
+      "tests": [
+        "backend/tests/test_agent_feedback.py",
+        "backend/tests/test_agent_obligations.py"
+      ],
+      "acceptance": "Incremental adjudicated yield per budget",
+      "blockers": [
+        "Independent held-out ablation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "A7",
+      "title": "Agent Evaluation Gate",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [],
+      "code": [
+        "backend/clashbolt/heldout.py",
+        "backend/clashbolt/evaluation_stats.py"
+      ],
+      "tests": [
+        "backend/tests/test_heldout.py",
+        "backend/tests/test_heldout_uncertainty.py",
+        "backend/tests/test_evaluation_stats.py"
+      ],
+      "acceptance": "Report valid yield, false positives and cost without self-promotion",
+      "blockers": [
+        "Independent frozen corpus and adjudication"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "P1",
+      "title": "Experiment Composer",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1"
+      ],
+      "code": [
+        "backend/clashbolt/api.py",
+        "backend/clashbolt/store.py",
+        "frontend/src/App.tsx"
+      ],
+      "tests": [
+        "backend/tests/test_run_preview.py",
+        "backend/tests/test_account_drafts.py",
+        "frontend/e2e/drafts.accounts.spec.ts"
+      ],
+      "acceptance": "Measure valid submission rate and version-bound admission",
+      "blockers": [
+        "Independent wider browser and operational validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "P2",
+      "title": "Causal Run Timeline",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1"
+      ],
+      "code": [
+        "backend/clashbolt/api.py",
+        "frontend/src/DurableMonitor.tsx"
+      ],
+      "tests": [
+        "backend/tests/test_event_stream.py",
+        "frontend/e2e/sse.accounts.spec.ts",
+        "frontend/e2e/monotonic.accounts.spec.ts"
+      ],
+      "acceptance": "UI agrees with authoritative state after dropped events",
+      "blockers": [
+        "Independent sustained disconnect and workload validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "P3",
+      "title": "Witness Review Desk",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "P1",
+        "B6"
+      ],
+      "code": [
+        "backend/clashbolt/witness_bundle.py",
+        "frontend/src/WitnessReviews.tsx"
+      ],
+      "tests": [
+        "backend/tests/test_witness_exports.py",
+        "backend/tests/test_witness_reviews.py",
+        "frontend/e2e/reviews.accounts.spec.ts"
+      ],
+      "acceptance": "Measure external reproduction and reject unconfirmed publication",
+      "blockers": [
+        "Independent portable adjudication"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "P4",
+      "title": "Approval and Access Console",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "A1"
+      ],
+      "code": [
+        "backend/clashbolt/accounts.py",
+        "backend/clashbolt/policy.py",
+        "frontend/src/PolicyConsole.tsx"
+      ],
+      "tests": [
+        "backend/tests/test_accounts.py",
+        "backend/tests/test_revocation_atomicity.py",
+        "frontend/e2e/roles.accounts.spec.ts"
+      ],
+      "acceptance": "Zero stale approval and unauthorized access in declared tests",
+      "blockers": [
+        "Independent identity and tenancy validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "P5",
+      "title": "Live Run Operations",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B1"
+      ],
+      "code": [
+        "backend/clashbolt/ops_alerts.py",
+        "backend/clashbolt/metrics.py",
+        "frontend/src/RecentRuns.tsx"
+      ],
+      "tests": [
+        "backend/tests/test_active_operations.py",
+        "backend/tests/test_ops_alerts.py",
+        "frontend/e2e/diagnostics.accounts.spec.ts"
+      ],
+      "acceptance": "Measure cancellation latency and authoritative state agreement",
+      "blockers": [
+        "Independent operational workload and recovery validation"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "S1",
+      "title": "Semantic Conflict Frontier",
+      "pdf_pages": [
+        24,
+        26
+      ],
+      "status": "IN_PROGRESS",
+      "dependencies": [
+        "B4",
+        "B5",
+        "A2",
+        "A7"
+      ],
+      "code": [
+        "backend/clashbolt/frontier.py",
+        "backend/clashbolt/heldout.py"
+      ],
+      "tests": [
+        "backend/tests/test_frontier.py",
+        "backend/tests/test_heldout_uncertainty.py"
+      ],
+      "acceptance": "Independent equal-budget comparison with uncertainty and cost",
+      "blockers": [
+        "Independent held-out evaluation; no strategy promotion"
+      ],
+      "evidence": []
+    }
+  ]
+}
