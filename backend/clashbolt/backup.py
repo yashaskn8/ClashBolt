@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import subprocess
-import tempfile
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
@@ -73,6 +72,21 @@ def _archive_checksum(stream: BinaryIO, *, size_limit: int | None = None) -> tup
     return size, digest.hexdigest()
 
 
+def _open_private_artifact(path: Path) -> int:
+    if os.name == "nt":
+        from clashbolt._windows_backup import create_private_file
+
+        return create_private_file(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        path.unlink(missing_ok=True)
+        raise
+    return fd
+
+
 def backup_control(destination: Path, dsn: str) -> dict:
     """Create and fully read-verify a custom archive without password argv leaks."""
     args, password = _database_args(dsn)
@@ -92,29 +106,27 @@ def backup_control(destination: Path, dsn: str) -> dict:
     ):
         environment.pop(key, None)
     environment["PGPASSWORD"] = password
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=".clashbolt-backup-", suffix=".partial", dir=destination.parent
-    )
+    temporary = destination.parent / f".clashbolt-backup-{uuid4().hex}.partial"
+    descriptor = _open_private_artifact(temporary)
     try:
         os.close(descriptor)
-        os.chmod(temporary, 0o600)
         try:
             subprocess.run(
                 ["pg_dump", "--format=custom", f"--file={temporary}", *args],
                 env=environment, check=True, capture_output=True, timeout=120,
             )
             subprocess.run(
-                ["pg_restore", "--list", temporary],
+                ["pg_restore", "--list", str(temporary)],
                 check=True, capture_output=True, timeout=30,
             )
             # Decompress and read *all* archive contents without touching a DB.
             subprocess.run(
-                ["pg_restore", f"--file={os.devnull}", temporary],
+                ["pg_restore", f"--file={os.devnull}", str(temporary)],
                 check=True, capture_output=True, timeout=120,
             )
         except (OSError, subprocess.SubprocessError) as error:
             raise RuntimeError("Native PostgreSQL backup or integrity check failed") from error
-        with Path(temporary).open("rb") as archive:
+        with temporary.open("rb") as archive:
             if archive.read(5) != b"PGDMP":
                 raise ValueError("Backup does not contain a PostgreSQL custom archive")
             archive.seek(0)
@@ -130,7 +142,7 @@ def backup_control(destination: Path, dsn: str) -> dict:
         # Hard links create the final archive atomically and refuse overwrite.
         os.link(temporary, destination)
         try:
-            fd = os.open(manifest_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            fd = _open_private_artifact(manifest_path)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as output:
                     json.dump(manifest, output, sort_keys=True, indent=2)
@@ -142,7 +154,7 @@ def backup_control(destination: Path, dsn: str) -> dict:
             raise
         return manifest
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
 
 
 def verify_disposable_restore(

@@ -16,6 +16,32 @@ import pytest
 from clashbolt import backup
 from clashbolt.policy import Policy
 
+_native_run = subprocess.run
+
+
+def _assert_private_artifact(path):
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
+        return
+    # Use the native descriptor, independently of Python's Windows st_mode.
+    descriptor = _native_run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", """
+        $ErrorActionPreference = 'Stop'
+        $path = [Console]::In.ReadToEnd()
+        $acl = [IO.File]::GetAccessControl($path)
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+        if (!$acl.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IsInherited -or
+            $rules[0].IdentityReference.Value -ne $sid -or
+            $rules[0].AccessControlType -ne 'Allow' -or
+            $rules[0].FileSystemRights -ne 'FullControl') {
+            throw 'Backup must have a protected ACL for its creating principal only'
+        }
+        """],
+        input=str(path), text=True, capture_output=True, timeout=20,
+    )
+    assert descriptor.returncode == 0, descriptor.stderr
+
 
 @pytest.mark.parametrize("dsn,reason", [
     ("postgresql://u:p@198.51.100.10:5432/control", "loopback"),
@@ -51,7 +77,11 @@ def test_failed_temporary_archive_permissions_leave_no_partial_file(tmp_path, mo
     def denied(*_args):
         raise PermissionError("cannot restrict archive permissions")
 
-    monkeypatch.setattr(backup.os, "chmod", denied)
+    def unexpected_dump(*_args, **_kwargs):
+        pytest.fail("Unprotected dump")
+
+    monkeypatch.setattr(backup, "_open_private_artifact", denied)
+    monkeypatch.setattr(backup.subprocess, "run", unexpected_dump)
     with pytest.raises(PermissionError, match="cannot restrict archive permissions"):
         backup.backup_control(
             tmp_path / "control.dump", "postgresql://worker:local-secret@127.0.0.1/control",
@@ -59,7 +89,9 @@ def test_failed_temporary_archive_permissions_leave_no_partial_file(tmp_path, mo
     assert list(tmp_path.iterdir()) == []
 
 
-def _mock_native_dump(monkeypatch, *, error=False, invalid=False, payload=b"PGDMPfixed"):
+def _mock_native_dump(
+    monkeypatch, *, error=False, invalid=False, payload=b"PGDMPfixed", inspect=None,
+):
     commands = []
     environments = []
 
@@ -69,9 +101,11 @@ def _mock_native_dump(monkeypatch, *, error=False, invalid=False, payload=b"PGDM
         if error:
             raise subprocess.CalledProcessError(1, command)
         if command[0] == "pg_dump":
-            path = next(value.split("=", 1)[1] for value in command
-                        if value.startswith("--file="))
-            Path(path).write_bytes(b"invalid-dump" if invalid else payload)
+            path = Path(next(value.split("=", 1)[1] for value in command
+                             if value.startswith("--file=")))
+            if inspect is not None:
+                inspect(path)
+            path.write_bytes(b"invalid-dump" if invalid else payload)
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(backup.subprocess, "run", simulate)
@@ -118,14 +152,14 @@ def test_manifest_write_error_removes_just_created_archive(
     _mock_native_dump(monkeypatch)
     destination = tmp_path / "control.dump"
     manifest = tmp_path / "control.sha256.json"
-    original_open = backup.os.open
+    original_open = backup._open_private_artifact
 
-    def fail_manifest_write(path, flags, mode=0o777, **kwargs):
-        if str(path) == str(manifest):
+    def fail_manifest_write(path):
+        if path == manifest:
             raise OSError("manifest storage unavailable")
-        return original_open(path, flags, mode, **kwargs)
+        return original_open(path)
 
-    monkeypatch.setattr(backup.os, "open", fail_manifest_write)
+    monkeypatch.setattr(backup, "_open_private_artifact", fail_manifest_write)
     dsn = "postgresql://worker:local-secret@127.0.0.1:5432/control"
     with pytest.raises(OSError, match="manifest storage unavailable"):
         backup.backup_control(destination, dsn)
@@ -137,7 +171,7 @@ def test_manifest_write_error_removes_just_created_archive(
 def test_mock_native_dump_generates_private_manifest_without_credentials(
     tmp_path, monkeypatch,
 ):
-    _mock_native_dump(monkeypatch)
+    _mock_native_dump(monkeypatch, inspect=_assert_private_artifact)
     dest = tmp_path / "control.dump"
     result = backup.backup_control(
         dest, "postgresql://worker:local-secret@127.0.0.1:5432/control",
@@ -147,8 +181,10 @@ def test_mock_native_dump_generates_private_manifest_without_credentials(
     assert result["contains_sensitive_data"] is True
     assert "local-secret" not in json.dumps(result)
     assert dest.read_bytes() == b"PGDMPfixed"
-    assert json.loads((tmp_path / "control.sha256.json").read_text()) == result
-    assert dest.stat().st_mode & 0o777 == 0o600
+    sidecar = tmp_path / "control.sha256.json"
+    assert json.loads(sidecar.read_text()) == result
+    _assert_private_artifact(dest)
+    _assert_private_artifact(sidecar)
 
 
 @pytest.mark.parametrize("size", [5, 1024 * 1024, 2 * 1024 * 1024 + 13])
@@ -301,14 +337,13 @@ def test_backup_preserves_manifest_that_wins_publication_race(tmp_path, monkeypa
     _mock_native_dump(monkeypatch)
     destination = tmp_path / "control.dump"
     sidecar = destination.with_suffix(".sha256.json")
-    original_open = backup.os.open
+    original_link = backup.os.link
 
-    def concurrent_manifest(path, flags, mode=0o777, **kwargs):
-        if path == sidecar:
-            sidecar.write_text("preexisting manifest")
-        return original_open(path, flags, mode, **kwargs)
+    def concurrent_manifest(source, target):
+        original_link(source, target)
+        sidecar.write_text("preexisting manifest")
 
-    monkeypatch.setattr(backup.os, "open", concurrent_manifest)
+    monkeypatch.setattr(backup.os, "link", concurrent_manifest)
     with pytest.raises(FileExistsError):
         backup.backup_control(destination, "postgresql://worker:local-secret@127.0.0.1/control")
     assert not destination.exists()
