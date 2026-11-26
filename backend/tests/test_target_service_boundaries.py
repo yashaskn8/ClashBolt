@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from clashbolt import target_service
 from clashbolt.experiment import SCHEDULES
+from clashbolt.witness import validate_contract
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 INSTANCE = "a" * 32
@@ -50,7 +51,15 @@ class SocketPeer:
 
 def _peer(monkeypatch, chunks):
     peer = SocketPeer(chunks)
-    monkeypatch.setattr(target_service.socket, "socket", lambda *_: peer)
+    family = object()
+    monkeypatch.setattr(target_service.socket, "AF_UNIX", family, raising=False)
+
+    def connect(requested_family, kind):
+        assert requested_family is family
+        assert kind == target_service.socket.SOCK_STREAM
+        return peer
+
+    monkeypatch.setattr(target_service.socket, "socket", connect)
     return peer
 
 
@@ -88,6 +97,17 @@ def test_socket_success_sends_only_fixed_fields_and_reads_chunked_json(monkeypat
         "login": {"instance": INSTANCE, "password": PASSWORD},
     }
     assert peer.timeouts and all(0 < value <= 8 for value in peer.timeouts)
+
+
+def test_unavailable_unix_socket_fails_without_falling_back(monkeypatch):
+    monkeypatch.delattr(target_service.socket, "AF_UNIX", raising=False)
+
+    def should_not_open(*_args):
+        pytest.fail("The target transport must never fall back to another socket family")
+
+    monkeypatch.setattr(target_service.socket, "socket", should_not_open)
+    with pytest.raises(OSError, match="Unix socket support"):
+        target_service.request_fixture("locked", "serial", None)
 
 
 @pytest.mark.parametrize("invalid", [
@@ -207,6 +227,7 @@ def test_target_service_main_encodes_only_valid_result(monkeypatch):
     monkeypatch.setattr(
         target_service.sys, "stdout", SimpleNamespace(buffer=output),
     )
-    monkeypatch.setattr(target_service, "run_request", lambda _raw: {"verdict": "PASS"})
     assert target_service.main() == 0
-    assert json.loads(output.getvalue()) == {"verdict": "PASS"}
+    result = json.loads(output.getvalue())
+    assert result["verdict"] == "PASS"
+    assert validate_contract(result) is None

@@ -66,8 +66,11 @@ def request_fixture(
     wire = json.dumps(payload).encode()
     if len(wire) > MAX_REQUEST:
         raise ValueError("Oversized fixture request")
+    family = getattr(socket, "AF_UNIX", None)
+    if family is None:
+        raise OSError("The fixed target service requires Unix socket support")
     deadline = monotonic() + 8
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    with socket.socket(family, socket.SOCK_STREAM) as client:
         client.settimeout(8)
         client.connect(SOCKET_PATH)
         client.sendall(wire)

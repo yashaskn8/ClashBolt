@@ -54,6 +54,10 @@ rows and retaining UNKNOWN when the effect is ambiguous. Worker mode retries
 database connection failures on the same bounded cycle policy as deadlocks.
 Scheduling advances past the project that received the claim, so idle
 projects do not give the next busy project extra turns.
+A native drill restarted the disposable control database after a 9.907-second
+outage. The same worker resumed and completed one run with one terminal event.
+The fixed target service reports missing Unix socket support as an I/O failure
+and the worker records UNKNOWN. The configured transport never changes.
 
 The first sustained native trial ran two real workers against 108 synthetic
 runs across three projects. Each project completed 36 runs and stayed within

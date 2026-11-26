@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID, uuid4
 
 import pytest
+from clashbolt import target_service
 from clashbolt.experiment import ORACLE_HASH, execute
 from clashbolt.policy import Policy
 from clashbolt.worker import process_one
@@ -55,6 +56,21 @@ def test_worker_publishes_one_result_and_transitions(ledger):
     assert result["step_budget"] == 4
     assert [e["status"] for e in ledger.transitions(UUID(run["run_id"]))] == [
         "PENDING", "RUNNING", "COMPLETE"
+    ]
+
+
+def test_worker_records_unknown_when_fixed_transport_is_unavailable(ledger, monkeypatch):
+    monkeypatch.setenv("CLASHBOLT_TARGET_TRANSPORT", "systemd")
+    monkeypatch.setattr(target_service, "socket", object())
+    run = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
+    run_id = UUID(run["run_id"])
+
+    assert asyncio.run(process_one(ledger, "unavailable-transport-worker"))
+
+    result = ledger.get(run_id)
+    assert result["status"] == result["verdict"] == "UNKNOWN"
+    assert [event["status"] for event in ledger.transitions(run_id)] == [
+        "PENDING", "RUNNING", "UNKNOWN",
     ]
 
 

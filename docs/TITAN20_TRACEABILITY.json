@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "44e88a4af7f9168fbdf3de47eb74434d1b3d3a20",
+  "reviewed_head": "03b3fad5170c231ddd84220db1e3917562ba2da5",
   "last_successful_ci": {
-    "commit": "44e88a4af7f9168fbdf3de47eb74434d1b3d3a20",
-    "run_id": 45834431349
+    "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
+    "run_id": 45839727374
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -29,7 +29,8 @@
         "backend/tests/test_backup.py",
         "backend/tests/test_backup_failure_paths.py",
         "backend/tests/test_cold_restore.py",
-        "backend/tests/test_migration_rollback.py"
+        "backend/tests/test_migration_rollback.py",
+        "ci/tests/test_gate_validation.py"
       ],
       "acceptance": "No lost accepted runs or duplicate terminal states",
       "blockers": [
@@ -51,6 +52,11 @@
           "commit": "4bbdaae4cf7387e8c6688c3d8a9c31f931c3a783",
           "run_id": 45837772219,
           "acceptance_record": "Partial B1 evidence: backend job passed synchronous standby promotion, acknowledged records and receipt fencing. The aggregate run failed the browser coverage gate."
+        },
+        {
+          "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
+          "run_id": 45839727374,
+          "acceptance_record": "Partial B1 evidence: the mandatory release passed with synchronous standby promotion, two acknowledged runs recovered, and stale and duplicate receipts rejected on a disposable single host."
         }
       ]
     },
@@ -95,7 +101,8 @@
       "tests": [
         "backend/tests/test_target_db.py",
         "backend/tests/test_target_host.py",
-        "backend/tests/test_target_service.py"
+        "backend/tests/test_target_service.py",
+        "backend/tests/test_target_service_boundaries.py"
       ],
       "acceptance": "No cross-run contamination; measure reset latency",
       "blockers": [
@@ -203,13 +210,20 @@
         "backend/tests/test_queue_load.py",
         "backend/tests/test_queue_metrics.py",
         "backend/tests/test_multi_project_fair_load.py",
-        "backend/tests/test_retry_storm.py"
+        "backend/tests/test_retry_storm.py",
+        "backend/tests/test_worker_deadlocks.py"
       ],
       "acceptance": "Bounded fair load, queue age, start latency and overspend rate",
       "blockers": [
         "Independent sustained workload and measured resource cost"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
+          "run_id": 45839727374,
+          "acceptance_record": "Partial B7 evidence: mandatory native tests verified bounded cancellation reconciliation, rotation past the served project, and bounded connection retries."
+        }
+      ]
     },
     {
       "id": "A1",
@@ -435,7 +449,13 @@
       "blockers": [
         "Independent sustained disconnect and workload validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
+          "run_id": 45839727374,
+          "acceptance_record": "Partial P2 evidence: mandatory Chromium verified a stalled snapshot abort and a subsequent authoritative poll while the stream was unavailable."
+        }
+      ]
     },
     {
       "id": "P3",
