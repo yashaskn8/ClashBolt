@@ -46,3 +46,42 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
 - **Accounts:** Provision role credentials with the native CLI. A reviewer account
   cannot execute operator actions; submitted reviewer and proposer labels are
   replaced with authenticated local identity names. No public signup.
+
+## Engineering tools
+
+- **CodeGraph:** Run `codegraph init --local-only` once in ClashBolt and
+  `codegraph sync` after significant changes. Use `codegraph status`,
+  `codegraph cycles` and `codegraph_explore` or the CLI `explore`, `context`,
+  `callers`, `callees` and `impact` commands before editing. Confirm critical
+  edges against source. Keep the index local to ClashBolt.
+- **Ponytail:** Use full mode for implementation and review. In Antigravity,
+  use `/ponytail full` and `/ponytail-review`. The plugin also registers
+  `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain` and `/ponytail-help`.
+  Use `/ponytail ultra` for demonstrated
+  excess complexity. Preserve concurrency, transaction and validation guarantees.
+- **Engineering skills:** Antigravity CLI 1.5.6 registers the `agent-skills`
+  commands by skill name. Start with `/using-agent-skills`. Use
+  `/incremental-implementation` for changes, `/test-driven-development` and
+  `/debugging-and-error-recovery` for regressions, `/doubt-driven-development`
+  for consequential assumptions, and `/code-review-and-quality` before commits.
+  Apply the CI, security, accessibility, browser or frontend skills when their
+  areas change. For module design, use `/codebase-design` and
+  `/improve-codebase-architecture`.
+- **RTK and Context7:** Prefix supported terminal commands with `rtk`. Recover
+  full diagnostics with `rtk bypass <command>`. Use Context7
+  `resolve-library-id` and `query-docs` for consequential version-specific
+  behavior. Send only public library names, versions and documentation questions.
+- **Browser verification:** Reuse Antigravity's Playwright MCP registration with
+  `--isolated` for interactive checks against disposable loopback environments.
+  Use `npm --prefix frontend run test:e2e` for automated browser coverage.
+- **Architecture and regression checks:** From the root, install the backend
+  with `.venv\Scripts\python.exe -m pip install -e ".[dev]"` and the frontend
+  with `npm --prefix frontend ci`. Run `.venv\Scripts\lint-imports.exe`,
+  `npm --prefix frontend run check:architecture`,
+  `.venv\Scripts\python.exe -m ruff check .`,
+  `.venv\Scripts\python.exe -m pytest` and `npm --prefix frontend run build`.
+  Verify contract changes with isolated failing fixtures. Use bounded Hypothesis
+  cases for pure invariants and keep generated failures reproducible. Verify
+  concurrency and transaction behavior with the native PostgreSQL integration
+  suite on separate disposable control and target clusters. Check GitHub Actions
+  on the exact commit pushed to `main`.

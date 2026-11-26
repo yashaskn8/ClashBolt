@@ -17,6 +17,7 @@ REQUIRED = {
 COMMANDS = {
     "backend": (
         "python -m ruff check .",
+        "lint-imports",
         "vulture backend/clashbolt",
         "--cov-branch",
         "--cov-fail-under=82",
@@ -26,7 +27,7 @@ COMMANDS = {
         "ci/check-control-crash-recovery.py",
         "ci/check-target-service.sh",
     ),
-    "frontend": ("npm ci", "npm run build"),
+    "frontend": ("npm ci", "npm run check:architecture", "npm run build"),
     "browser": (
         "playwright install",
         "CLASHBOLT_BROWSER_MODE=static",

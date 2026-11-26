@@ -334,6 +334,19 @@ def test_current_workflow_passes_strict_audit():
     audit(WORKFLOW.read_text(encoding="utf-8"), PLAYWRIGHT.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize(("job", "command"), [
+    ("backend", "lint-imports"),
+    ("frontend", "npm run check:architecture"),
+])
+def test_ci_policy_requires_architecture_checks(job, command):
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    steps = workflow["jobs"][job]["steps"]
+    workflow["jobs"][job]["steps"] = [step for step in steps if step.get("run") != command]
+
+    with pytest.raises(ValueError, match=f"Missing {job} security requirement: {command}"):
+        audit(yaml.safe_dump(workflow), PLAYWRIGHT.read_text(encoding="utf-8"))
+
+
 @pytest.mark.parametrize("kind", [
     "remove_security", "omit_redteam_from_release", "skip_release_on_failure",
     "write_permissions", "unpin_checkout", "skip_backend_on_error",

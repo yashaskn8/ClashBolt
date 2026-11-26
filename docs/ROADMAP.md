@@ -27,6 +27,26 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Engineering toolchain (26 November 2026)
+
+The backend CI job checks the `clashbolt` import contracts for core modules and
+application infrastructure. The frontend CI job runs `npm run check:architecture`
+after `npm ci`. It checks for cycles, unresolved imports, dependency direction
+toward the React entry points, and separation between application and browser
+test code. Both checks reject violations in isolated fixtures.
+
+The backend pytest suite runs a bounded Hypothesis state machine for synthetic
+held-out reporting. As unresolved trial results become known, it checks that
+uncertainty bounds tighten, target counts reconcile, and reports remain
+JSON-serializable. Native PostgreSQL tests remain responsible for concurrent
+transaction and worker behavior. These changes add verification infrastructure
+and carry no TITAN-20 acceptance claims.
+
+Schemathesis is deferred. The inspected FastAPI schema has 55 operations and
+17 declared request bodies. Successful responses lack structured schemas, so
+generation would mainly exercise request validation already covered by pytest.
+Revisit when the API declares more response contracts.
+
 ## CI coverage count reconciliation (25 November 2026)
 
 The coverage gate now checks nonnegative integer statement/branch counts,

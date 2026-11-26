@@ -16,7 +16,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "pytest-timeout>=2.3,<3", "httpx>=0.27,<1", "ruff>=0.8,<1", "vulture>=2.16,<3", "PyYAML>=6.0.2,<7", "bandit>=1.8,<2"]
+dev = [
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "pytest-timeout>=2.3,<3",
+  "httpx>=0.27,<1",
+  "ruff>=0.8,<1",
+  "vulture>=2.16,<3",
+  "PyYAML>=6.0.2,<7",
+  "bandit>=1.8,<2",
+  "import-linter==2.17",
+  "hypothesis==6.170.17",
+]
 
 [tool.setuptools]
 package-dir = {"" = "backend"}
@@ -39,3 +50,40 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.importlinter]
+root_package = "clashbolt"
+
+[[tool.importlinter.contracts]]
+name = "Core modules do not depend on application infrastructure"
+type = "forbidden"
+source_modules = [
+  "clashbolt.agent_history",
+  "clashbolt.evaluation_stats",
+  "clashbolt.experiment",
+  "clashbolt.metrics",
+  "clashbolt.ops_alerts",
+]
+forbidden_modules = [
+  "clashbolt.accounts",
+  "clashbolt.api",
+  "clashbolt.policy",
+  "clashbolt.routes_policy",
+  "clashbolt.store",
+  "clashbolt.target_db",
+  "clashbolt.target_service",
+  "clashbolt.worker",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application infrastructure does not depend on entry points"
+type = "forbidden"
+source_modules = [
+  "clashbolt.accounts",
+  "clashbolt.policy",
+  "clashbolt.store",
+  "clashbolt.target_db",
+  "clashbolt.target_service",
+  "clashbolt.verification_jobs",
+]
+forbidden_modules = ["clashbolt.api", "clashbolt.routes_policy", "clashbolt.worker"]

@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
+.importlintercache/
+.codegraph/
 .venv/
 *.egg-info/
 .env
