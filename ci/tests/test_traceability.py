@@ -89,6 +89,73 @@ def test_structurally_valid_evidence_is_only_a_reference(inputs):
     assert "B1" in validate(ledger, tracked)[row["code"][0]]
 
 
+@pytest.mark.parametrize("stage, extra", [
+    ("LOCALLY_VERIFIED", {}),
+    ("CI_PENDING", {"run_id": 123}),
+    ("CI_FAILED", {"run_id": 123}),
+    ("PRODUCTION_READY", {
+        "run_id": 123, "production_acceptance_record": "independent-acceptance-001",
+    }),
+])
+def test_verification_stage_requires_its_own_evidence(inputs, stage, extra):
+    ledger, tracked = inputs
+    row = ledger["requirements"][0]
+    row["status"] = stage
+    row["blockers"] = [] if stage == "PRODUCTION_READY" else ["External acceptance outstanding"]
+    row["evidence"] = [{
+        "stage": "LOCALLY_VERIFIED", "commit": "a" * 40, "acceptance_record": "focused native test",
+    }, {
+        "stage": stage, "commit": "b" * 40, "acceptance_record": "stage-specific record", **extra,
+    }]
+    assert "B1" in validate(ledger, tracked)[row["code"][0]]
+
+
+@pytest.mark.parametrize(("stage", "change"), [
+    ("LOCALLY_VERIFIED", {"commit": False}),
+    ("LOCALLY_VERIFIED", {"acceptance_record": " "}),
+    ("CI_PENDING", {"run_id": None}),
+    ("CI_FAILED", {"stage": "LOCALLY_VERIFIED"}),
+    ("CI_FAILED", {"run_id": True}),
+    ("CI_FAILED", {"run_id": 0}),
+    ("PRODUCTION_READY", {"production_acceptance_record": " "}),
+    ("PRODUCTION_READY", {"stage": "VERIFIED"}),
+    ("VERIFIED", {"stage": "not a verification stage"}),
+])
+def test_rejects_evidence_that_does_not_support_the_current_stage(inputs, stage, change):
+    ledger, tracked = inputs
+    row = ledger["requirements"][0]
+    row["status"] = stage
+    row["blockers"] = []
+    row["evidence"] = [{
+        "stage": stage, "commit": "a" * 40, "run_id": 123, "acceptance_record": "focused record",
+        "production_acceptance_record": "independent-acceptance-001", **change,
+    }]
+    with pytest.raises(ValueError, match="Unsubstantiated verification: B1"):
+        validate(ledger, tracked)
+
+
+def test_production_ready_rejects_open_blockers(inputs):
+    ledger, tracked = inputs
+    row = ledger["requirements"][0]
+    row["status"] = "PRODUCTION_READY"
+    row["evidence"] = [{
+        "stage": "PRODUCTION_READY", "commit": "a" * 40, "run_id": 123,
+        "acceptance_record": "mandatory gates", "production_acceptance_record": "accepted",
+    }]
+    with pytest.raises(ValueError, match="Unsubstantiated verification: B1"):
+        validate(ledger, tracked)
+
+
+@pytest.mark.parametrize("evidence", [None, ["unstructured reference"]])
+def test_verification_rejects_unstructured_evidence(inputs, evidence):
+    ledger, tracked = inputs
+    row = ledger["requirements"][0]
+    row["status"] = "LOCALLY_VERIFIED"
+    row["evidence"] = evidence
+    with pytest.raises(ValueError, match="Unsubstantiated verification: B1"):
+        validate(ledger, tracked)
+
+
 @pytest.mark.parametrize("dependencies", [
     {"B1": ["B4"], "B4": ["B1"]},
     {"B1": ["B4"], "B4": ["B5"], "B5": ["B1"]},

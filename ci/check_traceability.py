@@ -9,8 +9,33 @@ from pathlib import Path
 TRACKS = {f"B{i}" for i in range(1, 8)} | {f"A{i}" for i in range(1, 8)} | {
     f"P{i}" for i in range(1, 6)
 } | {"S1"}
-STATES = {"PENDING", "IN_PROGRESS", "VERIFIED", "BLOCKED"}
+CI_STATES = {"CI_PENDING", "CI_FAILED", "VERIFIED", "PRODUCTION_READY"}
+EVIDENCE_STATES = CI_STATES | {"LOCALLY_VERIFIED"}
+ACCEPTED_STATES = {"VERIFIED", "PRODUCTION_READY"}
+STATES = EVIDENCE_STATES | {"PENDING", "IN_PROGRESS", "BLOCKED"}
 SHA = re.compile(r"[a-f0-9]{40}\Z")
+
+
+def _valid_evidence(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    stage = item.get("stage", "VERIFIED")
+    commit = item.get("commit")
+    record = item.get("acceptance_record")
+    if (
+        not isinstance(stage, str) or stage not in EVIDENCE_STATES
+        or not isinstance(commit, str) or not SHA.fullmatch(commit)
+        or not isinstance(record, str) or not record.strip()
+    ):
+        return False
+    if stage in CI_STATES:
+        run_id = item.get("run_id")
+        if type(run_id) is not int or run_id <= 0:
+            return False
+    if stage == "PRODUCTION_READY":
+        acceptance = item.get("production_acceptance_record")
+        return isinstance(acceptance, str) and bool(acceptance.strip())
+    return True
 
 
 def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
@@ -31,7 +56,8 @@ def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
     dependencies: dict[str, list[str]] = {}
     for row in rows:
         track = row["id"]
-        if row["status"] not in STATES or not row["acceptance"].strip():
+        status = row["status"]
+        if status not in STATES or not row["acceptance"].strip():
             raise ValueError(f"Invalid status or acceptance: {track}")
         if not row["pdf_pages"] or any(
             type(page) is not int or not 1 <= page <= 28 for page in row["pdf_pages"]
@@ -41,15 +67,16 @@ def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
         if len(deps) != len(set(deps)) or track in deps or not set(deps) <= TRACKS:
             raise ValueError(f"Invalid dependencies: {track}")
         dependencies[track] = deps
-        if row["status"] == "VERIFIED":
-            if row["blockers"] or not row["evidence"] or any(
-                not SHA.fullmatch(item.get("commit", ""))
-                or type(item.get("run_id")) is not int or item["run_id"] <= 0
-                or not item.get("acceptance_record", "").strip()
-                for item in row["evidence"]
+        if status in EVIDENCE_STATES:
+            evidence = row["evidence"]
+            if (
+                (status in ACCEPTED_STATES and row["blockers"])
+                or not isinstance(evidence, list)
+                or not all(_valid_evidence(item) for item in evidence)
+                or not any(item.get("stage", "VERIFIED") == status for item in evidence)
             ):
                 raise ValueError(f"Unsubstantiated verification: {track}")
-        if row["status"] == "BLOCKED" and not row["blockers"]:
+        if status == "BLOCKED" and not row["blockers"]:
             raise ValueError(f"Missing blocker: {track}")
         for kind in ("code", "tests"):
             paths = row[kind]

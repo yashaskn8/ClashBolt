@@ -1,12 +1,12 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "7468b094fccdc5320abeb12792f7e24824b7efc2",
+  "reviewed_head": "ca45ea387056629f094458a52259e0e5b27fdf22",
   "last_successful_ci": {
-    "commit": "7468b094fccdc5320abeb12792f7e24824b7efc2",
-    "run_id": 45832191801
+    "commit": "ca45ea387056629f094458a52259e0e5b27fdf22",
+    "run_id": 45832806698
   },
-  "scope": "File-level candidate traceability; mappings are not acceptance evidence.",
+  "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
     {
       "id": "B1",
@@ -131,7 +131,8 @@
       ],
       "status": "IN_PROGRESS",
       "dependencies": [
-        "B3"
+        "B3",
+        "A1"
       ],
       "code": [
         "backend/clashbolt/witness.py",
@@ -234,7 +235,9 @@
       ],
       "status": "IN_PROGRESS",
       "dependencies": [
-        "A3"
+        "A3",
+        "A5",
+        "A7"
       ],
       "code": [
         "backend/clashbolt/planner.py",
@@ -356,7 +359,7 @@
         24,
         26
       ],
-      "status": "IN_PROGRESS",
+      "status": "BLOCKED",
       "dependencies": [],
       "code": [
         "backend/clashbolt/heldout.py",
@@ -514,7 +517,7 @@
         24,
         26
       ],
-      "status": "IN_PROGRESS",
+      "status": "BLOCKED",
       "dependencies": [
         "B4",
         "B5",

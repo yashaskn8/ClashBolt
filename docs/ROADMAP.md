@@ -64,6 +64,16 @@ and hit fixture database-name checks. The narrower Windows migration and
 restore runs used the expected database name and passed. The Linux GitHub
 workflow is the release verification for POSIX host behavior.
 
+## Requirement verification stages (26 November 2026)
+
+The traceability ledger distinguishes pending work, implementation in progress,
+local verification, CI pending, CI failed, CI verified, production ready and
+blocked work. Verification stages require a matching evidence record with an
+exact commit. CI stages require a workflow run, and production readiness
+requires a separate acceptance reference and resolved blockers. The validator
+checks the structure of references. Acceptance requires the underlying
+evidence. A7 and S1 are blocked on independently adjudicated held-out results.
+
 ## Engineering toolchain (26 November 2026)
 
 The backend CI job checks the `clashbolt` import contracts for core modules and
