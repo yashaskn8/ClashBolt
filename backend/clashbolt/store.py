@@ -6,6 +6,7 @@ This module deliberately does not connect to or execute an external target.
 
 import hashlib
 import json
+import math
 import os
 import re
 from uuid import UUID, uuid4
@@ -33,7 +34,7 @@ SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
 MAX_CLAIM_GENERATIONS = 3
-BASE_SCHEMA_VERSION = 9
+BASE_SCHEMA_VERSION = 10
 MAX_EVENT_VERSION = 2**63 - 1
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
@@ -125,6 +126,12 @@ _SCHEMA = (
         UNIQUE (run_id, lease_generation)
     )
     """,
+    "ALTER TABLE target_instance ADD COLUMN IF NOT EXISTS "
+    "provision_ms DOUBLE PRECISION "
+    "CHECK (provision_ms IS NULL OR provision_ms >= 0)",
+    "ALTER TABLE target_instance ADD COLUMN IF NOT EXISTS "
+    "teardown_ms DOUBLE PRECISION "
+    "CHECK (teardown_ms IS NULL OR teardown_ms >= 0)",
     """
     CREATE TABLE IF NOT EXISTS run_transition (
         run_id UUID NOT NULL REFERENCES experiment_run(id),
@@ -885,6 +892,37 @@ class Ledger:
                 ) first_claims
                 """
             ).fetchone()["start_p95_seconds"]
+            target_reset = conn.execute(
+                """
+                SELECT
+                    count(*) FILTER (
+                        WHERE status = 'CLEANED'
+                          AND provision_ms IS NOT NULL
+                          AND teardown_ms IS NOT NULL
+                    ) AS sample_count,
+                    count(*) FILTER (WHERE status = 'UNKNOWN') AS unknown_count,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY provision_ms)
+                        FILTER (
+                            WHERE status = 'CLEANED'
+                              AND provision_ms IS NOT NULL
+                              AND teardown_ms IS NOT NULL
+                        ) AS provision_p95_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY teardown_ms)
+                        FILTER (
+                            WHERE status = 'CLEANED'
+                              AND provision_ms IS NOT NULL
+                              AND teardown_ms IS NOT NULL
+                        ) AS teardown_p95_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY provision_ms + teardown_ms)
+                        FILTER (
+                            WHERE status = 'CLEANED'
+                              AND provision_ms IS NOT NULL
+                              AND teardown_ms IS NOT NULL
+                        ) AS reset_p95_ms
+                FROM target_instance
+                WHERE created_at >= now() - interval '7 days'
+                """
+            ).fetchone()
             workers = conn.execute(
                 """
                 SELECT owner, last_seen, last_seen > now() - interval '15 seconds'
@@ -981,6 +1019,22 @@ class Ledger:
                         "measured_db_active_samples": run_resources["measured_db_active_samples"],
                     },
                     "model_budget": model_budget_summary,
+                },
+                "target_reset": {
+                    "sample_count": target_reset["sample_count"],
+                    "unknown_count": target_reset["unknown_count"],
+                    "provision_p95_ms": (
+                        round(max(0.0, float(target_reset["provision_p95_ms"])), 3)
+                        if target_reset["provision_p95_ms"] is not None else None
+                    ),
+                    "teardown_p95_ms": (
+                        round(max(0.0, float(target_reset["teardown_p95_ms"])), 3)
+                        if target_reset["teardown_p95_ms"] is not None else None
+                    ),
+                    "reset_p95_ms": (
+                        round(max(0.0, float(target_reset["reset_p95_ms"])), 3)
+                        if target_reset["reset_p95_ms"] is not None else None
+                    ),
                 },
             }
 
@@ -1473,17 +1527,40 @@ class Ledger:
             )
             return True
 
-    def mark_target(self, instance_id: UUID, status: str) -> None:
+    def mark_target(
+        self,
+        instance_id: UUID,
+        status: str,
+        *,
+        provision_ms: float | None = None,
+        teardown_ms: float | None = None,
+    ) -> None:
         """Target records are facts; do not infer run success from cleanup."""
         if status not in ("ACTIVE", "CLEANED", "UNKNOWN"):
             raise ValueError("Invalid target lifecycle status")
+        validated: list[float | None] = []
+        for latency in (provision_ms, teardown_ms):
+            if latency is None:
+                validated.append(None)
+            elif (
+                type(latency) not in (int, float)
+                or not math.isfinite(float(latency))
+                or float(latency) < 0
+            ):
+                raise ValueError("Target latency must be a non-negative finite number")
+            else:
+                validated.append(round(float(latency), 3))
         with self.connect() as conn:
             conn.execute(
                 """
-                UPDATE target_instance SET status = %s, updated_at = now()
+                UPDATE target_instance
+                SET status = %s,
+                    provision_ms = COALESCE(%s, provision_ms),
+                    teardown_ms = COALESCE(%s, teardown_ms),
+                    updated_at = now()
                 WHERE id = %s AND status != 'CLEANED'
                 """,
-                (status, instance_id),
+                (status, validated[0], validated[1], instance_id),
             )
 
     def claim_abandoned_targets(self, limit: int = 8) -> list[UUID]:
@@ -1521,7 +1598,7 @@ class Ledger:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, lease_generation, status
+                SELECT id, lease_generation, status, provision_ms, teardown_ms
                 FROM target_instance WHERE run_id = %s
                 ORDER BY lease_generation
                 """,

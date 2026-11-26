@@ -41,6 +41,8 @@ def _unavailable_db(execution_backend: str) -> dict:
         "blks_hit": None,
         "blks_read": None,
         "database_bytes": None,
+        "provision_ms": None,
+        "teardown_ms": None,
         "status": "NOT_APPLICABLE" if execution_backend == "memory" else "UNAVAILABLE",
     }
 
@@ -119,6 +121,8 @@ def released_run_accounting(
                 "blks_hit": None,
                 "blks_read": None,
                 "database_bytes": None,
+                "provision_ms": None,
+                "teardown_ms": None,
                 "status": "NOT_APPLICABLE",
             },
         },
@@ -195,8 +199,11 @@ def reconcile_run_accounting(
             blks_hit = _nonneg_int(db_raw.get("blks_hit"))
             blks_read = _nonneg_int(db_raw.get("blks_read"))
             db_bytes = _nonneg_int(db_raw.get("database_bytes"))
+            provision_ms = _nonneg_float(db_raw.get("provision_ms"))
+            teardown_ms = _nonneg_float(db_raw.get("teardown_ms"))
         else:
             active_ms = xact_commit = xact_rollback = blks_hit = blks_read = db_bytes = None
+            provision_ms = teardown_ms = None
         if None not in (
             active_ms, xact_commit, xact_rollback, blks_hit, blks_read, db_bytes
         ):
@@ -207,6 +214,8 @@ def reconcile_run_accounting(
                 "blks_hit": blks_hit,
                 "blks_read": blks_read,
                 "database_bytes": db_bytes,
+                "provision_ms": provision_ms,
+                "teardown_ms": teardown_ms,
                 "status": "MEASURED",
             }
         else:

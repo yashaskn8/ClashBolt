@@ -10,6 +10,7 @@ import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from ipaddress import ip_address
+from time import perf_counter
 from typing import Callable
 from uuid import UUID
 
@@ -66,6 +67,7 @@ class TargetLease:
     _sampler: Callable[[], dict | None] | None = field(
         default=None, repr=False, compare=False
     )
+    provision_ms: float | None = None
 
     def sample_stats(self) -> dict | None:
         return self._sampler() if self._sampler is not None else None
@@ -102,6 +104,7 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
     dbname = f"cb_target_{run_id.hex}"
     role = f"cb_runner_{run_id.hex}"
     password = secrets.token_urlsafe(32)
+    provision_start = perf_counter()
     admin = psycopg.connect(target_admin_dsn, autocommit=True, connect_timeout=5)
     role_created = False
     database_created = False
@@ -196,7 +199,11 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
             }
 
         admin.execute(sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(role)))
-        yield TargetLease(database=dbname, role=role, url=url, _sampler=_sample_stats)
+        provision_ms = round(max(0.0, (perf_counter() - provision_start) * 1000), 3)
+        yield TargetLease(
+            database=dbname, role=role, url=url,
+            _sampler=_sample_stats, provision_ms=provision_ms,
+        )
     finally:
         try:
             if database_created:

@@ -156,12 +156,24 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
                 raise ValueError("Target claim expired before provisioning")
             try:
                 with disposable_target(admin_url, ledger.dsn, instance_id) as target:
-                    ledger.mark_target(instance_id, "ACTIVE")
+                    provision_ms = target.provision_ms
+                    ledger.mark_target(
+                        instance_id, "ACTIVE", provision_ms=provision_ms
+                    )
                     witness = await isolated_synthetic_run(
                         claim["variant"], claim["schedule"], target.url
                     )
                     db_stats = target.sample_stats()
-                ledger.mark_target(instance_id, "CLEANED")
+                    teardown_start = time.perf_counter()
+                teardown_ms = round(
+                    max(0.0, (time.perf_counter() - teardown_start) * 1000), 3
+                )
+                ledger.mark_target(
+                    instance_id, "CLEANED", teardown_ms=teardown_ms
+                )
+                if db_stats is not None:
+                    db_stats["provision_ms"] = provision_ms
+                    db_stats["teardown_ms"] = teardown_ms
             except (psycopg.Error, OSError, RuntimeError, ValueError, TimeoutError):
                 ledger.mark_target(instance_id, "UNKNOWN")
                 raise

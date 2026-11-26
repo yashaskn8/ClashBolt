@@ -57,3 +57,50 @@ def test_approval_preserves_exact_json_types(case, field, value):
 @pytest.mark.parametrize("evidence", [None, [], "unexpected"])
 def test_workshop_rejects_missing_evidence_objects(evidence):
     assert valid_evidence(evidence) is False
+
+
+def test_mutant_oracle_suite_rejects_every_mutated_predicate_and_verdict():
+    from clashbolt.experiment import check_invariant
+
+    valid_state = {"initial_stock": 1, "remaining_stock": 0, "confirmed_count": 1}
+    overbooked = {"initial_stock": 1, "remaining_stock": 0, "confirmed_count": 2}
+    negative = {"initial_stock": 1, "remaining_stock": -1, "confirmed_count": 2}
+    mismatch = {"initial_stock": 1, "remaining_stock": 1, "confirmed_count": 1}
+    incomplete = {"initial_stock": 1, "remaining_stock": 1, "confirmed_count": 0}
+
+    assert check_invariant(valid_state, complete=True) == "PASS"
+    assert check_invariant(overbooked, complete=True) == "FAIL"
+    assert check_invariant(negative, complete=True) == "FAIL"
+    assert check_invariant(mismatch, complete=True) == "FAIL"
+    assert check_invariant(incomplete, complete=False) == "UNKNOWN"
+
+    mutants = {
+        "always_pass": lambda _s, complete: "PASS",
+        "inverted_inequality": lambda s, complete: (
+            "UNKNOWN" if not complete
+            else ("PASS" if s["confirmed_count"] > s["initial_stock"] else "FAIL")
+        ),
+        "ignore_incomplete": lambda s, _complete: (
+            "PASS" if s["confirmed_count"] <= s["initial_stock"] else "FAIL"
+        ),
+        "ignore_negative": lambda s, complete: (
+            "UNKNOWN" if not complete
+            else ("PASS" if s["confirmed_count"] <= s["initial_stock"] else "FAIL")
+        ),
+        "ignore_conservation": lambda s, complete: (
+            "UNKNOWN" if not complete
+            else ("PASS" if 0 <= s["confirmed_count"] <= s["initial_stock"] else "FAIL")
+        ),
+    }
+    probes = [
+        (valid_state, True, "PASS"),
+        (overbooked, True, "FAIL"),
+        (negative, True, "FAIL"),
+        (mismatch, True, "FAIL"),
+        (incomplete, False, "UNKNOWN"),
+    ]
+    killed = 0
+    for mutant in mutants.values():
+        if any(mutant(state, comp) != expected for state, comp, expected in probes):
+            killed += 1
+    assert killed == len(mutants)

@@ -101,10 +101,29 @@ test('a failed run-index refresh removes the previously selectable run', async (
         runs: [{
           run_id: '00000000-0000-4000-8000-000000001234',
           variant: 'locked', schedule: 'serial',
-          status: 'COMPLETE', verdict: 'PASS',
+          status: 'UNKNOWN', verdict: 'UNKNOWN',
           execution_backend: 'memory', version: 3,
           cancel_requested: false, step_budget: 4,
-          consumed_steps: 4, witness: null,
+          consumed_steps: 2,
+          witness: {
+            target_id: 'synthetic-inventory',
+            target_revision: 'inventory-demo-v1',
+            variant: 'locked',
+            fixture: { initial_stock: 1, clients: ['a', 'b'], quantity_each: 1 },
+            fixture_hash: '0'.repeat(64),
+            schedule: 'serial',
+            requested_gates: ['a.read', 'a.commit', 'b.read', 'b.commit'],
+            observed_steps: [
+              { sequence: 1, client: 'a', checkpoint: 'read', observed_stock: 1 },
+              { sequence: 2, client: 'a', checkpoint: 'commit', accepted: true, stock_after: 0, confirmed_after: 1 },
+            ],
+            oracle: { id: 'confirmed-orders-not-above-stock', version: '1', sha256: '1'.repeat(64), authority: 'fixed-demo-rule' },
+            final_state: { initial_stock: 1, remaining_stock: 0, confirmed_count: 1 },
+            complete: false,
+            verdict: 'UNKNOWN',
+            evidence_sha256: '2'.repeat(64),
+            scope: 'SYNTHETIC_ONLY',
+          },
         }],
       }),
     })
@@ -117,6 +136,9 @@ test('a failed run-index refresh removes the previously selectable run', async (
   await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
   await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(0)
   await expect(page.locator('.recent-list button')).toHaveCount(1)
+  await page.locator('.recent-list button').first().click()
+  await expect(page.locator('.trace-gap')).toContainText('b.read, b.commit')
+  await expect(page.locator('.trace-gap')).toContainText('omitted events; causal order is not inferred.')
   await expect.poll(() => requests, { timeout: 12_000 }).toBeGreaterThan(2)
   await expect(page.locator('.recent-list button')).toHaveCount(0)
   await expect(page.getByText(

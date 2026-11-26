@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
+  "reviewed_head": "24db6d881a22f03ff9332014125f3144458f201e",
   "last_successful_ci": {
-    "commit": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
-    "run_id": 45851384127
+    "commit": "24db6d881a22f03ff9332014125f3144458f201e",
+    "run_id": 45872681107
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -108,7 +108,8 @@
         "backend/tests/test_target_db.py",
         "backend/tests/test_target_host.py",
         "backend/tests/test_target_service.py",
-        "backend/tests/test_target_service_boundaries.py"
+        "backend/tests/test_target_service_boundaries.py",
+        "backend/tests/test_target_reset_and_overhead.py"
       ],
       "acceptance": "No cross-run contamination; measure reset latency",
       "blockers": [
@@ -129,11 +130,13 @@
       ],
       "code": [
         "backend/clashbolt/experiment.py",
-        "backend/clashbolt/fixture_runner.py"
+        "backend/clashbolt/fixture_runner.py",
+        "backend/clashbolt/ungated.py"
       ],
       "tests": [
         "backend/tests/test_experiment.py",
-        "backend/tests/test_fault_matrix.py"
+        "backend/tests/test_fault_matrix.py",
+        "backend/tests/test_target_reset_and_overhead.py"
       ],
       "acceptance": "Measure controlled reproduction and gate overhead",
       "blockers": [
@@ -230,6 +233,11 @@
           "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
           "run_id": 45839727374,
           "acceptance_record": "Partial B7 evidence: mandatory native tests verified bounded cancellation reconciliation, rotation past the served project, and bounded connection retries."
+        },
+        {
+          "commit": "24db6d881a22f03ff9332014125f3144458f201e",
+          "run_id": 45872681107,
+          "acceptance_record": "Partial B7 evidence: CPU reservation quotas, worker/child/app/DB accounting, overspend/uncertainty tracking, and 90.26% combined / 83.92% branch backend coverage passed all 10 CI jobs."
         }
       ]
     },
@@ -551,6 +559,11 @@
           "commit": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
           "run_id": 45851384127,
           "acceptance_record": "Partial P5 evidence: versioned cancellation fencing and authoritative timeline recovery passed all 10 mandatory CI release-gate jobs."
+        },
+        {
+          "commit": "24db6d881a22f03ff9332014125f3144458f201e",
+          "run_id": 45872681107,
+          "acceptance_record": "Partial P5 evidence: project-scoped budget visibility, cancellation latency P95, and recoverable operations controls passed all 10 mandatory CI release-gate jobs."
         }
       ]
     },

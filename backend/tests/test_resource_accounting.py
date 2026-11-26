@@ -529,4 +529,6 @@ def test_account_migrate_upgrades_existing_project_schemas():
                 pg_sql.Identifier(schema)
             )
         ).fetchone()
-        assert rev["version"] == 9
+        from clashbolt.store import BASE_SCHEMA_VERSION
+
+        assert rev["version"] == BASE_SCHEMA_VERSION

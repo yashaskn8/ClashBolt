@@ -803,7 +803,24 @@ export default function App() {
                     : 'No current approved verdict. Historical evidence may have been withdrawn.'}</p>
                 <div className="metrics"><div><small>INITIAL STOCK</small><strong>{witness.final_state.initial_stock}</strong></div><div><small>CONFIRMED</small><strong>{witness.final_state.confirmed_count}</strong></div><div><small>REMAINING</small><strong>{witness.final_state.remaining_stock}</strong></div></div>
                 <h3 className="subhead">Controlled checkpoint history</h3>
-                <ol className="steps">{witness.observed_steps.map((step) => <li key={step.sequence}><span className="step-number">{String(step.sequence).padStart(2, '0')}</span><span className="step-client">Client {step.client.toUpperCase()}</span><span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span></li>)}</ol>
+                <ol className="steps">
+                  {witness.observed_steps.map((step) => (
+                    <li key={step.sequence}>
+                      <span className="step-number">{String(step.sequence).padStart(2, '0')}</span>
+                      <span className="step-client">Client {step.client.toUpperCase()}</span>
+                      <span className="step-detail">{step.checkpoint === 'read' ? `Read stock = ${step.observed_stock}` : step.accepted ? `Committed · stock → ${step.stock_after}` : 'Rejected · out of stock'}</span>
+                    </li>
+                  ))}
+                  {(!witness.complete || witness.observed_steps.length < witness.requested_gates.length) && (
+                    <li className="trace-gap" role="status">
+                      <span className="step-number">GAP</span>
+                      <span className="step-client">Unobserved checkpoints</span>
+                      <span className="step-detail">
+                        {`${witness.requested_gates.slice(witness.observed_steps.length).join(', ') || 'Incomplete trace'} — omitted events; causal order is not inferred.`}
+                      </span>
+                    </li>
+                  )}
+                </ol>
                 <div className="evidence"><div><span>FIXTURE SHA256</span><code title={witness.fixture_hash}>{shortHash(witness.fixture_hash)}</code></div><div><span>ORACLE</span><code>{witness.oracle.id} @ {witness.oracle.version}</code></div><div><span>EVIDENCE SHA256</span><code title={witness.evidence_sha256}>{shortHash(witness.evidence_sha256)}</code></div><div><span>REPLAY</span><strong>{replayStatus !== 'NOT_RUN' ? replayStatus : result?.replay_status ?? 'NOT_RUN'}</strong></div></div>
                 <button className="secondary-button" type="button" onClick={replay} disabled={replaying}>{replaying ? 'Replaying on fresh state…' : 'Replay on a clean fixture'} ↻</button>
                 {durable?.verdict === 'FAIL' && (

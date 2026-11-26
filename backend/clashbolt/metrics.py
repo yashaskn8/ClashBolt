@@ -107,4 +107,21 @@ def operational_metrics(snapshot: dict) -> str:
                 "# TYPE clashbolt_cancel_latency_p95_seconds gauge",
                 f"clashbolt_cancel_latency_p95_seconds {max(0.0, float(p95)):.3f}",
             ))
+    target_reset = snapshot.get("target_reset")
+    if isinstance(target_reset, dict):
+        lines.extend((
+            "# HELP clashbolt_target_reset_samples_7d Cleaned disposable targets over 7 days",
+            "# TYPE clashbolt_target_reset_samples_7d gauge",
+            f'clashbolt_target_reset_samples_7d {int(target_reset.get("sample_count", 0))}',
+            "# HELP clashbolt_target_reset_unknown_7d Target cleanups with unknown status over 7d",
+            "# TYPE clashbolt_target_reset_unknown_7d gauge",
+            f'clashbolt_target_reset_unknown_7d {int(target_reset.get("unknown_count", 0))}',
+        ))
+        reset_p95 = target_reset.get("reset_p95_ms")
+        if reset_p95 is not None:
+            lines.extend((
+                "# HELP clashbolt_target_reset_p95_ms P95 disposable target provision+teardown ms",
+                "# TYPE clashbolt_target_reset_p95_ms gauge",
+                f"clashbolt_target_reset_p95_ms {max(0.0, float(reset_p95)):.3f}",
+            ))
     return "\n".join(lines) + "\n"
