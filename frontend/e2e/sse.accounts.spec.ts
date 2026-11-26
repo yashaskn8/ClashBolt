@@ -30,9 +30,36 @@ test('snapshot and timeline recover when the SSE transport is unavailable', asyn
   await page.getByLabel('Implementation').selectOption('racy')
   await page.getByLabel('Checkpoint release order').selectOption('overlap')
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
-  await expect(page.locator('.run-status')).toHaveText('COMPLETE', {
-    timeout: 20_000,
+  const status = page.locator('.run-status')
+  await expect(status).toHaveText('COMPLETE', { timeout: 20_000 })
+  await expect(page.locator('.transition-list li strong', { hasText: 'COMPLETE' })).toBeVisible()
+
+  let stalled = false
+  let releaseStall: () => void = () => {}
+  const stall = new Promise<void>((resolve) => { releaseStall = resolve })
+  const snapshots = /\/api\/runs\/[0-9a-f-]+$/
+  await page.route(snapshots, async (route) => {
+    if (stalled) {
+      await route.continue()
+      return
+    }
+    stalled = true
+    await stall
+    await route.abort().catch(() => {})
   })
+  const cancelled = page.waitForEvent('requestfailed', {
+    predicate: (request) => snapshots.test(request.url()),
+    timeout: 18_000,
+  })
+  const recovered = page.waitForResponse((response) =>
+    stalled && snapshots.test(response.url()) && response.ok(), { timeout: 18_000 },
+  )
+  try {
+    await Promise.all([cancelled, recovered])
+    await expect(status).toHaveText('COMPLETE')
+  } finally {
+    releaseStall()
+  }
   await expect(page.locator('.transition-list li strong', {
     hasText: 'COMPLETE',
   })).toBeVisible({ timeout: 12_000 })

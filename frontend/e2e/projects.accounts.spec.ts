@@ -121,6 +121,26 @@ test('real browser switches isolated projects without carrying stale rule or dra
   await enterProject(page, 'browser-workspace')
   await expect(page.getByRole('status', { name: 'Run resource preview' }))
     .toContainText('No known blockers now; submission still rechecks')
+  const draftPath = '**/api/experiment-draft'
+  await page.route(draftPath, async (route) => {
+    if (route.request().method() === 'POST') await route.fulfill({ status: 409 })
+    else await route.continue()
+  })
+  await page.getByRole('button', { name: /Save experiment draft/ }).click()
+  await expect(page.getByText('Draft update was rejected; refresh before overwriting changes.'))
+    .toBeVisible()
+  await page.unroute(draftPath)
+
+  const runPath = '**/api/runs'
+  await page.route(runPath, async (route) => {
+    if (route.request().method() === 'POST') await route.fulfill({ status: 503 })
+    else await route.continue()
+  })
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  await expect(page.getByText('API request failed (503).', { exact: false })).toBeVisible()
+  await expect(page.locator('.run-status')).toHaveCount(0)
+  await page.unroute(runPath)
+
   let deliverWorkspaceResponses: () => void = () => {}
   const pendingDelivery = new Promise<void>((resolve) => { deliverWorkspaceResponses = resolve })
   const committed = new Set<string>()

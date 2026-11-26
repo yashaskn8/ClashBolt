@@ -88,6 +88,7 @@ export default function DurableMonitor({
         do {
           refreshAgain = false
           const controller = new AbortController()
+          const deadline = window.setTimeout(() => controller.abort(), 10_000)
           activeRequest = controller
           try {
             const snapshotResponse = await fetch(`/api/runs/${runId}`, {
@@ -169,6 +170,7 @@ export default function DurableMonitor({
           } catch {
             if (mounted) setError('Cannot refresh the authoritative run snapshot.')
           } finally {
+            window.clearTimeout(deadline)
             activeRequest = null
           }
         } while (mounted && refreshAgain)

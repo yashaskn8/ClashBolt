@@ -244,7 +244,7 @@ async def main() -> None:
     registry = AccountStore(dsn) if os.getenv("CLASHBOLT_ACCESS_MODE") == "accounts" else None
     worker_id = f"worker-{uuid4()}"
     next_project = 0
-    deadlock_streak = 0
+    database_failures = 0
     while True:
         try:
             # A trusted registry discovers new workspaces without a restart.
@@ -260,7 +260,7 @@ async def main() -> None:
             ordered = projects[start:] + projects[:start]
             accepted = False
             checked = False
-            for project in ordered:
+            for offset, project in enumerate(ordered):
                 ledger = Policy(
                     dsn, schema=project["schema_name"], project_id=project["project_id"]
                 )
@@ -272,17 +272,25 @@ async def main() -> None:
                 # all work remains lease-fenced in its own project schema.
                 if not accepted:
                     accepted = await process_one(ledger, worker_id)
+                    if accepted:
+                        # Idle projects must not give the next busy project extra turns.
+                        next_project = start + offset + 1
                 if not checked and (not args.once or not accepted):
                     checked = await process_verification_one(ledger, worker_id)
-        except psycopg.errors.DeadlockDetected as error:
-            # PostgreSQL aborts the deadlocked transaction. Try a fresh cycle
-            # after bounded backoff; never infer a successful worker receipt.
-            deadlock_streak += 1
-            if args.once or deadlock_streak >= 3:
-                raise RuntimeError("Worker database deadlock persisted") from error
+        except (psycopg.errors.DeadlockDetected, psycopg.OperationalError) as error:
+            # Start a fresh cycle. Ambiguous commits stay governed by the
+            # persisted generations and leases on the next read.
+            database_failures += 1
+            if args.once or database_failures >= 3:
+                message = (
+                    "Worker database deadlock persisted"
+                    if isinstance(error, psycopg.errors.DeadlockDetected)
+                    else "Worker database connection failed"
+                )
+                raise RuntimeError(message) from error
             await asyncio.sleep(args.interval)
             continue
-        deadlock_streak = 0
+        database_failures = 0
         if args.once:
             break
         if not accepted and not checked:

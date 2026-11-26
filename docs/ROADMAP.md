@@ -42,6 +42,28 @@ receipts. The native PostgreSQL 17.11 Windows run read back the promoted
 ledger in 5.828 seconds. Both instances ran on one host. Independent
 cross-host failover, partitions and production recovery objectives remain open.
 
+## Bounded refresh and worker backlog recovery (26 November 2026)
+
+P1/P2 share one generation check for asynchronous state updates. Project
+switch tests cover stale replies and current draft and submission errors.
+The timeline gives each authoritative refresh a ten-second deadline, so a
+stalled response during an SSE outage cannot stop later polls.
+
+B2/B7 reconcile up to 32 expired cancellations in a pass, skipping locked
+rows and retaining UNKNOWN when the effect is ambiguous. Worker mode retries
+database connection failures on the same bounded cycle policy as deadlocks.
+Scheduling advances past the project that received the claim, so idle
+projects do not give the next busy project extra turns.
+
+The first sustained native trial ran two real workers against 108 synthetic
+runs across three projects. Each project completed 36 runs and stayed within
+its 12-open-run quota. Drain took 174.734 seconds, at 0.618 completions per
+second, with per-project start P95 of 39.613 to 77.797 seconds. This is a local
+workload sample. The repeat after the scheduling change drained 108 runs in
+159.453 seconds at 0.677 completions per second, with per-project start P95 of
+54.589 to 54.811 seconds and the same per-project completion and quota results.
+External endurance and worker and database resource qualification remain open.
+
 ## Traceability cycles and streamed backups (26 November 2026)
 
 The traceability validator now rejects multi-track cycles and reports which

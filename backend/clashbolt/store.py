@@ -1380,13 +1380,14 @@ class Ledger:
             return _public(row, self.project_id)
 
     def reconcile_expired_cancelled(self) -> int:
-        """An expired in-flight cancellation is UNKNOWN, never a clean cancel."""
+        """Reconcile one bounded batch of expired in-flight cancellations."""
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id FROM experiment_run
                 WHERE status = 'CANCELLING' AND lease_until < now()
-                FOR UPDATE SKIP LOCKED
+                ORDER BY lease_until, created_at, id
+                LIMIT 32 FOR UPDATE SKIP LOCKED
                 """
             ).fetchall()
             for item in rows:

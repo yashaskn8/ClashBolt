@@ -45,6 +45,12 @@
           "commit": "7468b094fccdc5320abeb12792f7e24824b7efc2",
           "run_id": 45832191801,
           "acceptance_record": "Partial B1 evidence: rejected a revision-only archive and resumed a restored pending run while preserving source history."
+        },
+        {
+          "stage": "CI_FAILED",
+          "commit": "4bbdaae4cf7387e8c6688c3d8a9c31f931c3a783",
+          "run_id": 45837772219,
+          "acceptance_record": "Partial B1 evidence: backend job passed synchronous standby promotion, acknowledged records and receipt fencing. The aggregate run failed the browser coverage gate."
         }
       ]
     },

@@ -80,6 +80,13 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
 const shortHash = (hash: string) => `${hash.slice(0, 12)}…`
 
+function scopedUpdate(scope: { readonly current: number }) {
+  const version = scope.current
+  return (update: () => void) => {
+    if (scope.current === version) update()
+  }
+}
+
 export default function App() {
   const [variant, setVariant] = useState<Variant>('racy')
   const [schedule, setSchedule] = useState<Schedule>('overlap')
@@ -187,15 +194,11 @@ export default function App() {
 
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts') return
-    const workspace = workspaceVersion.current
+    const apply = scopedUpdate(workspaceVersion)
     fetch('/api/auth/me')
       .then((response) => parseResponse<AccountIdentity>(response))
-      .then((identity) => {
-        if (workspace === workspaceVersion.current) setAccount(identity)
-      })
-      .catch(() => {
-        if (workspace === workspaceVersion.current) setAccount(null)
-      })
+      .then((identity) => apply(() => setAccount(identity)))
+      .catch(() => apply(() => setAccount(null)))
   }, [catalog?.access_mode])
 
   useEffect(() => {
@@ -315,7 +318,7 @@ export default function App() {
   }, [catalog?.storage, catalog?.access_mode, sessionReady, account])
 
   async function saveDraft() {
-    const workspace = workspaceVersion.current
+    const apply = scopedUpdate(workspaceVersion)
     setDraftMessage('')
     try {
       const response = await fetch('/api/experiment-draft', {
@@ -332,13 +335,14 @@ export default function App() {
         }),
       })
       const saved = await parseResponse<{ version: number }>(response)
-      if (workspace !== workspaceVersion.current) return
-      setDraftVersion(saved.version)
-      setDraftMessage('Draft saved to PostgreSQL. Rule approval is not saved as authority.')
+      apply(() => {
+        setDraftVersion(saved.version)
+        setDraftMessage('Draft saved to PostgreSQL. Rule approval is not saved as authority.')
+      })
     } catch {
-      if (workspace === workspaceVersion.current) {
+      apply(() => {
         setDraftMessage('Draft update was rejected; refresh before overwriting changes.')
-      }
+      })
     }
   }
 
@@ -409,7 +413,7 @@ export default function App() {
 
   async function run() {
     clearRunSelection()
-    const selection = selectionVersion.current
+    const apply = scopedUpdate(selectionVersion)
     setBusy(true)
     setError('')
     try {
@@ -436,17 +440,17 @@ export default function App() {
       })
       if (storage === 'runs') {
         const saved = await parseResponse<DurableRun>(response)
-        if (selection === selectionVersion.current) setDurable(saved)
+        apply(() => setDurable(saved))
       } else {
         const experiment = await parseResponse<Experiment>(response)
-        if (selection === selectionVersion.current) setResult(experiment)
+        apply(() => setResult(experiment))
       }
     } catch (cause) {
-      if (selection === selectionVersion.current) {
+      apply(() => {
         setError(cause instanceof Error ? cause.message : 'Unexpected experiment error')
-      }
+      })
     } finally {
-      if (selection === selectionVersion.current) setBusy(false)
+      apply(() => setBusy(false))
     }
   }
 
@@ -483,14 +487,16 @@ export default function App() {
   async function replay() {
     if (!result && !durable?.witness) return
     const selection = selectionVersion.current
+    const apply = scopedUpdate(selectionVersion)
     setReplaying(true)
     setError('')
     try {
       if (durable?.execution_backend === 'native-postgresql') {
         setReplayStatus('QUEUED')
         const report = await verifyOnWorker('REPLAY', selection)
-        if (selection !== selectionVersion.current) return
-        setReplayStatus(report.status === 'REPRODUCED' ? 'REPRODUCED' : 'UNCONFIRMED')
+        apply(() => {
+          setReplayStatus(report.status === 'REPRODUCED' ? 'REPRODUCED' : 'UNCONFIRMED')
+        })
       } else {
         const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
         const response = await fetch(`/api/${path}/replay`, {
@@ -499,32 +505,34 @@ export default function App() {
             ? { 'X-Operator-Token': operatorToken } : {},
         })
         const proof = await parseResponse<{ replay_status: string }>(response)
-        if (selection !== selectionVersion.current) return
-        setReplayStatus(proof.replay_status)
-        if (result) setResult({ ...result, replay_status: proof.replay_status })
+        apply(() => {
+          setReplayStatus(proof.replay_status)
+          if (result) setResult({ ...result, replay_status: proof.replay_status })
+        })
       }
     } catch (cause) {
-      if (selection !== selectionVersion.current) return
-      setReplayStatus('UNCONFIRMED')
-      setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
+      apply(() => {
+        setReplayStatus('UNCONFIRMED')
+        setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
+      })
     } finally {
-      if (selection === selectionVersion.current) setReplaying(false)
+      apply(() => setReplaying(false))
     }
   }
 
   async function minimize() {
     if (!durable || durable.verdict !== 'FAIL') return
     const selection = selectionVersion.current
+    const apply = scopedUpdate(selectionVersion)
     setReducing(true)
     setError('')
     try {
       if (durable.execution_backend === 'native-postgresql') {
         const report = await verifyOnWorker('REDUCE', selection)
-        if (selection !== selectionVersion.current) return
         if (report.status !== 'MINIMAL' && report.status !== 'BOUNDED') {
           throw new Error('Worker could not verify the minimized evidence')
         }
-        setReduction(report)
+        apply(() => setReduction(report))
       } else {
         const response = await fetch(`/api/runs/${durable.run_id}/reduce`, {
           method: 'POST',
@@ -532,13 +540,14 @@ export default function App() {
             ? {} : { 'X-Operator-Token': operatorToken },
         })
         const report = await parseResponse<Reduction>(response)
-        if (selection === selectionVersion.current) setReduction(report)
+        apply(() => setReduction(report))
       }
     } catch (cause) {
-      if (selection !== selectionVersion.current) return
-      setError(cause instanceof Error ? cause.message : 'Witness reduction failed')
+      apply(() => {
+        setError(cause instanceof Error ? cause.message : 'Witness reduction failed')
+      })
     } finally {
-      if (selection === selectionVersion.current) setReducing(false)
+      apply(() => setReducing(false))
     }
   }
 

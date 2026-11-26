@@ -187,6 +187,42 @@ def test_expired_inflight_cancellation_becomes_unknown(ledger):
 
 
 
+def test_expired_cancellation_sweep_bounds_work_and_skips_locked_rows(ledger):
+    with ledger.connect() as conn:
+        conn.execute(
+            "INSERT INTO project_quota(project_id, max_open) VALUES ('local', 40) "
+            "ON CONFLICT (project_id) DO UPDATE SET max_open = EXCLUDED.max_open"
+        )
+    run_ids = []
+    for _ in range(34):
+        queued = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
+        run_id = UUID(queued["run_id"])
+        claimed = ledger.claim("cancel-backlog")
+        assert claimed and claimed["run_id"] == str(run_id)
+        assert ledger.cancel(run_id)["status"] == "CANCELLING"
+        run_ids.append(run_id)
+    with ledger.connect() as conn:
+        conn.execute(
+            "UPDATE experiment_run SET lease_until = now() - interval '1 second' "
+            "WHERE id = ANY(%s)",
+            (run_ids,),
+        )
+    with ledger.connect() as blocker:
+        blocker.execute("SELECT id FROM experiment_run WHERE id = %s FOR UPDATE", (run_ids[0],))
+        assert ledger.reconcile_expired_cancelled() == 32
+        assert ledger.get(run_ids[0])["status"] == "CANCELLING"
+        assert ledger.get(run_ids[-1])["status"] == "CANCELLING"
+
+    assert ledger.reconcile_expired_cancelled() == 2
+    assert ledger.reconcile_expired_cancelled() == 0
+    for run_id in run_ids:
+        events = ledger.transitions(run_id)
+        assert [event["status"] for event in events] == [
+            "PENDING", "RUNNING", "CANCELLING", "UNKNOWN",
+        ]
+        assert ledger.get(run_id)["verdict"] == "UNKNOWN"
+
+
 def test_admission_rejects_unapproved_rule(ledger):
     with pytest.raises(ValueError, match="approved"):
         ledger.admit(client_key=str(uuid4()), variant="racy", schedule="overlap")
