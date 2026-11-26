@@ -42,6 +42,13 @@ traced Python allocation was 2.01 MiB, down from 64.01 MiB. This measurement
 covers checksum reading. B1 still requires independent failover and
 production migration validation.
 
+The follow-up restore drill rejects archives that supply revision metadata
+without the run and transition tables. It also checks that a restored
+workspace retains its cancelled run and committed history and that a worker
+can complete its restored pending run independently of the source database.
+Six native archive, restore and migration cases passed on PostgreSQL 17.11.
+The backup command removes the temporary archive when permission setup fails.
+
 ## Engineering toolchain (26 November 2026)
 
 The backend CI job checks the `clashbolt` import contracts for core modules and

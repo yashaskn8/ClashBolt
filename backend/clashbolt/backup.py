@@ -95,9 +95,9 @@ def backup_control(destination: Path, dsn: str) -> dict:
     descriptor, temporary = tempfile.mkstemp(
         prefix=".clashbolt-backup-", suffix=".partial", dir=destination.parent
     )
-    os.close(descriptor)
-    os.chmod(temporary, 0o600)
     try:
+        os.close(descriptor)
+        os.chmod(temporary, 0o600)
         try:
             subprocess.run(
                 ["pg_dump", "--format=custom", f"--file={temporary}", *args],
@@ -224,11 +224,24 @@ def _restore_verified_archive(archive: BinaryIO, target_admin_dsn: str) -> dict:
                 connect_timeout=5,
             ) as restored:
                 rows = restored.execute(
-                    "SELECT component, version FROM schema_revision"
+                    "SELECT component, version FROM public.schema_revision"
                 ).fetchall()
                 revisions = {row[0]: row[1] for row in rows}
                 if not {"control", "policy"}.issubset(revisions):
                     raise ValueError("Restored control/policy schema revisions missing")
+                tables_present = restored.execute(
+                    """
+                    SELECT count(*) = 2
+                    FROM pg_catalog.pg_class AS relation
+                    JOIN pg_catalog.pg_namespace AS namespace
+                        ON namespace.oid = relation.relnamespace
+                    WHERE namespace.nspname = 'public'
+                      AND relation.relname IN ('experiment_run', 'run_transition')
+                      AND relation.relkind IN ('r', 'p')
+                    """
+                ).fetchone()[0]
+                if not tables_present:
+                    raise ValueError("Restored run ledger tables missing")
             return {
                 "status": "RESTORE_VERIFIED",
                 "restored_schema_revisions": revisions,

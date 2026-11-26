@@ -47,6 +47,18 @@ def test_backup_refuses_bad_paths_before_creating_archive(tmp_path):
         backup.backup_control(dest, dsn)
 
 
+def test_failed_temporary_archive_permissions_leave_no_partial_file(tmp_path, monkeypatch):
+    def denied(*_args):
+        raise PermissionError("cannot restrict archive permissions")
+
+    monkeypatch.setattr(backup.os, "chmod", denied)
+    with pytest.raises(PermissionError, match="cannot restrict archive permissions"):
+        backup.backup_control(
+            tmp_path / "control.dump", "postgresql://worker:local-secret@127.0.0.1/control",
+        )
+    assert list(tmp_path.iterdir()) == []
+
+
 def _mock_native_dump(monkeypatch, *, error=False, invalid=False, payload=b"PGDMPfixed"):
     commands = []
     environments = []

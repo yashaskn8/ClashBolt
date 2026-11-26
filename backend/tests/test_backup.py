@@ -3,9 +3,12 @@
 import json
 import os
 import shutil
+import subprocess
 
 import pytest
+from clashbolt import backup
 from clashbolt.backup import _database_args, backup_control
+from clashbolt.policy import Policy
 
 
 def test_rejects_remote_or_system_backups():
@@ -37,8 +40,6 @@ def test_streaming_disposable_restore_drill_does_not_change_control_database(
     tmp_path, monkeypatch,
 ):
     import psycopg
-    from clashbolt import backup
-    from clashbolt.policy import Policy
 
     dsn = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
     target = os.getenv("CLASHBOLT_TEST_TARGET_ADMIN_URL")
@@ -71,3 +72,23 @@ def test_streaming_disposable_restore_drill_does_not_change_control_database(
     archive.write_bytes(b"not the original archive")
     with pytest.raises(ValueError, match="manifest"):
         backup.verify_disposable_restore(archive, dsn, target)
+
+
+def test_disposable_restore_rejects_archive_with_only_schema_revisions(tmp_path, monkeypatch):
+    source = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
+    target = os.getenv("CLASHBOLT_TEST_TARGET_ADMIN_URL")
+    if not source or not target or not shutil.which("pg_dump") or not shutil.which("pg_restore"):
+        pytest.skip("Separate native PostgreSQL clusters are required")
+    Policy(source).migrate()
+    original_run = subprocess.run
+
+    def revisions_only(command, **kwargs):
+        if command[0] == "pg_dump":
+            command = [*command, "--table=public.schema_revision"]
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", revisions_only)
+    archive = tmp_path / "incomplete-control.dump"
+    backup_control(archive, source)
+    with pytest.raises(ValueError, match="Restored run ledger tables missing"):
+        backup.verify_disposable_restore(archive, source, target)
