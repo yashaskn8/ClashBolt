@@ -74,6 +74,21 @@ requires a separate acceptance reference and resolved blockers. The validator
 checks the structure of references. Acceptance requires the underlying
 evidence. A7 and S1 are blocked on independently adjudicated held-out results.
 
+## B7 queue start latency aggregation (26 November 2026)
+
+The operational P95 query groups first claims before calculating the percentile.
+A native regression verifies the seven-day window, first-claim timing and
+exclusion of unclaimed runs. The queue, operations and projection checks passed
+25 tests. The separate admission, three-project fairness and retry checks passed
+five tests on disposable PostgreSQL.
+
+Two PostgreSQL 17.11 comparisons used 20,000 generated runs, two RUNNING
+transitions per run and nine interleaved executions per query. Results matched
+exactly. Median dense-history timings were 220 to 43 ms and 552 to 66 ms.
+Sparse-history timing varied from 13 to 15 ms and 36 to 27 ms. These report
+local query timings. Sustained workload and resource-cost qualification remain
+open.
+
 ## Engineering toolchain (26 November 2026)
 
 The backend CI job checks the `clashbolt` import contracts for core modules and

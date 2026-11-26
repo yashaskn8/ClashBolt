@@ -658,17 +658,17 @@ class Ledger:
                 """
                 SELECT percentile_cont(0.95) WITHIN GROUP (
                     ORDER BY EXTRACT(EPOCH FROM (
-                        t.first_started - r.created_at
+                        first_started - created_at
                     ))::double precision
                 ) AS start_p95_seconds
-                FROM experiment_run r
-                JOIN LATERAL (
-                    SELECT min(created_at) AS first_started
-                    FROM run_transition
-                    WHERE run_id = r.id AND status = 'RUNNING'
-                ) t ON t.first_started IS NOT NULL
-                WHERE r.project_id = 'local'
-                  AND r.created_at >= now() - interval '7 days'
+                FROM (
+                    SELECT r.created_at, min(t.created_at) AS first_started
+                    FROM experiment_run r
+                    JOIN run_transition t ON t.run_id = r.id AND t.status = 'RUNNING'
+                    WHERE r.project_id = 'local'
+                      AND r.created_at >= now() - interval '7 days'
+                    GROUP BY r.id
+                ) first_claims
                 """
             ).fetchone()["start_p95_seconds"]
             workers = conn.execute(

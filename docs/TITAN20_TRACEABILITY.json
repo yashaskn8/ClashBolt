@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "ca45ea387056629f094458a52259e0e5b27fdf22",
+  "reviewed_head": "45d6df4d14e0617058f94ec6e158329bc81d0615",
   "last_successful_ci": {
-    "commit": "ca45ea387056629f094458a52259e0e5b27fdf22",
-    "run_id": 45832806698
+    "commit": "45d6df4d14e0617058f94ec6e158329bc81d0615",
+    "run_id": 45833487738
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -181,6 +181,7 @@
       "id": "B7",
       "title": "Budgeted Admission and Recovery",
       "pdf_pages": [
+        17,
         24,
         26
       ],
@@ -194,6 +195,7 @@
       ],
       "tests": [
         "backend/tests/test_queue_load.py",
+        "backend/tests/test_queue_metrics.py",
         "backend/tests/test_multi_project_fair_load.py",
         "backend/tests/test_retry_storm.py"
       ],
