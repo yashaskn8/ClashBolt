@@ -27,6 +27,21 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Workspace response fencing and synchronous failover (26 November 2026)
+
+P1/P2/P5 discard delayed draft and run responses after an account or project
+change. Reopening a run also supersedes pending submission and verification
+responses. The Chromium regression committed a draft and run in one
+workspace, switched workspaces, then released the old responses to the page.
+
+B1/B2 CI promotes a new loopback streaming standby after stopping its
+generated primary. The drill requires synchronous remote apply and fsync. It
+checks both acknowledged runs and their exact transition histories, repeats
+admission without duplicating runs, and rejects stale and duplicate terminal
+receipts. The native PostgreSQL 17.11 Windows run read back the promoted
+ledger in 5.828 seconds. Both instances ran on one host. Independent
+cross-host failover, partitions and production recovery objectives remain open.
+
 ## Traceability cycles and streamed backups (26 November 2026)
 
 The traceability validator now rejects multi-track cycles and reports which

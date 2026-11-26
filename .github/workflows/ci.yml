@@ -67,6 +67,8 @@ jobs:
           sudo pg_ctlcluster "$VERSION" main start
           pg_isready -h 127.0.0.1 -p 5432
           python ci/check-control-crash-recovery.py verify "$EVIDENCE"
+      - name: Promote a disposable synchronous standby and verify ledger recovery
+        run: python ci/check-control-failover.py
       - name: Verify deployed fixture isolation on the native host
         run: bash ci/check-target-service.sh
   frontend:

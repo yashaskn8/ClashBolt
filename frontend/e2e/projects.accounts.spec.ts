@@ -117,4 +117,40 @@ test('real browser switches isolated projects without carrying stale rule or dra
   await page.getByLabel('Implementation').selectOption('racy')
   const submitted = (await preview).postDataJSON() as { approved_oracle_id: string | null }
   expect(submitted.approved_oracle_id).not.toBe(approvedRule)
+
+  await enterProject(page, 'browser-workspace')
+  await expect(page.getByRole('status', { name: 'Run resource preview' }))
+    .toContainText('No known blockers now; submission still rechecks')
+  let deliverWorkspaceResponses: () => void = () => {}
+  const pendingDelivery = new Promise<void>((resolve) => { deliverWorkspaceResponses = resolve })
+  const committed = new Set<string>()
+  const delayedPosts = /\/api\/(experiment-draft|runs)$/
+  await page.route(delayedPosts, async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    const response = await route.fetch()
+    expect(response.ok()).toBe(true)
+    committed.add(new URL(route.request().url()).pathname)
+    await pendingDelivery
+    await route.fulfill({ response })
+  })
+  await page.getByRole('button', { name: /Save experiment draft/ }).click()
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  await expect.poll(() => committed.size).toBe(2)
+  await enterProject(page, 'local')
+  await expect(page.getByText('Recovered saved experiment draft.')).toBeVisible()
+  const received = ['/api/experiment-draft', '/api/runs'].map((path) =>
+    page.waitForResponse((response) =>
+      new URL(response.url()).pathname === path && response.request().method() === 'POST',
+    ),
+  )
+  deliverWorkspaceResponses()
+  for (const response of await Promise.all(received)) expect(await response.finished()).toBeNull()
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(page.locator('.run-status')).toHaveCount(0)
+  await expect(page.getByText('Recovered saved experiment draft.')).toBeVisible()
 })

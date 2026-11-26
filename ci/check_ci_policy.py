@@ -25,6 +25,7 @@ COMMANDS = {
         "--cov-report=json:",
         "ci/check_quality_report.py",
         "ci/check-control-crash-recovery.py",
+        "python ci/check-control-failover.py",
         "ci/check-target-service.sh",
     ),
     "frontend": (

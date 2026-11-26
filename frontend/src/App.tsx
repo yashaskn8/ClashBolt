@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import DurableMonitor, { type DurableRun } from './DurableMonitor'
 import PolicyConsole from './PolicyConsole'
 import RecentRuns from './RecentRuns'
@@ -105,6 +105,31 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [replaying, setReplaying] = useState(false)
   const [error, setError] = useState('')
+  const workspaceVersion = useRef(0)
+  const selectionVersion = useRef(0)
+
+  function clearRunSelection() {
+    selectionVersion.current++
+    setDurable(null)
+    setResult(null)
+    setReplayStatus('NOT_RUN')
+    setReduction(null)
+    setBusy(false)
+    setReplaying(false)
+    setReducing(false)
+  }
+
+  function resetWorkspace() {
+    workspaceVersion.current++
+    clearRunSelection()
+    setApprovedOracleId(null)
+    setDraftReady(false)
+    setDraftVersion(0)
+    setDraftMessage('')
+    setVariant('racy')
+    setSchedule('overlap')
+    setExecutionBackend('memory')
+  }
 
   useEffect(() => {
     fetch('/api/catalog')
@@ -162,50 +187,45 @@ export default function App() {
 
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts') return
+    const workspace = workspaceVersion.current
     fetch('/api/auth/me')
       .then((response) => parseResponse<AccountIdentity>(response))
-      .then(setAccount)
-      .catch(() => setAccount(null))
+      .then((identity) => {
+        if (workspace === workspaceVersion.current) setAccount(identity)
+      })
+      .catch(() => {
+        if (workspace === workspaceVersion.current) setAccount(null)
+      })
   }, [catalog?.access_mode])
 
   useEffect(() => {
-    if (catalog?.access_mode !== 'accounts' || !account?.username) return
-    const username = account.username
-    const selectedProject = account.project_id
+    if (catalog?.access_mode !== 'accounts' || !account) return
+    const { username, project_id, role } = account
+    const workspace = workspaceVersion.current
     let mounted = true
 
     async function refreshProjectRole() {
       try {
         const response = await fetch('/api/auth/me', { cache: 'no-store' })
-        if (!mounted) return
+        if (!mounted || workspace !== workspaceVersion.current) return
         if (response.status === 401 || response.status === 403) {
           // A revoked project grant or account session makes previous
           // operator controls and evidence selections obsolete immediately
           // after the authoritative HTTP response, not after a new login.
+          resetWorkspace()
           setAccount(null)
-          setApprovedOracleId(null)
-          setDurable(null)
-          setResult(null)
-          setDraftVersion(0)
-          setDraftReady(false)
           setError('Account or project access changed. Sign in again.')
           return
         }
         if (!response.ok) return // transient outage: backend still rejects writes
         const identity = (await response.json()) as AccountIdentity
-        if (!mounted || identity.username !== username) return
-        if (identity.project_id !== selectedProject) {
-          setDurable(null)
-          setResult(null)
-          setApprovedOracleId(null)
-          setDraftVersion(0)
-          setDraftReady(false)
+        if (!mounted || workspace !== workspaceVersion.current || identity.username !== username) {
+          return
         }
-        setAccount((current) => (
-          current?.username === username &&
-          (current.role !== identity.role || current.project_id !== identity.project_id)
-            ? identity : current
-        ))
+        if (identity.project_id !== project_id || identity.role !== role) {
+          resetWorkspace()
+          setAccount(identity)
+        }
       } catch {
         // Never infer permission from a failed network probe. All writes
         // are independently authorized against the current database role.
@@ -214,7 +234,7 @@ export default function App() {
 
     const timer = window.setInterval(() => void refreshProjectRole(), 2000)
     return () => { mounted = false; window.clearInterval(timer) }
-  }, [catalog?.access_mode, account?.username, account?.project_id])
+  }, [catalog?.access_mode, account])
 
   useEffect(() => {
     if (catalog?.access_mode !== 'accounts' || !account) {
@@ -231,7 +251,7 @@ export default function App() {
         if (!cancelled) setAccountProjects([])
       })
     return () => { cancelled = true }
-  }, [catalog?.access_mode, account?.username, account?.project_id, account?.role])
+  }, [catalog?.access_mode, account])
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
@@ -249,7 +269,7 @@ export default function App() {
       })
       .catch(() => { if (!cancelled) setApprovedOracleId(null) })
     return () => { cancelled = true }
-  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username, account?.project_id])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account])
 
   useEffect(() => {
     if (catalog?.storage !== 'postgresql') return
@@ -292,9 +312,10 @@ export default function App() {
         if (!cancelled) setDraftReady(true)
       })
     return () => { cancelled = true }
-  }, [catalog?.storage, catalog?.access_mode, sessionReady, account?.username, account?.project_id])
+  }, [catalog?.storage, catalog?.access_mode, sessionReady, account])
 
   async function saveDraft() {
+    const workspace = workspaceVersion.current
     setDraftMessage('')
     try {
       const response = await fetch('/api/experiment-draft', {
@@ -311,10 +332,13 @@ export default function App() {
         }),
       })
       const saved = await parseResponse<{ version: number }>(response)
+      if (workspace !== workspaceVersion.current) return
       setDraftVersion(saved.version)
       setDraftMessage('Draft saved to PostgreSQL. Rule approval is not saved as authority.')
     } catch {
-      setDraftMessage('Draft update was rejected; refresh before overwriting changes.')
+      if (workspace === workspaceVersion.current) {
+        setDraftMessage('Draft update was rejected; refresh before overwriting changes.')
+      }
     }
   }
 
@@ -330,18 +354,10 @@ export default function App() {
         }),
       })
       const identity = await parseResponse<AccountIdentity>(response)
-      setDraftReady(false)
+      resetWorkspace()
       setAccountProjects([])
       setAccount(identity)
       setAccountPassword('')
-      setDraftVersion(0)
-      setDraftMessage('')
-      setVariant('racy')
-      setSchedule('overlap')
-      setExecutionBackend('memory')
-      setApprovedOracleId(null)
-      setDurable(null)
-      setResult(null)
     } catch {
       setError('Account login was rejected. Check credentials or account lockout.')
     }
@@ -358,16 +374,7 @@ export default function App() {
         body: JSON.stringify({ project_id: projectId }),
       })
       const identity = await parseResponse<AccountIdentity>(response)
-      setApprovedOracleId(null)
-      setDurable(null)
-      setResult(null)
-      setDraftVersion(0)
-      setDraftMessage('')
-      setVariant('racy')
-      setSchedule('overlap')
-      setExecutionBackend('memory')
-      setReplayStatus('NOT_RUN')
-      setReduction(null)
+      resetWorkspace()
       setAccount(identity)
     } catch {
       setError('Project selection was denied. Refresh the current project grants.')
@@ -379,17 +386,9 @@ export default function App() {
     try {
       await fetch('/api/auth/logout', { method: 'POST' })
     } finally {
+      resetWorkspace()
       setAccount(null)
       setAccountProjects([])
-      setDraftReady(false)
-      setDraftVersion(0)
-      setDraftMessage('')
-      setVariant('racy')
-      setSchedule('overlap')
-      setExecutionBackend('memory')
-      setApprovedOracleId(null)
-      setDurable(null)
-      setResult(null)
     }
   }
 
@@ -409,12 +408,10 @@ export default function App() {
   }
 
   async function run() {
+    clearRunSelection()
+    const selection = selectionVersion.current
     setBusy(true)
     setError('')
-    setResult(null)
-    setDurable(null)
-    setReplayStatus('NOT_RUN')
-    setReduction(null)
     try {
       const storage = catalog?.storage === 'postgresql' ? 'runs' : 'experiments'
       const response = await fetch(`/api/${storage}`, {
@@ -437,16 +434,23 @@ export default function App() {
             : {}),
         }),
       })
-      if (storage === 'runs') setDurable(await parseResponse<DurableRun>(response))
-      else setResult(await parseResponse<Experiment>(response))
+      if (storage === 'runs') {
+        const saved = await parseResponse<DurableRun>(response)
+        if (selection === selectionVersion.current) setDurable(saved)
+      } else {
+        const experiment = await parseResponse<Experiment>(response)
+        if (selection === selectionVersion.current) setResult(experiment)
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unexpected experiment error')
+      if (selection === selectionVersion.current) {
+        setError(cause instanceof Error ? cause.message : 'Unexpected experiment error')
+      }
     } finally {
-      setBusy(false)
+      if (selection === selectionVersion.current) setBusy(false)
     }
   }
 
-  async function verifyOnWorker(kind: 'REPLAY' | 'REDUCE') {
+  async function verifyOnWorker(kind: 'REPLAY' | 'REDUCE', selection: number) {
     if (!durable) throw new Error('No durable witness to verify')
     const response = await fetch(
       `/api/runs/${durable.run_id}/verification-jobs`,
@@ -461,7 +465,7 @@ export default function App() {
       },
     )
     const submitted = await parseResponse<{ job_id: string }>(response)
-    for (let attempt = 0; attempt < 40; attempt++) {
+    for (let attempt = 0; attempt < 40 && selection === selectionVersion.current; attempt++) {
       const poll = await fetch(`/api/verification-jobs/${submitted.job_id}`)
       const job = await parseResponse<{
         status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'UNKNOWN'
@@ -478,12 +482,14 @@ export default function App() {
 
   async function replay() {
     if (!result && !durable?.witness) return
+    const selection = selectionVersion.current
     setReplaying(true)
     setError('')
     try {
       if (durable?.execution_backend === 'native-postgresql') {
         setReplayStatus('QUEUED')
-        const report = await verifyOnWorker('REPLAY')
+        const report = await verifyOnWorker('REPLAY', selection)
+        if (selection !== selectionVersion.current) return
         setReplayStatus(report.status === 'REPRODUCED' ? 'REPRODUCED' : 'UNCONFIRMED')
       } else {
         const path = durable ? `runs/${durable.run_id}` : `experiments/${result!.run_id}`
@@ -493,24 +499,28 @@ export default function App() {
             ? { 'X-Operator-Token': operatorToken } : {},
         })
         const proof = await parseResponse<{ replay_status: string }>(response)
+        if (selection !== selectionVersion.current) return
         setReplayStatus(proof.replay_status)
         if (result) setResult({ ...result, replay_status: proof.replay_status })
       }
     } catch (cause) {
+      if (selection !== selectionVersion.current) return
       setReplayStatus('UNCONFIRMED')
       setError(cause instanceof Error ? cause.message : 'Unexpected replay error')
     } finally {
-      setReplaying(false)
+      if (selection === selectionVersion.current) setReplaying(false)
     }
   }
 
   async function minimize() {
     if (!durable || durable.verdict !== 'FAIL') return
+    const selection = selectionVersion.current
     setReducing(true)
     setError('')
     try {
       if (durable.execution_backend === 'native-postgresql') {
-        const report = await verifyOnWorker('REDUCE')
+        const report = await verifyOnWorker('REDUCE', selection)
+        if (selection !== selectionVersion.current) return
         if (report.status !== 'MINIMAL' && report.status !== 'BOUNDED') {
           throw new Error('Worker could not verify the minimized evidence')
         }
@@ -521,12 +531,14 @@ export default function App() {
           headers: catalog?.access_mode === 'accounts'
             ? {} : { 'X-Operator-Token': operatorToken },
         })
-        setReduction(await parseResponse<Reduction>(response))
+        const report = await parseResponse<Reduction>(response)
+        if (selection === selectionVersion.current) setReduction(report)
       }
     } catch (cause) {
+      if (selection !== selectionVersion.current) return
       setError(cause instanceof Error ? cause.message : 'Witness reduction failed')
     } finally {
-      setReducing(false)
+      if (selection === selectionVersion.current) setReducing(false)
     }
   }
 
@@ -815,13 +827,13 @@ export default function App() {
             accountMode={catalog.access_mode === 'accounts'}
             operatorToken={operatorToken}
             onSelect={(run) => {
-            setDurable(run)
-            setResult(null)
-            setReplayStatus('NOT_RUN')
-            setReduction(null)
-          }} />
+              clearRunSelection()
+              setDurable(run)
+            }}
+          />
         )}
         {durable && <DurableMonitor
+          key={durable.run_id}
           initial={durable} onUpdate={setDurable} operatorToken={operatorToken}
           canOperate={operatorReady} accountMode={catalog?.access_mode === 'accounts'}
         />}

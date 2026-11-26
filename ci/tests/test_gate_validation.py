@@ -336,6 +336,7 @@ def test_current_workflow_passes_strict_audit():
 
 @pytest.mark.parametrize(("job", "command"), [
     ("backend", "lint-imports"),
+    ("backend", "python ci/check-control-failover.py"),
     ("frontend", "npm run check:architecture"),
     ("frontend", "node --test check-branch-coverage.test.mjs"),
 ])
