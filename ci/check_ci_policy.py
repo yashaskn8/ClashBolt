@@ -27,7 +27,10 @@ COMMANDS = {
         "ci/check-control-crash-recovery.py",
         "ci/check-target-service.sh",
     ),
-    "frontend": ("npm ci", "npm run check:architecture", "npm run build"),
+    "frontend": (
+        "npm ci", "npm run check:architecture", "node --test check-branch-coverage.test.mjs",
+        "npm run build",
+    ),
     "browser": (
         "playwright install",
         "CLASHBOLT_BROWSER_MODE=static",
@@ -44,6 +47,8 @@ COMMANDS = {
     ),
     "redteam": (
         "ci/check_ci_policy.py",
+        "python ci/check_traceability.py",
+        "ci/tests/test_traceability.py",
         "ci/tests/test_gate_validation.py",
         "ci/tests/test_deployment_security.py",
         "ci/tests/test_release_artifacts.py",
@@ -133,7 +138,10 @@ def audit(workflow: str, playwright: str) -> None:
         if not isinstance(steps, list) or not steps:
             raise ValueError(f"Job has no runnable steps: {name}")
         commands = "\n".join(
-            str(step.get("run", "")) for step in steps if isinstance(step, dict)
+            line
+            for step in steps if isinstance(step, dict)
+            for line in str(step.get("run", "")).splitlines()
+            if not line.lstrip().startswith("#")
         )
         for token in COMMANDS.get(name, ()):
             if token not in commands:

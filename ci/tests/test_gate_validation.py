@@ -337,13 +337,27 @@ def test_current_workflow_passes_strict_audit():
 @pytest.mark.parametrize(("job", "command"), [
     ("backend", "lint-imports"),
     ("frontend", "npm run check:architecture"),
+    ("frontend", "node --test check-branch-coverage.test.mjs"),
 ])
-def test_ci_policy_requires_architecture_checks(job, command):
+def test_ci_policy_requires_verification_steps(job, command):
     workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     steps = workflow["jobs"][job]["steps"]
     workflow["jobs"][job]["steps"] = [step for step in steps if step.get("run") != command]
 
     with pytest.raises(ValueError, match=f"Missing {job} security requirement: {command}"):
+        audit(yaml.safe_dump(workflow), PLAYWRIGHT.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("required", [
+    "python ci/check_traceability.py",
+    "ci/tests/test_traceability.py",
+])
+def test_release_policy_requires_traceability_execution(required):
+    workflow = yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    for step in workflow["jobs"]["redteam"]["steps"]:
+        if required in step.get("run", ""):
+            step["run"] = step["run"].replace(required, "") + f"\n# {required}"
+    with pytest.raises(ValueError, match="Missing redteam security requirement"):
         audit(yaml.safe_dump(workflow), PLAYWRIGHT.read_text(encoding="utf-8"))
 
 

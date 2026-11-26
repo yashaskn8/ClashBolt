@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "78ed8dc6c9d80810a01a279acf060a4d89723b73",
+  "reviewed_head": "7468b094fccdc5320abeb12792f7e24824b7efc2",
   "last_successful_ci": {
-    "commit": "78ed8dc6c9d80810a01a279acf060a4d89723b73",
-    "run_id": 45831350990
+    "commit": "7468b094fccdc5320abeb12792f7e24824b7efc2",
+    "run_id": 45832191801
   },
   "scope": "File-level candidate traceability; mappings are not acceptance evidence.",
   "requirements": [
@@ -40,6 +40,11 @@
           "commit": "78ed8dc6c9d80810a01a279acf060a4d89723b73",
           "run_id": 45831350990,
           "acceptance_record": "Partial B1 evidence: streamed archive hashing, disposable PostgreSQL restore, and single-primary crash/restart passed."
+        },
+        {
+          "commit": "7468b094fccdc5320abeb12792f7e24824b7efc2",
+          "run_id": 45832191801,
+          "acceptance_record": "Partial B1 evidence: rejected a revision-only archive and resumed a restored pending run while preserving source history."
         }
       ]
     },

@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import coverage from 'istanbul-lib-coverage'
 
@@ -11,7 +11,10 @@ if (reports.length < 15) {
 }
 const map = coverage.createCoverageMap({})
 for (const report of reports) {
-  map.merge(JSON.parse(readFileSync(resolve(directory, report), 'utf8')))
+  const entries = JSON.parse(readFileSync(resolve(directory, report), 'utf8'))
+  for (const entry of Object.values(entries)) {
+    map.addFileCoverage({ ...entry, path: normalize(entry.path) })
+  }
 }
 
 const source = resolve(root, 'src')

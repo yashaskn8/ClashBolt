@@ -84,6 +84,7 @@ jobs:
           node-version: '22'
       - run: npm ci --no-audit --no-fund
       - run: npm run check:architecture
+      - run: node --test check-branch-coverage.test.mjs
       - run: npm run build
 
   browser:

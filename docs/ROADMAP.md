@@ -49,6 +49,21 @@ can complete its restored pending run independently of the source database.
 Six native archive, restore and migration cases passed on PostgreSQL 17.11.
 The backup command removes the temporary archive when permission setup fails.
 
+## Windows browser coverage reconciliation (26 November 2026)
+
+On Windows, Vite instrumentation and the source inventory spelled the same
+paths with different separators. The coverage gate now normalizes paths before
+merging counts. Four gate tests exercise path aliases, a missing module, too few
+reports and the existing branch floor. The 15-test Windows Chromium run passed
+with native API, worker and separate PostgreSQL clusters. Its reports measured
+535/713 statements (75.03%) and 470/628 branches (74.84%).
+
+The pre-change Windows backend diagnostic measured 2,964/3,260 statements
+(90.92%) and 919/1,128 branches (81.47%). That run included POSIX-only behavior
+and hit fixture database-name checks. The narrower Windows migration and
+restore runs used the expected database name and passed. The Linux GitHub
+workflow is the release verification for POSIX host behavior.
+
 ## Engineering toolchain (26 November 2026)
 
 The backend CI job checks the `clashbolt` import contracts for core modules and
