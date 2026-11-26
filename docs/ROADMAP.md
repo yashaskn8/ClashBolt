@@ -115,6 +115,18 @@ requires a separate acceptance reference and resolved blockers. The validator
 checks the structure of references. Acceptance requires the underlying
 evidence. A7 and S1 are blocked on independently adjudicated held-out results.
 
+## P5 versioned cancellation (26 November 2026)
+
+Cancellation now requires a strict integer `expected_run_version`. The ledger
+compares it under the run row lock, after operator authorization. A stale
+version returns 409 without mutation. A retry of the version that was already
+accepted returns the current run. The browser sends the version that it
+rendered and always reconciles through an authoritative snapshot and timeline
+refresh. Local evidence: the full backend suite on disposable PostgreSQL 17
+control and target clusters (failures in the first pass were fixed and their
+95 affected tests rerun), and 14 accounts-mode Chromium tests, including a
+stale-cancellation recovery test.
+
 ## B7 queue start latency aggregation (26 November 2026)
 
 The operational P95 query groups first claims before calculating the percentile.

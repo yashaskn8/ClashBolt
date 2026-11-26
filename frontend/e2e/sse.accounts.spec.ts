@@ -190,3 +190,51 @@ test('bursty SSE transitions never overlap authoritative refresh requests', asyn
     await expect(terminal).toBeVisible()
   }
 })
+
+test('stale cancellation is fenced and the timeline recovers authoritatively', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await page.goto('/')
+  await signIn(page, 'operator')
+  await page.getByRole('button', { name: /Validate candidate rule/ }).click()
+  await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
+  await signIn(page, 'reviewer')
+  await page.getByRole('button', { name: /Approve exact hash/ }).click()
+  await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
+  await signIn(page, 'operator')
+
+  // Hold every authoritative read so the page keeps its stale admission view
+  // while the worker advances the durable run.
+  let releaseReads: () => void = () => {}
+  const reads = new Promise<void>((resolve) => { releaseReads = resolve })
+  const held = (url: URL) => /^\/api\/runs\/[0-9a-f-]+(\/events|\/stream)?$/.test(url.pathname)
+  await page.route(held, async (route) => {
+    await reads
+    await route.continue().catch(() => {})
+  })
+  const admission = page.waitForResponse((response) =>
+    response.url().endsWith('/api/runs') && response.request().method() === 'POST'
+  )
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  const run = (await (await admission).json()) as { run_id: string; version: number }
+  const button = page.getByRole('button', { name: 'Request cancellation' })
+  await expect(button).toBeEnabled()
+  await expect.poll(async () => (await page.request.get(`/api/runs/${run.run_id}`)).json()
+    .then((current: { status: string }) => current.status), { timeout: 20_000 })
+    .toBe('COMPLETE')
+
+  const cancelled = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/runs/${run.run_id}/cancel`)
+  )
+  await button.click()
+  const response = await cancelled
+  expect(response.request().postDataJSON()).toEqual({ expected_run_version: run.version })
+  expect(response.status()).toBe(409)
+  releaseReads()
+  await expect(page.locator('.run-status')).toHaveText('COMPLETE', { timeout: 12_000 })
+  await expect(page.locator('.transition-list li strong', { hasText: 'COMPLETE' }))
+    .toBeVisible({ timeout: 12_000 })
+  await expect(page.locator('.transition-list li strong', { hasText: 'CANCELLING' }))
+    .toHaveCount(0)
+})

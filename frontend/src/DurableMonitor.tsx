@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
 const runStatuses = ['PENDING', 'RUNNING', 'CANCELLING', 'CANCELLED', 'COMPLETE', 'UNKNOWN'] as const
 type RunStatus = typeof runStatuses[number]
@@ -62,6 +62,7 @@ export default function DurableMonitor({
   const [error, setError] = useState('')
   const [exportDigest, setExportDigest] = useState<string | null>(null)
   const runId = initial.run_id
+  const refreshRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     setExportDigest(null)
@@ -180,12 +181,14 @@ export default function DurableMonitor({
     }
 
     void refresh()
+    refreshRef.current = () => void refresh()
     const timer = setInterval(() => void refresh(), 3000)
     const stream = new EventSource(`/api/runs/${runId}/stream?after=${initial.version}`)
     stream.addEventListener('transition', () => void refresh())
     stream.onerror = () => void refresh()
     return () => {
       mounted = false
+      refreshRef.current = () => {}
       clearInterval(timer)
       activeRequest?.abort()
       stream.close()
@@ -196,7 +199,11 @@ export default function DurableMonitor({
     try {
       const response = await fetch(`/api/runs/${runId}/cancel`, {
         method: 'POST',
-        headers: accountMode ? {} : { 'X-Operator-Token': operatorToken },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accountMode ? {} : { 'X-Operator-Token': operatorToken }),
+        },
+        body: JSON.stringify({ expected_run_version: initial.version }),
       })
       if (!response.ok) throw new Error('Cancellation request failed')
       const updated = (await response.json()) as DurableRun
@@ -206,6 +213,9 @@ export default function DurableMonitor({
       ))
     } catch {
       setError('Cancellation request could not be confirmed.')
+    } finally {
+      // Never trust a local guess: recover the run and timeline from the ledger.
+      refreshRef.current()
     }
   }
 

@@ -30,7 +30,7 @@ def timeline(monkeypatch):
     run_id = UUID(accounts.admit(
         client_key=str(uuid4()), variant="locked", schedule="serial", approved_oracle_id=rule,
     )["run_id"])
-    assert accounts.cancel(run_id)["status"] == "CANCELLED"
+    assert accounts.cancel(run_id, accounts.get(run_id)['version'])["status"] == "CANCELLED"
     monkeypatch.setenv("CLASHBOLT_DATABASE_URL", dsn)
     monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "accounts")
     monkeypatch.setenv("CLASHBOLT_SESSION_SECRET", "timeline-local-session-key-for-tests")

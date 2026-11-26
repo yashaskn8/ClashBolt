@@ -281,7 +281,9 @@ def test_foreign_project_run_references_are_not_visible_through_local_api(
             f"/api/runs/{foreign_id}/reduction",
         ):
             assert client.get(path).status_code == 404
-        assert client.post(f"/api/runs/{foreign_id}/cancel").status_code == 404
+        assert client.post(
+        f"/api/runs/{foreign_id}/cancel", json={"expected_run_version": 1},
+    ).status_code == 404
     with named_accounts.connect() as conn:
         status = conn.execute(
             "SELECT status FROM experiment_run WHERE id = %s", (foreign_id,),

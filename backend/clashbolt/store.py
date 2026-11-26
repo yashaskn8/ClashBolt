@@ -1357,7 +1357,7 @@ class Ledger:
             ).fetchone()
             return row["report"] if row else None
 
-    def cancel(self, run_id: UUID) -> dict | None:
+    def cancel(self, run_id: UUID, expected_version: int) -> dict | None:
         with self.connect() as conn:
             row = conn.execute(
                 "SELECT * FROM experiment_run WHERE id = %s AND project_id = 'local' FOR UPDATE",
@@ -1365,6 +1365,20 @@ class Ledger:
             ).fetchone()
             if not row:
                 return None
+            if row["version"] != expected_version:
+                # A retry of the cancellation accepted at expected_version is
+                # idempotent; any other stale request must not mutate the run.
+                accepted = conn.execute(
+                    """
+                    SELECT 1 FROM run_transition
+                    WHERE run_id = %s AND version = %s
+                      AND note = 'operator requested cancellation'
+                    """,
+                    (run_id, expected_version + 1),
+                ).fetchone()
+                if accepted:
+                    return _public(row, self.project_id)
+                raise ValueError("Run changed; refresh before cancelling")
             if row["status"] in ("PENDING", "RUNNING"):
                 status = "CANCELLED" if row["status"] == "PENDING" else "CANCELLING"
                 row = conn.execute(

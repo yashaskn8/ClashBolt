@@ -66,7 +66,8 @@ def test_concurrent_native_slots_are_capped_but_memory_can_pass(
     assert store.operations()["native_slots_limit"] == 1
     assert store.claim("no-available-slot") is None
 
-    assert store.cancel(UUID(first["run_id"]))["status"] == "CANCELLING"
+    first_id = UUID(first["run_id"])
+    assert store.cancel(first_id, store.get(first_id)["version"])["status"] == "CANCELLING"
     assert store.claim("cancellation-still-occupies-slot") is None
     with store.connect() as conn:
         conn.execute(

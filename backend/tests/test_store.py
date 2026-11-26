@@ -74,6 +74,39 @@ def test_worker_records_unknown_when_fixed_transport_is_unavailable(ledger, monk
     ]
 
 
+def test_cancel_api_fences_stale_state_and_preserves_idempotent_retry(ledger, monkeypatch):
+    from clashbolt.api import create_app
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", ledger.dsn)
+    monkeypatch.setenv("CLASHBOLT_OPERATOR_TOKEN", "test-operator-token")
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    queued = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
+    run_id = UUID(queued["run_id"])
+    assert ledger.claim("versioned-cancel-worker")
+    running = ledger.get(run_id)
+    endpoint = f"/api/runs/{run_id}/cancel"
+    headers = {"X-Operator-Token": "test-operator-token"}
+    queued_request = {"expected_run_version": queued["version"]}
+    running_request = {"expected_run_version": running["version"]}
+
+    with TestClient(create_app()) as client:
+        assert client.post(endpoint, json=queued_request).status_code == 403
+        assert client.post(endpoint, json=queued_request, headers=headers).status_code == 409
+        assert ledger.get(run_id) == running
+        invalid = client.post(endpoint, json={"expected_run_version": True}, headers=headers)
+        assert invalid.status_code == 422
+        confirmed = client.post(endpoint, json=running_request, headers=headers)
+        assert confirmed.status_code == 200
+        assert confirmed.json()["status"] == "CANCELLING"
+        assert client.post(endpoint, json=running_request, headers=headers).json() == (
+            confirmed.json()
+        )
+    assert [event["status"] for event in ledger.transitions(run_id)] == [
+        "PENDING", "RUNNING", "CANCELLING",
+    ]
+
+
 def test_expired_generation_is_fenced(ledger):
     run = admit(ledger, client_key=str(uuid4()), variant="locked", schedule="serial")
     first = ledger.claim("worker-one")
@@ -94,13 +127,14 @@ def test_expired_generation_is_fenced(ledger):
 
 def test_cancel_pending_and_inflight_unknown(ledger):
     queued = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="serial")
-    assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLED"
-    assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLED"
+    assert ledger.cancel(UUID(queued["run_id"]), queued["version"])["status"] == "CANCELLED"
+    assert ledger.cancel(UUID(queued["run_id"]), queued["version"])["status"] == "CANCELLED"
 
     active = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
     claim = ledger.claim("cancel-worker")
     assert claim and claim["run_id"] == active["run_id"]
-    assert ledger.cancel(UUID(active["run_id"]))["status"] == "CANCELLING"
+    active_id = UUID(active["run_id"])
+    assert ledger.cancel(active_id, ledger.get(active_id)["version"])["status"] == "CANCELLING"
     witness = asyncio.run(execute("racy", "overlap"))
     assert ledger.finish(
         UUID(active["run_id"]), "cancel-worker", claim["lease_generation"], witness
@@ -124,7 +158,7 @@ def test_quota_uses_single_serialized_row(ledger):
         first = admit(ledger, client_key=key, variant="racy", schedule="overlap")
         with pytest.raises(ValueError, match="quota"):
             admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
-        ledger.cancel(UUID(first["run_id"]))
+        ledger.cancel(UUID(first["run_id"]), ledger.get(UUID(first["run_id"]))['version'])
     finally:
         with ledger.connect() as conn:
             conn.execute("UPDATE project_quota SET max_open = 20 WHERE project_id = 'local'")
@@ -190,7 +224,8 @@ def test_expired_inflight_cancellation_becomes_unknown(ledger):
     queued = admit(ledger, client_key=str(uuid4()), variant="racy", schedule="overlap")
     claimed = ledger.claim("stall-worker")
     assert claimed and claimed["run_id"] == queued["run_id"]
-    assert ledger.cancel(UUID(queued["run_id"]))["status"] == "CANCELLING"
+    queued_id = UUID(queued["run_id"])
+    assert ledger.cancel(queued_id, ledger.get(queued_id)["version"])["status"] == "CANCELLING"
     with ledger.connect() as conn:
         conn.execute(
             "UPDATE experiment_run SET lease_until = now() - interval '1 second' "
@@ -215,7 +250,7 @@ def test_expired_cancellation_sweep_bounds_work_and_skips_locked_rows(ledger):
         run_id = UUID(queued["run_id"])
         claimed = ledger.claim("cancel-backlog")
         assert claimed and claimed["run_id"] == str(run_id)
-        assert ledger.cancel(run_id)["status"] == "CANCELLING"
+        assert ledger.cancel(run_id, ledger.get(run_id)['version'])["status"] == "CANCELLING"
         run_ids.append(run_id)
     with ledger.connect() as conn:
         conn.execute(
@@ -337,7 +372,10 @@ def test_durable_mutations_require_operator_token(ledger, monkeypatch):
         assert response.status_code == 201
         run_id = response.json()["run_id"]
         assert client.post(f"/api/runs/{run_id}/cancel").status_code == 403
-        assert client.post(f"/api/runs/{run_id}/cancel", headers=headers).status_code == 200
+        assert client.post(
+            f"/api/runs/{run_id}/cancel", headers=headers,
+            json={"expected_run_version": response.json()["version"]},
+        ).status_code == 200
 
 
 def test_revocation_race_never_leaves_certified_verdict(ledger):
@@ -649,7 +687,7 @@ def test_120_crash_and_duplicate_injections_fence_every_terminal_result(ledger):
             expected = ["PENDING", "RUNNING", "RUNNING", "COMPLETE"]
         elif index % 3 == 1:
             # Cancellation after claim never pretends the target was rolled back.
-            assert ledger.cancel(run_id)["status"] == "CANCELLING"
+            assert ledger.cancel(run_id, ledger.get(run_id)['version'])["status"] == "CANCELLING"
             with ledger.connect() as conn:
                 conn.execute(
                     "UPDATE experiment_run SET lease_until = now() - interval "

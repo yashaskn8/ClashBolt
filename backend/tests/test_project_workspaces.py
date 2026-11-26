@@ -105,7 +105,9 @@ def test_independent_project_oracles_runs_caps_and_worker(workspace):
         assert client.get("/api/runs").json()["runs"] == []
         assert client.get(f"/api/runs/{local_run_id}").status_code == 404
         assert client.get(f"/api/runs/{local_run_id}/bundle").status_code == 404
-        assert client.post(f"/api/runs/{local_run_id}/cancel").status_code == 404
+        assert client.post(
+            f"/api/runs/{local_run_id}/cancel", json={"expected_run_version": 1},
+        ).status_code == 404
 
         tenant_rule = client.post("/api/oracle/proposals", json={})
         assert tenant_rule.status_code == 201, tenant_rule.text

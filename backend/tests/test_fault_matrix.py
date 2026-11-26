@@ -65,7 +65,7 @@ def test_120_deterministic_claim_cancel_and_duplicate_receipts(ledger):
             expected = ["PENDING", "RUNNING", "RUNNING", "COMPLETE"]
         elif index % 3 == 1:
             # Cancellation cannot promise to roll back a target side effect.
-            assert store.cancel(run_id)["status"] == "CANCELLING"
+            assert store.cancel(run_id, store.get(run_id)['version'])["status"] == "CANCELLING"
             with store.connect() as conn:
                 conn.execute(
                     "UPDATE experiment_run SET lease_until = now() - interval "

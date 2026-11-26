@@ -43,7 +43,7 @@ def test_control_backup_cold_restores_to_separate_native_cluster(tmp_path):
         for _ in range(2)
     ]
     cancelled_id, pending_id = (UUID(run["run_id"]) for run in admitted)
-    assert ledger.cancel(cancelled_id)["status"] == "CANCELLED"
+    assert ledger.cancel(cancelled_id, ledger.get(cancelled_id)['version'])["status"] == "CANCELLED"
     before = {
         run_id: (ledger.get(run_id), ledger.transitions(run_id))
         for run_id in (cancelled_id, pending_id)

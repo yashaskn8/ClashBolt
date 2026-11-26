@@ -9,16 +9,16 @@ import secrets
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import Error as DatabaseError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from clashbolt.accounts import (
@@ -111,6 +111,11 @@ class RunPreviewRequest(ExperimentRequest):
     step_budget: int = Field(default=4, ge=4, le=32)
     approved_oracle_id: UUID | None = None
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
+
+
+class CancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_run_version: StrictInt = Field(ge=1, le=2**63 - 2)
 
 
 class WitnessReviewInput(BaseModel):
@@ -784,10 +789,19 @@ def create_app() -> FastAPI:
     @app.post("/api/runs/{run_id}/cancel")
     def cancel_run(
         run_id: UUID, http_request: Request,
+        body: Any = Body(default=None),
         x_operator_token: str | None = Header(default=None),
     ) -> dict:
         require_operator(x_operator_token, http_request)
-        result = require_ledger(http_request).cancel(run_id)
+        # Authorize first so unauthenticated callers learn nothing about the body.
+        try:
+            expected = CancelRequest.model_validate(body).expected_run_version
+        except ValidationError as error:
+            raise HTTPException(422, "expected_run_version is required") from error
+        try:
+            result = require_ledger(http_request).cancel(run_id, expected)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         if result is None:
             raise HTTPException(404, "Run not found")
         return result
