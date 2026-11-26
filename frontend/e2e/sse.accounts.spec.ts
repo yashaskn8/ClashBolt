@@ -231,10 +231,32 @@ test('stale cancellation is fenced and the timeline recovers authoritatively', a
   const response = await cancelled
   expect(response.request().postDataJSON()).toEqual({ expected_run_version: run.version })
   expect(response.status()).toBe(409)
+  await expect(
+    page.getByText('Run state changed before cancellation; reloaded authoritative state.'),
+  ).toBeVisible()
   releaseReads()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', { timeout: 12_000 })
   await expect(page.locator('.transition-list li strong', { hasText: 'COMPLETE' }))
     .toBeVisible({ timeout: 12_000 })
   await expect(page.locator('.transition-list li strong', { hasText: 'CANCELLING' }))
     .toHaveCount(0)
+  await expect(page.getByLabel('Run resource accounting')).toContainText('Provider cost: unavailable')
+
+  // Verify Refresh from ledger recovers from a transient snapshot failure.
+  let failNextSnapshot = true
+  await page.route(`**/api/runs/${run.run_id}`, async (route) => {
+    if (failNextSnapshot) {
+      failNextSnapshot = false
+      await route.fulfill({ status: 503, body: 'Temporary failure' })
+      return
+    }
+    await route.continue()
+  })
+  await expect(page.getByText('Cannot refresh the authoritative run snapshot.')).toBeVisible({
+    timeout: 12_000,
+  })
+  await page.getByRole('button', { name: 'Refresh from ledger' }).click()
+  await expect(page.getByText('Cannot refresh the authoritative run snapshot.')).toHaveCount(0, {
+    timeout: 12_000,
+  })
 })

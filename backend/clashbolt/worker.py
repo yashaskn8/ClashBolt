@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from itertools import count
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -22,6 +23,15 @@ from clashbolt.target_db import disposable_target, drop_abandoned_target
 from clashbolt.target_service import request_fixture, service_enabled
 from clashbolt.verification_jobs import VerificationJobs
 from clashbolt.witness import validate_contract, verify
+
+
+def _child_cpu_seconds() -> float | None:
+    if os.name != "posix":
+        return None
+    import resource
+
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
 
 
 async def isolated_synthetic_run(
@@ -128,6 +138,10 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
 
     # If cancel raced with claim, the authoritative final transition is UNKNOWN.
     # The fixture is entirely synthetic, newly initialized for every execution.
+    wall_start = time.perf_counter()
+    worker_cpu_start = time.process_time()
+    child_cpu_start = None if service_enabled() else _child_cpu_seconds()
+    db_stats: dict | None = None
     try:
         if claim["execution_backend"] == "native-postgresql":
             admin_url = os.getenv("CLASHBOLT_TARGET_ADMIN_URL")
@@ -146,6 +160,7 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
                     witness = await isolated_synthetic_run(
                         claim["variant"], claim["schedule"], target.url
                     )
+                    db_stats = target.sample_stats()
                 ledger.mark_target(instance_id, "CLEANED")
             except (psycopg.Error, OSError, RuntimeError, ValueError, TimeoutError):
                 ledger.mark_target(instance_id, "UNKNOWN")
@@ -162,8 +177,23 @@ async def process_one(ledger: Ledger, owner: str) -> bool:
             "verdict": "UNKNOWN",
             "failure_reason": "fixture child process did not return valid evidence",
         }
+    wall_ms = round(max(0.0, (time.perf_counter() - wall_start) * 1000), 3)
+    worker_cpu_ms = round(max(0.0, (time.process_time() - worker_cpu_start) * 1000), 3)
+    child_cpu_end = None if child_cpu_start is None else _child_cpu_seconds()
+    child_cpu_ms = (
+        round(max(0.0, (child_cpu_end - child_cpu_start) * 1000), 3)
+        if child_cpu_start is not None and child_cpu_end is not None
+        else None
+    )
+    measurements = {
+        "worker_cpu_ms": worker_cpu_ms,
+        "child_cpu_ms": child_cpu_ms,
+        "wall_ms": wall_ms,
+        "database": db_stats,
+    }
     accepted = ledger.finish(
-        UUID(claim["run_id"]), owner, claim["lease_generation"], witness
+        UUID(claim["run_id"]), owner, claim["lease_generation"], witness,
+        measurements=measurements,
     )
     return accepted
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DurableRun } from './DurableMonitor'
 
 type Props = {
@@ -12,10 +12,35 @@ type Operations = {
   responsive_workers: number
   runs: Record<string, number>
   verifications: Record<string, number>
+  cancellation?: {
+    sample_count: number
+    p95_seconds: number | null
+    max_seconds: number | null
+    in_flight: number
+    oldest_in_flight_seconds: number | null
+  }
+  resources?: {
+    project_id: string
+    open_runs: number
+    max_open: number
+    open_reserved_cpu_ms: number
+    max_reserved_cpu_ms: number
+    runs_7d: {
+      overspent_count: number
+      uncertain_count: number
+      measured_worker_cpu_ms_total: number | null
+      measured_app_wall_ms_total: number | null
+      measured_db_active_ms_total: number | null
+    }
+  }
   diagnostics?: {
     status: 'NORMAL' | 'ATTENTION'
     alerts: { code: string; message: string }[]
   }
+}
+
+function formatMs(value: number | null | undefined) {
+  return typeof value === 'number' ? `${value} ms` : 'unavailable'
 }
 
 export default function RecentRuns({
@@ -28,6 +53,7 @@ export default function RecentRuns({
     context: string; snapshot: Operations
   } | null>(null)
   const [error, setError] = useState('')
+  const refreshRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     let mounted = true
@@ -99,9 +125,11 @@ export default function RecentRuns({
       }
     }
     void refresh()
+    refreshRef.current = () => void refresh()
     const timer = setInterval(() => void refresh(), 5000)
     return () => {
       mounted = false
+      refreshRef.current = () => {}
       clearInterval(timer)
       controller.abort()
     }
@@ -127,12 +155,41 @@ export default function RecentRuns({
           Verification queue: {currentOperations.verifications.PENDING ?? 0}
         </p>
       )}
+      {currentOperations?.resources && (
+        <>
+          <p className="help-text" aria-label="Project resource budget">
+            Project budget ({currentOperations.resources.project_id}):{' '}
+            {currentOperations.resources.open_runs}/{currentOperations.resources.max_open} runs ·{' '}
+            {currentOperations.resources.open_reserved_cpu_ms}/
+            {currentOperations.resources.max_reserved_cpu_ms} ms CPU reserved ·{' '}
+            Overspent (7d): {currentOperations.resources.runs_7d.overspent_count} ·{' '}
+            Uncertain: {currentOperations.resources.runs_7d.uncertain_count} ·{' '}
+            Provider cost: unavailable
+          </p>
+          <p className="help-text" aria-label="Measured resources and cancellation latency">
+            Measured (7d): Worker CPU {formatMs(currentOperations.resources.runs_7d.measured_worker_cpu_ms_total)} ·{' '}
+            App wall {formatMs(currentOperations.resources.runs_7d.measured_app_wall_ms_total)} ·{' '}
+            DB active {formatMs(currentOperations.resources.runs_7d.measured_db_active_ms_total)} ·{' '}
+            Cancel P95:{' '}
+            {typeof currentOperations.cancellation?.p95_seconds === 'number'
+              ? `${currentOperations.cancellation.p95_seconds.toFixed(3)}s (${currentOperations.cancellation.sample_count})`
+              : 'no samples'}
+          </p>
+        </>
+      )}
       {currentOperations?.diagnostics?.alerts.map((alert) => (
         <p className="error" role="status" key={alert.code}>
           Operator check: {alert.message}
         </p>
       ))}
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && (
+        <div className="error" role="alert">
+          <span>{error}</span>{' '}
+          <button type="button" className="secondary-button" onClick={() => refreshRef.current()}>
+            Retry refresh
+          </button>
+        </div>
+      )}
       {currentRuns.length === 0 && !error && <p className="help-text">No saved runs yet.</p>}
       <div className="recent-list">
         {currentRuns.map((run) => (

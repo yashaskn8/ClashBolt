@@ -69,6 +69,12 @@ type RunPreview = {
     disposable_databases: number
     cpu_seconds_estimate: number | null
   }
+  budget?: {
+    reserved_cpu_ms_request: number
+    open_reserved_cpu_ms: number
+    max_reserved_cpu_ms: number
+    cpu_budget_available: boolean
+  }
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -742,6 +748,9 @@ export default function App() {
                     <strong>
                       {runPreview.open_runs}/{runPreview.max_open} active run slots ·
                       {runPreview.resource_bound.checkpoint_limit} checkpoint budget
+                      {runPreview.budget
+                        ? ` · ${runPreview.budget.open_reserved_cpu_ms}/${runPreview.budget.max_reserved_cpu_ms} ms CPU reserved`
+                        : ''}
                     </strong>
                     <small>
                       {runPreview.resource_bound.disposable_databases === 1

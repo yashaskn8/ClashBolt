@@ -412,23 +412,55 @@ class Policy(Ledger):
                 """
                 SELECT
                     count(*) FILTER (WHERE state = 'RESERVED') AS inflight,
-                    count(*) FILTER (WHERE state = 'UNKNOWN') AS unknown
+                    count(*) FILTER (WHERE state = 'UNKNOWN') AS unknown,
+                    count(*) FILTER (WHERE state = 'COMPLETE') AS complete,
+                    COALESCE(sum(reserved_tokens) FILTER (
+                        WHERE state = 'UNKNOWN' AND observed_tokens IS NULL
+                    ), 0) AS tokens_uncertain_reserved,
+                    COALESCE(sum(GREATEST(0, observed_tokens - reserved_tokens)) FILTER (
+                        WHERE observed_tokens IS NOT NULL
+                    ), 0) AS tokens_overspent
                 FROM model_reservation
                 WHERE project_id = 'local' AND window_date = CURRENT_DATE
                 """
             ).fetchone()
+            calls_reserved = row["calls_reserved"] if row else 0
+            tokens_observed = row["tokens_observed"] if row else 0
+            if calls_reserved == 0:
+                accounting_status = "NO_USAGE"
+            elif state_counts["inflight"] > 0:
+                accounting_status = "RESERVED"
+            elif state_counts["unknown"] > 0:
+                accounting_status = "UNCERTAIN"
+            else:
+                accounting_status = "RECONCILED"
+            measured_tokens = (
+                tokens_observed
+                if (calls_reserved == 0 or state_counts["complete"] > 0 or tokens_observed > 0)
+                else None
+            )
+            reconciliation = {
+                "accounting_status": accounting_status,
+                "measured_tokens": measured_tokens,
+                "tokens_uncertain_reserved": state_counts["tokens_uncertain_reserved"],
+                "tokens_overspent": state_counts["tokens_overspent"],
+                "provider_cost_usd": None,
+                "provider_cost_status": "UNAVAILABLE",
+            }
             if not row:
                 return {
                     "calls_reserved": 0, "tokens_reserved": 0, "tokens_observed": 0,
                     "call_limit": 20, "token_limit": 5120,
                     "calls_inflight": state_counts["inflight"],
                     "calls_unknown": state_counts["unknown"],
+                    "reconciliation": reconciliation,
                 }
             return {
                 **row,
                 "window_date": row["window_date"].isoformat(),
                 "calls_inflight": state_counts["inflight"],
                 "calls_unknown": state_counts["unknown"],
+                "reconciliation": reconciliation,
             }
 
     def propose(

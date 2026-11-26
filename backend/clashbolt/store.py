@@ -15,6 +15,16 @@ from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from clashbolt.accounting import (
+    DEFAULT_MAX_RESERVED_CPU_MS,
+    DEFAULT_RESERVED_CPU_MS,
+    MAX_RESERVED_CPU_MS,
+    MIN_RESERVED_CPU_MS,
+    build_reservation,
+    reconcile_run_accounting,
+    released_run_accounting,
+    uncertain_run_accounting,
+)
 from clashbolt.experiment import ORACLE_HASH, SCHEDULES, TARGET_REVISION
 from clashbolt.target_db import validate_target_cluster
 from clashbolt.witness import validate_contract
@@ -23,7 +33,7 @@ SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
 MAX_CLAIM_GENERATIONS = 3
-BASE_SCHEMA_VERSION = 8
+BASE_SCHEMA_VERSION = 9
 MAX_EVENT_VERSION = 2**63 - 1
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
@@ -37,6 +47,9 @@ _SCHEMA = (
     "ALTER TABLE project_quota ADD COLUMN IF NOT EXISTS "
     "max_native_active INTEGER NOT NULL DEFAULT 2 "
     "CHECK (max_native_active BETWEEN 1 AND 16)",
+    "ALTER TABLE project_quota ADD COLUMN IF NOT EXISTS "
+    "max_reserved_cpu_ms INTEGER NOT NULL DEFAULT 180000 "
+    "CHECK (max_reserved_cpu_ms BETWEEN 500 AND 3600000)",
     """
     CREATE TABLE IF NOT EXISTS experiment_draft (
         project_id TEXT PRIMARY KEY REFERENCES project_quota(project_id),
@@ -75,6 +88,25 @@ _SCHEMA = (
     "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
     "execution_backend TEXT NOT NULL DEFAULT 'memory' "
     "CHECK (execution_backend IN ('memory', 'native-postgresql'))",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "reserved_cpu_ms INTEGER NOT NULL DEFAULT 3000 "
+    "CHECK (reserved_cpu_ms BETWEEN 500 AND 30000)",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "reserved_target_dbs INTEGER NOT NULL DEFAULT 0 "
+    "CHECK (reserved_target_dbs BETWEEN 0 AND 1)",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "accounting_state TEXT NOT NULL DEFAULT 'RESERVED' "
+    "CHECK (accounting_state IN ('RESERVED', 'RECONCILED', 'PARTIAL', 'UNCERTAIN', 'RELEASED'))",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "measured_worker_cpu_ms DOUBLE PRECISION "
+    "CHECK (measured_worker_cpu_ms IS NULL OR measured_worker_cpu_ms >= 0)",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "measured_app_wall_ms DOUBLE PRECISION "
+    "CHECK (measured_app_wall_ms IS NULL OR measured_app_wall_ms >= 0)",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS "
+    "measured_db_active_ms DOUBLE PRECISION "
+    "CHECK (measured_db_active_ms IS NULL OR measured_db_active_ms >= 0)",
+    "ALTER TABLE experiment_run ADD COLUMN IF NOT EXISTS resource_accounting JSONB",
     """
     CREATE INDEX IF NOT EXISTS experiment_claim_idx
     ON experiment_run (status, created_at)
@@ -215,7 +247,12 @@ _SCHEMA = (
 
 
 def _request_hash(
-    variant: str, schedule: str, budget: int, approval_id: UUID, execution_backend: str
+    variant: str,
+    schedule: str,
+    budget: int,
+    approval_id: UUID,
+    execution_backend: str,
+    reserved_cpu_ms: int = DEFAULT_RESERVED_CPU_MS,
 ) -> str:
     request = {
         "variant": variant,
@@ -226,6 +263,8 @@ def _request_hash(
     }
     if execution_backend != "memory":
         request["execution_backend"] = execution_backend
+    if reserved_cpu_ms != DEFAULT_RESERVED_CPU_MS:
+        request["reserved_cpu_ms"] = reserved_cpu_ms
     return hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
 
 
@@ -243,6 +282,9 @@ def _public(row: dict, project_id: str = "local") -> dict:
         "step_budget": row["step_budget"],
         "consumed_steps": row["consumed_steps"],
         "execution_backend": row["execution_backend"],
+        "reserved_cpu_ms": row["reserved_cpu_ms"],
+        "accounting_state": row["accounting_state"],
+        "resource_accounting": row["resource_accounting"],
         "status": row["status"],
         "version": row["version"],
         "lease_generation": row["lease_generation"],
@@ -367,6 +409,7 @@ class Ledger:
     def preview_run(
         self, *, approved_oracle_id: UUID | None,
         execution_backend: str = "memory", step_budget: int = 4,
+        reserved_cpu_ms: int = DEFAULT_RESERVED_CPU_MS,
     ) -> dict:
         """Read-only admission estimate, never a quota or target reservation.
 
@@ -378,18 +421,29 @@ class Ledger:
             raise ValueError("Unsupported execution backend")
         if not 4 <= step_budget <= 32:
             raise ValueError("Step budget must be between 4 and 32")
+        if type(reserved_cpu_ms) is not int or not (
+            MIN_RESERVED_CPU_MS <= reserved_cpu_ms <= MAX_RESERVED_CPU_MS
+        ):
+            raise ValueError("Reserved CPU budget must be 500-30000 ms")
         with self.connect() as conn:
             quota = conn.execute(
-                "SELECT max_open FROM project_quota WHERE project_id = 'local'"
+                "SELECT max_open, max_reserved_cpu_ms FROM project_quota WHERE project_id = 'local'"
             ).fetchone()
             max_open = quota["max_open"] if quota else 20
-            open_runs = conn.execute(
+            max_reserved_cpu_ms = (
+                quota["max_reserved_cpu_ms"] if quota else DEFAULT_MAX_RESERVED_CPU_MS
+            )
+            open_summary = conn.execute(
                 """
-                SELECT count(*) AS n FROM experiment_run
+                SELECT count(*) AS n,
+                       COALESCE(sum(reserved_cpu_ms), 0) AS open_reserved_cpu_ms
+                FROM experiment_run
                 WHERE project_id = 'local'
                   AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
                 """
-            ).fetchone()["n"]
+            ).fetchone()
+            open_runs = open_summary["n"]
+            open_reserved_cpu_ms = open_summary["open_reserved_cpu_ms"]
             approval = (
                 conn.execute(
                     """
@@ -418,11 +472,14 @@ class Ledger:
                     backend_configured = True
                 except ValueError:
                     backend_configured = False
+        cpu_budget_available = open_reserved_cpu_ms + reserved_cpu_ms <= max_reserved_cpu_ms
         blockers = []
         if not approved:
             blockers.append("No current approved oracle for this project")
         if open_runs >= max_open:
             blockers.append("Active experiment quota is full")
+        if not cpu_budget_available:
+            blockers.append("Active CPU reservation budget is full")
         if not backend_configured:
             blockers.append("Separate native target cluster is not configured")
         return {
@@ -440,6 +497,14 @@ class Ledger:
                 "disposable_databases": int(execution_backend == "native-postgresql"),
                 "cpu_seconds_estimate": None,
             },
+            "budget": {
+                "reserved_cpu_ms_request": reserved_cpu_ms,
+                "open_reserved_cpu_ms": open_reserved_cpu_ms,
+                "max_reserved_cpu_ms": max_reserved_cpu_ms,
+                "cpu_budget_available": cpu_budget_available,
+                "measured_cost_status": "UNAVAILABLE_BEFORE_EXECUTION",
+                "provider_cost_estimate_usd": None,
+            },
         }
 
     def admit(
@@ -451,12 +516,17 @@ class Ledger:
         step_budget: int = 4,
         approved_oracle_id: UUID | None = None,
         execution_backend: str = "memory",
+        reserved_cpu_ms: int = DEFAULT_RESERVED_CPU_MS,
     ) -> dict:
         """A retry with the same key+request returns the same run; conflicts reject."""
         if variant not in ("racy", "locked") or schedule not in SCHEDULES:
             raise ValueError("Unknown built-in fixture variant or schedule")
         if not 4 <= step_budget <= 32:
             raise ValueError("Step budget must be between 4 and 32")
+        if type(reserved_cpu_ms) is not int or not (
+            MIN_RESERVED_CPU_MS <= reserved_cpu_ms <= MAX_RESERVED_CPU_MS
+        ):
+            raise ValueError("Reserved CPU budget must be 500-30000 ms")
         if not 1 <= len(client_key) <= 100:
             raise ValueError("Client key must be 1-100 characters")
 
@@ -473,15 +543,19 @@ class Ledger:
                 raise ValueError("Separate native target cluster is not configured")
             validate_target_cluster(target_location, self.dsn)
         request_hash = _request_hash(
-            variant, schedule, step_budget, approved_oracle_id, execution_backend
+            variant, schedule, step_budget, approved_oracle_id,
+            execution_backend, reserved_cpu_ms,
         )
         with self.connect() as conn:
             # The quota row serializes admission for this local workspace.
             conn.execute(
                 "INSERT INTO project_quota(project_id) VALUES ('local') ON CONFLICT DO NOTHING"
             )
-            conn.execute(
-                "SELECT max_open FROM project_quota WHERE project_id = 'local' FOR UPDATE"
+            quota = conn.execute(
+                """
+                SELECT max_open, max_reserved_cpu_ms
+                FROM project_quota WHERE project_id = 'local' FOR UPDATE
+                """
             ).fetchone()
             existing = conn.execute(
                 "SELECT * FROM experiment_run WHERE project_id = 'local' AND client_key = %s",
@@ -506,32 +580,43 @@ class Ledger:
                 or not approval["reviewed_by"]
             ):
                 raise ValueError("Durable admission requires a current approved oracle")
-            count = conn.execute(
+            open_summary = conn.execute(
                 """
-                SELECT count(*) AS open_count
+                SELECT count(*) AS open_count,
+                       COALESCE(sum(reserved_cpu_ms), 0) AS open_reserved_cpu_ms
                 FROM experiment_run
                 WHERE project_id = 'local'
                   AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
                 """
-            ).fetchone()["open_count"]
-            limit = conn.execute(
-                "SELECT max_open FROM project_quota WHERE project_id = 'local'"
-            ).fetchone()["max_open"]
-            if count >= limit:
+            ).fetchone()
+            if open_summary["open_count"] >= quota["max_open"]:
                 raise ValueError("Active experiment quota exhausted")
+            if (
+                open_summary["open_reserved_cpu_ms"] + reserved_cpu_ms
+                > quota["max_reserved_cpu_ms"]
+            ):
+                raise ValueError("Active CPU reservation quota exhausted")
+            accounting = build_reservation(
+                execution_backend=execution_backend,
+                step_budget=step_budget,
+                reserved_cpu_ms=reserved_cpu_ms,
+            )
             row = conn.execute(
                 """
                 INSERT INTO experiment_run (
                     id, project_id, client_key, request_hash,
                     variant, schedule, oracle_hash, step_budget, approved_oracle_id,
-                    execution_backend
+                    execution_backend, reserved_cpu_ms, reserved_target_dbs,
+                    accounting_state, resource_accounting
                 )
-                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, 'local', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'RESERVED', %s)
                 RETURNING *
                 """,
                 (
                     uuid4(), client_key, request_hash, variant, schedule,
                     ORACLE_HASH, step_budget, approved_oracle_id, execution_backend,
+                    reserved_cpu_ms, int(execution_backend == "native-postgresql"),
+                    Jsonb(accounting),
                 ),
             ).fetchone()
             _event(conn, row, "admitted")
@@ -644,8 +729,137 @@ class Ledger:
                 """
             ).fetchone()["occupied"]
             quota = conn.execute(
-                "SELECT max_native_active FROM project_quota WHERE project_id = 'local'"
+                """
+                SELECT max_open, max_native_active, max_reserved_cpu_ms
+                FROM project_quota WHERE project_id = 'local'
+                """
             ).fetchone()
+            open_summary = conn.execute(
+                """
+                SELECT count(*) AS open_runs,
+                       COALESCE(sum(reserved_cpu_ms), 0) AS open_reserved_cpu_ms,
+                       COALESCE(sum(reserved_target_dbs), 0) AS open_reserved_target_dbs
+                FROM experiment_run
+                WHERE project_id = 'local'
+                  AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                """
+            ).fetchone()
+            run_resources = conn.execute(
+                """
+                SELECT
+                    count(*) AS total_runs,
+                    COALESCE(sum(reserved_cpu_ms), 0) AS reserved_cpu_ms_total,
+                    count(*) FILTER (WHERE accounting_state = 'RECONCILED') AS reconciled_count,
+                    count(*) FILTER (WHERE accounting_state = 'PARTIAL') AS partial_count,
+                    count(*) FILTER (WHERE accounting_state = 'UNCERTAIN') AS uncertain_count,
+                    count(*) FILTER (WHERE accounting_state = 'RELEASED') AS released_count,
+                    count(*) FILTER (WHERE accounting_state = 'RESERVED') AS reserved_count,
+                    count(*) FILTER (
+                        WHERE (resource_accounting->'reconciliation'->>'overspent') = 'true'
+                    ) AS overspent_count,
+                    count(*) FILTER (
+                        WHERE (resource_accounting->'reconciliation'->>'overspent')
+                              IN ('true', 'false')
+                          AND accounting_state != 'RELEASED'
+                    ) AS overspend_evaluated_count,
+                    count(*) FILTER (
+                        WHERE accounting_state IN ('UNCERTAIN', 'PARTIAL')
+                          AND (resource_accounting->'reconciliation'->>'overspent') IS NULL
+                    ) AS overspend_uncertain_count,
+                    sum(measured_worker_cpu_ms) AS measured_worker_cpu_ms_total,
+                    count(measured_worker_cpu_ms) AS measured_worker_cpu_samples,
+                    sum(measured_app_wall_ms) AS measured_app_wall_ms_total,
+                    count(measured_app_wall_ms) AS measured_app_wall_samples,
+                    sum(measured_db_active_ms) AS measured_db_active_ms_total,
+                    count(measured_db_active_ms) AS measured_db_active_samples
+                FROM experiment_run
+                WHERE project_id = 'local'
+                  AND created_at >= now() - interval '7 days'
+                """
+            ).fetchone()
+            cancel_latency = conn.execute(
+                """
+                SELECT
+                    count(*) AS sample_count,
+                    percentile_cont(0.95) WITHIN GROUP (
+                        ORDER BY EXTRACT(EPOCH FROM (
+                            term.completed_at - req.created_at
+                        ))::double precision
+                    ) AS p95_seconds,
+                    max(
+                        EXTRACT(EPOCH FROM (term.completed_at - req.created_at))::double precision
+                    ) AS max_seconds
+                FROM run_transition req
+                JOIN experiment_run r ON r.id = req.run_id
+                JOIN LATERAL (
+                    SELECT min(t.created_at) AS completed_at
+                    FROM run_transition t
+                    WHERE t.run_id = req.run_id
+                      AND t.version >= req.version
+                      AND t.status IN ('CANCELLED', 'UNKNOWN')
+                ) term ON term.completed_at IS NOT NULL
+                WHERE r.project_id = 'local'
+                  AND req.note = 'operator requested cancellation'
+                  AND req.created_at >= now() - interval '7 days'
+                """
+            ).fetchone()
+            cancel_inflight = conn.execute(
+                """
+                SELECT
+                    count(*) AS in_flight,
+                    EXTRACT(EPOCH FROM (
+                        now() - min(COALESCE(req.created_at, r.updated_at))
+                    ))::double precision AS oldest_in_flight_seconds
+                FROM experiment_run r
+                LEFT JOIN LATERAL (
+                    SELECT created_at FROM run_transition
+                    WHERE run_id = r.id AND note = 'operator requested cancellation'
+                    ORDER BY version DESC LIMIT 1
+                ) req ON TRUE
+                WHERE r.project_id = 'local' AND r.status = 'CANCELLING'
+                """
+            ).fetchone()
+            model_budget_summary = None
+            if conn.execute("SELECT to_regclass('model_budget') AS name").fetchone()["name"]:
+                mb_row = conn.execute(
+                    """
+                    SELECT call_limit, token_limit, calls_reserved, tokens_reserved,
+                           tokens_observed
+                    FROM model_budget
+                    WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                    """
+                ).fetchone()
+                mr_row = conn.execute(
+                    """
+                    SELECT
+                        count(*) FILTER (WHERE state = 'RESERVED') AS inflight,
+                        count(*) FILTER (WHERE state = 'UNKNOWN') AS unknown,
+                        count(*) FILTER (WHERE state = 'COMPLETE') AS complete,
+                        COALESCE(sum(reserved_tokens) FILTER (
+                            WHERE state = 'UNKNOWN' AND observed_tokens IS NULL
+                        ), 0) AS tokens_uncertain_reserved
+                    FROM model_reservation
+                    WHERE project_id = 'local' AND window_date = CURRENT_DATE
+                    """
+                ).fetchone()
+                calls_reserved = mb_row["calls_reserved"] if mb_row else 0
+                tokens_observed = mb_row["tokens_observed"] if mb_row else 0
+                model_budget_summary = {
+                    "calls_reserved": calls_reserved,
+                    "tokens_reserved": mb_row["tokens_reserved"] if mb_row else 0,
+                    "tokens_observed": (
+                        tokens_observed
+                        if (calls_reserved == 0 or mr_row["complete"] > 0 or tokens_observed > 0)
+                        else None
+                    ),
+                    "tokens_uncertain_reserved": mr_row["tokens_uncertain_reserved"],
+                    "call_limit": mb_row["call_limit"] if mb_row else 20,
+                    "token_limit": mb_row["token_limit"] if mb_row else 5120,
+                    "calls_inflight": mr_row["inflight"],
+                    "calls_unknown": mr_row["unknown"],
+                    "provider_cost_status": "UNAVAILABLE",
+                    "provider_cost_usd": None,
+                }
             pending_age = conn.execute(
                 """
                 SELECT EXTRACT(EPOCH FROM (now() - min(created_at)))
@@ -698,6 +912,76 @@ class Ledger:
                 "native_slots_limit": quota["max_native_active"] if quota else 2,
                 "oldest_pending_seconds": max(0.0, float(pending_age or 0)),
                 "start_p95_seconds": max(0.0, float(latency or 0)),
+                "cancellation": {
+                    "sample_count": cancel_latency["sample_count"],
+                    "p95_seconds": (
+                        round(max(0.0, float(cancel_latency["p95_seconds"])), 3)
+                        if cancel_latency["p95_seconds"] is not None else None
+                    ),
+                    "max_seconds": (
+                        round(max(0.0, float(cancel_latency["max_seconds"])), 3)
+                        if cancel_latency["max_seconds"] is not None else None
+                    ),
+                    "in_flight": cancel_inflight["in_flight"],
+                    "oldest_in_flight_seconds": (
+                        round(max(0.0, float(cancel_inflight["oldest_in_flight_seconds"])), 3)
+                        if cancel_inflight["in_flight"] > 0
+                        and cancel_inflight["oldest_in_flight_seconds"] is not None
+                        else None
+                    ),
+                },
+                "resources": {
+                    "project_id": self.project_id,
+                    "open_runs": open_summary["open_runs"],
+                    "max_open": quota["max_open"] if quota else 20,
+                    "open_reserved_cpu_ms": open_summary["open_reserved_cpu_ms"],
+                    "max_reserved_cpu_ms": (
+                        quota["max_reserved_cpu_ms"] if quota else DEFAULT_MAX_RESERVED_CPU_MS
+                    ),
+                    "open_reserved_target_dbs": open_summary["open_reserved_target_dbs"],
+                    "provider_cost_status": "UNAVAILABLE",
+                    "provider_cost_usd": None,
+                    "runs_7d": {
+                        "total_runs": run_resources["total_runs"],
+                        "reserved_cpu_ms_total": run_resources["reserved_cpu_ms_total"],
+                        "reconciled_count": run_resources["reconciled_count"],
+                        "partial_count": run_resources["partial_count"],
+                        "uncertain_count": run_resources["uncertain_count"],
+                        "released_count": run_resources["released_count"],
+                        "reserved_count": run_resources["reserved_count"],
+                        "overspent_count": run_resources["overspent_count"],
+                        "overspend_evaluated_count": run_resources["overspend_evaluated_count"],
+                        "overspend_uncertain_count": run_resources["overspend_uncertain_count"],
+                        "overspend_rate": (
+                            round(
+                                run_resources["overspent_count"]
+                                / run_resources["overspend_evaluated_count"],
+                                4,
+                            )
+                            if run_resources["overspend_evaluated_count"] > 0
+                            else None
+                        ),
+                        "measured_worker_cpu_ms_total": (
+                            round(float(run_resources["measured_worker_cpu_ms_total"]), 3)
+                            if run_resources["measured_worker_cpu_samples"] > 0
+                            else None
+                        ),
+                        "measured_worker_cpu_samples": run_resources["measured_worker_cpu_samples"],
+                        "measured_app_wall_ms_total": (
+                            round(float(run_resources["measured_app_wall_ms_total"]), 3)
+                            if run_resources["measured_app_wall_samples"] > 0
+                            else None
+                        ),
+                        "measured_app_wall_samples": run_resources["measured_app_wall_samples"],
+                        "measured_db_active_ms_total": (
+                            round(float(run_resources["measured_db_active_ms_total"]), 3)
+                            if run_resources["measured_db_active_samples"] > 0
+                            else None
+                        ),
+                        "measured_db_active_samples": run_resources["measured_db_active_samples"],
+                    },
+                    "model_budget": model_budget_summary,
+                },
             }
 
     def recent(self, limit: int = 20) -> list[dict]:
@@ -1086,7 +1370,8 @@ class Ledger:
             # in the same transaction that attempts the next claim.
             exhausted = conn.execute(
                 """
-                SELECT id FROM experiment_run
+                SELECT id, execution_backend, step_budget, reserved_cpu_ms
+                FROM experiment_run
                 WHERE status = 'RUNNING' AND lease_until < now()
                   AND cancel_requested = FALSE
                   AND lease_generation >= %s
@@ -1096,15 +1381,26 @@ class Ledger:
                 (MAX_CLAIM_GENERATIONS,),
             ).fetchall()
             for item in exhausted:
+                accounting_doc = uncertain_run_accounting(
+                    execution_backend=item["execution_backend"],
+                    step_budget=item["step_budget"],
+                    reserved_cpu_ms=item["reserved_cpu_ms"],
+                    reason=(
+                        "Worker lease retry budget exhausted without receipt; "
+                        "actual expenditure is uncertain"
+                    ),
+                )
                 terminal = conn.execute(
                     """
                     UPDATE experiment_run
                     SET status = 'UNKNOWN', verdict = 'UNKNOWN',
+                        accounting_state = 'UNCERTAIN',
+                        resource_accounting = %s,
                         version = version + 1, lease_owner = NULL,
                         lease_until = NULL, updated_at = now()
                     WHERE id = %s RETURNING *
                     """,
-                    (item["id"],),
+                    (Jsonb(accounting_doc), item["id"]),
                 ).fetchone()
                 _event(conn, terminal, "worker receipt missing; retry budget exhausted")
             local_budget_available = (
@@ -1236,7 +1532,15 @@ class Ledger:
                 for row in rows
             ]
 
-    def finish(self, run_id: UUID, owner: str, generation: int, witness: dict) -> bool:
+    def finish(
+        self,
+        run_id: UUID,
+        owner: str,
+        generation: int,
+        witness: dict,
+        *,
+        measurements: dict | None = None,
+    ) -> bool:
         """A stale worker cannot publish a result after its lease is lost."""
         with self.connect() as conn:
             # Consistent lock order: oracle approval first, run row second.
@@ -1301,15 +1605,42 @@ class Ledger:
                     status, verdict, note = "UNKNOWN", "UNKNOWN", "incomplete evidence"
                 else:
                     status, note = "COMPLETE", "independent demo oracle evaluated"
+            accounting_state, accounting_doc = reconcile_run_accounting(
+                execution_backend=current["execution_backend"],
+                step_budget=current["step_budget"],
+                reserved_cpu_ms=current["reserved_cpu_ms"],
+                terminal_status=status,
+                cancel_requested=current["cancel_requested"],
+                valid_witness=valid_witness,
+                consumed_steps=consumed if valid_witness else None,
+                measurements=measurements,
+            )
+            measured = accounting_doc["measured"]
             updated = conn.execute(
                 """
                 UPDATE experiment_run SET status = %s, verdict = %s,
                     witness = %s, consumed_steps = %s,
+                    accounting_state = %s,
+                    measured_worker_cpu_ms = %s,
+                    measured_app_wall_ms = %s,
+                    measured_db_active_ms = %s,
+                    resource_accounting = %s,
                     version = version + 1, lease_owner = NULL,
                     lease_until = NULL, updated_at = now()
                 WHERE id = %s RETURNING *
                 """,
-                (status, verdict, Jsonb(witness) if valid_witness else None, consumed, run_id),
+                (
+                    status,
+                    verdict,
+                    Jsonb(witness) if valid_witness else None,
+                    consumed,
+                    accounting_state,
+                    measured["process"]["worker_cpu_ms"],
+                    measured["application"]["wall_ms"],
+                    measured["database"]["active_ms"],
+                    Jsonb(accounting_doc),
+                    run_id,
+                ),
             ).fetchone()
             _event(conn, updated, note)
             return True
@@ -1380,16 +1711,34 @@ class Ledger:
                     return _public(row, self.project_id)
                 raise ValueError("Run changed; refresh before cancelling")
             if row["status"] in ("PENDING", "RUNNING"):
-                status = "CANCELLED" if row["status"] == "PENDING" else "CANCELLING"
-                row = conn.execute(
-                    """
-                    UPDATE experiment_run SET
-                        cancel_requested = TRUE, status = %s,
-                        version = version + 1, updated_at = now()
-                    WHERE id = %s RETURNING *
-                    """,
-                    (status, run_id),
-                ).fetchone()
+                if row["status"] == "PENDING":
+                    status = "CANCELLED"
+                    accounting_state = "RELEASED"
+                    accounting_doc = released_run_accounting(
+                        execution_backend=row["execution_backend"],
+                        step_budget=row["step_budget"],
+                        reserved_cpu_ms=row["reserved_cpu_ms"],
+                    )
+                    row = conn.execute(
+                        """
+                        UPDATE experiment_run SET
+                            cancel_requested = TRUE, status = %s,
+                            accounting_state = %s, resource_accounting = %s,
+                            version = version + 1, updated_at = now()
+                        WHERE id = %s RETURNING *
+                        """,
+                        (status, accounting_state, Jsonb(accounting_doc), run_id),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        """
+                        UPDATE experiment_run SET
+                            cancel_requested = TRUE, status = 'CANCELLING',
+                            version = version + 1, updated_at = now()
+                        WHERE id = %s RETURNING *
+                        """,
+                        (run_id,),
+                    ).fetchone()
                 _event(conn, row, "operator requested cancellation")
             return _public(row, self.project_id)
 
@@ -1398,21 +1747,32 @@ class Ledger:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id FROM experiment_run
+                SELECT id, execution_backend, step_budget, reserved_cpu_ms
+                FROM experiment_run
                 WHERE status = 'CANCELLING' AND lease_until < now()
                 ORDER BY lease_until, created_at, id
                 LIMIT 32 FOR UPDATE SKIP LOCKED
                 """
             ).fetchall()
             for item in rows:
+                accounting_doc = uncertain_run_accounting(
+                    execution_backend=item["execution_backend"],
+                    step_budget=item["step_budget"],
+                    reserved_cpu_ms=item["reserved_cpu_ms"],
+                    reason=(
+                        "Cancelled claim expired before reconciliation; "
+                        "actual expenditure is uncertain"
+                    ),
+                )
                 updated = conn.execute(
                     """
                     UPDATE experiment_run SET status = 'UNKNOWN', verdict = 'UNKNOWN',
+                        accounting_state = 'UNCERTAIN', resource_accounting = %s,
                         version = version + 1, lease_owner = NULL, lease_until = NULL,
                         updated_at = now()
                     WHERE id = %s RETURNING *
                     """,
-                    (item["id"],),
+                    (Jsonb(accounting_doc), item["id"]),
                 ).fetchone()
                 _event(conn, updated, "cancelled claim expired; effect ambiguous")
             return len(rows)

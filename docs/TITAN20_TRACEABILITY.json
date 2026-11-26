@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "03b3fad5170c231ddd84220db1e3917562ba2da5",
+  "reviewed_head": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
   "last_successful_ci": {
-    "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
-    "run_id": 45839727374
+    "commit": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
+    "run_id": 45851384127
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -28,6 +28,7 @@
         "backend/tests/test_store.py",
         "backend/tests/test_backup.py",
         "backend/tests/test_backup_failure_paths.py",
+        "backend/tests/test_windows_backup.py",
         "backend/tests/test_cold_restore.py",
         "backend/tests/test_migration_rollback.py",
         "ci/tests/test_gate_validation.py"
@@ -57,6 +58,11 @@
           "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
           "run_id": 45839727374,
           "acceptance_record": "Partial B1 evidence: the mandatory release passed with synchronous standby promotion, two acknowledged runs recovered, and stale and duplicate receipts rejected on a disposable single host."
+        },
+        {
+          "commit": "de83579e8130cc48c30c6d7aabd0b8cc57de9041",
+          "run_id": 45846867286,
+          "acceptance_record": "Partial B1 evidence: Windows backup ACL protection and all 10 mandatory CI release-gate jobs passed."
         }
       ]
     },
@@ -203,6 +209,7 @@
         "B1"
       ],
       "code": [
+        "backend/clashbolt/accounting.py",
         "backend/clashbolt/store.py",
         "backend/clashbolt/worker.py"
       ],
@@ -211,7 +218,8 @@
         "backend/tests/test_queue_metrics.py",
         "backend/tests/test_multi_project_fair_load.py",
         "backend/tests/test_retry_storm.py",
-        "backend/tests/test_worker_deadlocks.py"
+        "backend/tests/test_worker_deadlocks.py",
+        "backend/tests/test_resource_accounting.py"
       ],
       "acceptance": "Bounded fair load, queue age, start latency and overspend rate",
       "blockers": [
@@ -523,6 +531,7 @@
         "B1"
       ],
       "code": [
+        "backend/clashbolt/accounting.py",
         "backend/clashbolt/ops_alerts.py",
         "backend/clashbolt/metrics.py",
         "frontend/src/RecentRuns.tsx"
@@ -530,13 +539,20 @@
       "tests": [
         "backend/tests/test_active_operations.py",
         "backend/tests/test_ops_alerts.py",
+        "backend/tests/test_resource_accounting.py",
         "frontend/e2e/diagnostics.accounts.spec.ts"
       ],
       "acceptance": "Measure cancellation latency and authoritative state agreement",
       "blockers": [
         "Independent operational workload and recovery validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "7eb1bd6894f73bedc30c6d7aabd0b8cc57de9041",
+          "run_id": 45851384127,
+          "acceptance_record": "Partial P5 evidence: versioned cancellation fencing and authoritative timeline recovery passed all 10 mandatory CI release-gate jobs."
+        }
+      ]
     },
     {
       "id": "S1",

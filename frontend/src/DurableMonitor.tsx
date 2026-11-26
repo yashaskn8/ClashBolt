@@ -3,6 +3,36 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 const runStatuses = ['PENDING', 'RUNNING', 'CANCELLING', 'CANCELLED', 'COMPLETE', 'UNKNOWN'] as const
 type RunStatus = typeof runStatuses[number]
 
+export type ResourceAccounting = {
+  reservation: { step_budget: number; cpu_ms: number; disposable_databases: number }
+  measured: {
+    process: {
+      worker_cpu_ms: number | null
+      child_cpu_ms: number | null
+      total_cpu_ms: number | null
+      status: string
+    }
+    application: { consumed_steps: number | null; wall_ms: number | null; status: string }
+    database: {
+      active_ms: number | null
+      xact_commit: number | null
+      xact_rollback: number | null
+      blks_hit: number | null
+      blks_read: number | null
+      database_bytes: number | null
+      status: string
+    }
+  }
+  estimated: { provider_cost_usd: number | null; status: string; reason?: string }
+  reconciliation: {
+    status: string
+    overspent: boolean | null
+    overspend_reasons: string[]
+    cpu_delta_ms: number | null
+    uncertainty_reason: string | null
+  }
+}
+
 export type DurableRun = {
   run_id: string
   variant: 'racy' | 'locked'
@@ -14,6 +44,9 @@ export type DurableRun = {
   execution_backend: 'memory' | 'native-postgresql'
   step_budget: number
   consumed_steps: number
+  reserved_cpu_ms?: number
+  accounting_state?: string
+  resource_accounting?: ResourceAccounting | null
   witness: {
     variant: 'racy' | 'locked'
     schedule: 'overlap' | 'serial'
@@ -55,17 +88,23 @@ type Props = {
   accountMode: boolean
 }
 
+function formatMs(value: number | null | undefined, fallback = 'unavailable') {
+  return typeof value === 'number' ? `${value} ms` : fallback
+}
+
 export default function DurableMonitor({
   initial, onUpdate, operatorToken, canOperate, accountMode,
 }: Props) {
   const [events, setEvents] = useState<Event[]>([])
   const [error, setError] = useState('')
+  const [actionNotice, setActionNotice] = useState('')
   const [exportDigest, setExportDigest] = useState<string | null>(null)
   const runId = initial.run_id
   const refreshRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     setExportDigest(null)
+    setActionNotice('')
   }, [runId, initial.version])
 
   useEffect(() => {
@@ -196,6 +235,7 @@ export default function DurableMonitor({
   }, [runId, onUpdate])
 
   async function cancel() {
+    setActionNotice('')
     try {
       const response = await fetch(`/api/runs/${runId}/cancel`, {
         method: 'POST',
@@ -205,6 +245,10 @@ export default function DurableMonitor({
         },
         body: JSON.stringify({ expected_run_version: initial.version }),
       })
+      if (response.status === 409) {
+        setActionNotice('Run state changed before cancellation; reloaded authoritative state.')
+        return
+      }
       if (!response.ok) throw new Error('Cancellation request failed')
       const updated = (await response.json()) as DurableRun
       onUpdate((current) => (
@@ -212,7 +256,7 @@ export default function DurableMonitor({
           ? updated : current
       ))
     } catch {
-      setError('Cancellation request could not be confirmed.')
+      setActionNotice('Cancellation request could not be confirmed.')
     } finally {
       // Never trust a local guess: recover the run and timeline from the ledger.
       refreshRef.current()
@@ -287,6 +331,17 @@ export default function DurableMonitor({
   }
 
   const finished = ['COMPLETE', 'UNKNOWN', 'CANCELLED'].includes(initial.status)
+  const accounting = initial.resource_accounting
+  const cancelReqEvent = events.find((event) => event.note === 'operator requested cancellation')
+  const cancelDoneEvent = cancelReqEvent
+    ? events.find((event) =>
+        event.version >= cancelReqEvent.version &&
+        (event.status === 'CANCELLED' || event.status === 'UNKNOWN')
+      )
+    : undefined
+  const cancelLatencySeconds = cancelReqEvent && cancelDoneEvent
+    ? Math.max(0, (Date.parse(cancelDoneEvent.created_at) - Date.parse(cancelReqEvent.created_at)) / 1000)
+    : null
 
   return (
     <section id="run-timeline" className="panel operations" aria-labelledby="operations-title">
@@ -304,6 +359,28 @@ export default function DurableMonitor({
         <span>{initial.execution_backend === 'native-postgresql'
           ? 'Disposable PostgreSQL target' : 'In-memory target'}</span>
       </div>
+      {accounting && (
+        <div className="rule-info" aria-label="Run resource accounting">
+          <span>
+            RESOURCE ACCOUNTING / {accounting.reconciliation.status}
+            {accounting.reconciliation.overspent === true ? ' · OVERSPENT' : ''}
+          </span>
+          <strong>
+            Reserved {accounting.reservation.cpu_ms} ms CPU ·
+            Worker CPU: {formatMs(accounting.measured.process.worker_cpu_ms)} ·
+            Wall: {formatMs(accounting.measured.application.wall_ms)} ·
+            Target DB active: {formatMs(
+              accounting.measured.database.active_ms,
+              accounting.measured.database.status === 'NOT_APPLICABLE' ? 'not applicable' : 'unavailable',
+            )}
+          </strong>
+          <small>
+            Provider cost: unavailable ·
+            {cancelLatencySeconds !== null ? ` Cancel latency: ${cancelLatencySeconds.toFixed(3)}s ·` : ''}
+            {accounting.reconciliation.uncertainty_reason ?? ' All applicable resource layers measured.'}
+          </small>
+        </div>
+      )}
       {initial.status === 'PENDING' && (
         <p className="help-text">Queued. Start the separate Python worker to process this run.</p>
       )}
@@ -337,7 +414,15 @@ export default function DurableMonitor({
           Verified synthetic ZIP SHA256: {exportDigest}
         </p>
       )}
-      {error && <p className="error" role="alert">{error}</p>}
+      {actionNotice && <p className="error" role="status">{actionNotice}</p>}
+      {error && (
+        <div className="error" role="alert">
+          <span>{error}</span>{' '}
+          <button type="button" className="secondary-button" onClick={() => refreshRef.current()}>
+            Refresh from ledger
+          </button>
+        </div>
+      )}
       <ol className="transition-list">
         {events.map((event) => (
           <li key={event.version}>

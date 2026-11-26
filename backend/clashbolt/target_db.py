@@ -10,6 +10,7 @@ import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from ipaddress import ip_address
+from typing import Callable
 from uuid import UUID
 
 import psycopg
@@ -62,6 +63,12 @@ class TargetLease:
     database: str
     role: str
     url: str = field(repr=False)
+    _sampler: Callable[[], dict | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def sample_stats(self) -> dict | None:
+        return self._sampler() if self._sampler is not None else None
 
 
 
@@ -164,8 +171,32 @@ def disposable_target(target_admin_dsn: str, control_dsn: str, run_id: UUID):
             host=admin.info.host, hostaddr=admin.info.hostaddr, port=admin.info.port,
             dbname=dbname, user=role, password=password, **transport,
         )
+        def _sample_stats() -> dict | None:
+            try:
+                admin.execute("SELECT pg_stat_force_next_flush()")
+                row = admin.execute(
+                    """
+                    SELECT active_time, xact_commit, xact_rollback,
+                           blks_hit, blks_read, pg_database_size(datname) AS database_bytes
+                    FROM pg_stat_database WHERE datname = %s
+                    """,
+                    (dbname,),
+                ).fetchone()
+            except psycopg.Error:
+                return None
+            if not row or any(value is None for value in row):
+                return None
+            return {
+                "active_ms": round(max(0.0, float(row[0])), 3),
+                "xact_commit": int(row[1]),
+                "xact_rollback": int(row[2]),
+                "blks_hit": int(row[3]),
+                "blks_read": int(row[4]),
+                "database_bytes": int(row[5]),
+            }
+
         admin.execute(sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(role)))
-        yield TargetLease(database=dbname, role=role, url=url)
+        yield TargetLease(database=dbname, role=role, url=url, _sampler=_sample_stats)
     finally:
         try:
             if database_created:

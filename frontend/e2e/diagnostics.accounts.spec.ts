@@ -78,6 +78,10 @@ test('operator diagnostics fail closed on a rejected refresh', async ({ page }) 
   await expect(page.getByText(
     'Operator diagnostics unavailable; current state is unconfirmed.',
   )).toBeVisible()
+  // Recoverable operations presentation: clicking Retry refresh recovers when healthy.
+  requests = 0
+  await page.getByRole('button', { name: 'Retry refresh' }).click()
+  await expect(alert).toBeVisible({ timeout: 10_000 })
 })
 
 test('a failed run-index refresh removes the previously selectable run', async ({ page }) => {
@@ -170,3 +174,39 @@ test('stale operator diagnostics do not survive account replacement', async ({ p
   await expect(page.locator('.recent-list button')).toHaveCount(0)
 })
 
+
+test('live operator workspace displays project budget, resource accounting, and cancellation latency', async ({
+  page,
+}) => {
+  test.setTimeout(90_000)
+  await page.goto('/')
+  await page.getByLabel('Account name').fill('browser.operator')
+  await page.getByLabel('Account password').fill('browser-local-password-000')
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
+  await expect(page.getByLabel('Project resource budget')).toBeVisible({ timeout: 10_000 })
+
+  await page.getByRole('button', { name: /Validate candidate rule/ }).click()
+  await expect(page.getByText('RULE STATUS: PROPOSED')).toBeVisible()
+  await page.getByLabel('Account name').fill('browser.reviewer')
+  await page.getByLabel('Account password').fill('browser-local-password-000')
+  await page.getByRole('button', { name: 'Switch named account' }).click()
+  await expect(page.getByText('Signed in: browser.reviewer (reviewer)')).toBeVisible()
+  await page.getByRole('button', { name: /Approve exact hash/ }).click()
+  await expect(page.getByText('RULE STATUS: APPROVED')).toBeVisible()
+
+  await page.getByLabel('Account name').fill('browser.operator')
+  await page.getByLabel('Account password').fill('browser-local-password-000')
+  await page.getByRole('button', { name: 'Switch named account' }).click()
+  await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
+
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  await expect(page.locator('.run-status')).toHaveText('COMPLETE', { timeout: 20_000 })
+  const accounting = page.getByLabel('Run resource accounting')
+  await expect(accounting).toBeVisible()
+  await expect(accounting).toContainText('Reserved 3000 ms CPU')
+  await expect(accounting).toContainText('Provider cost: unavailable')
+  await expect(page.getByLabel('Measured resources and cancellation latency')).toContainText(
+    'Worker CPU',
+  )
+})

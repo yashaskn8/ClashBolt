@@ -58,6 +58,7 @@ root_package = "clashbolt"
 name = "Core modules do not depend on application infrastructure"
 type = "forbidden"
 source_modules = [
+  "clashbolt.accounting",
   "clashbolt.agent_history",
   "clashbolt.evaluation_stats",
   "clashbolt.experiment",

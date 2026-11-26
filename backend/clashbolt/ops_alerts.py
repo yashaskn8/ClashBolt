@@ -47,6 +47,34 @@ def diagnose_operations(snapshot: dict) -> dict:
             "code": "UNKNOWN_VERIFICATION_OUTCOMES",
             "message": "Verification outcomes are unknown; review their recorded evidence.",
         })
+    resources = snapshot.get("resources")
+    if isinstance(resources, dict):
+        runs_7d = resources.get("runs_7d") or {}
+        if runs_7d.get("overspent_count", 0) > 0:
+            alerts.append({
+                "code": "RESOURCE_OVERSPEND_DETECTED",
+                "message": (
+                    "Recent runs exceeded their reserved resource budget; review accounting."
+                ),
+            })
+        model_budget = resources.get("model_budget") or {}
+        if runs_7d.get("uncertain_count", 0) > 0 or model_budget.get("calls_unknown", 0) > 0:
+            alerts.append({
+                "code": "UNCERTAIN_RESOURCE_ACCOUNTING",
+                "message": (
+                    "Resource expenditure is uncertain for incomplete or unknown executions."
+                ),
+            })
+    cancellation = snapshot.get("cancellation")
+    if isinstance(cancellation, dict):
+        oldest_cancel = cancellation.get("oldest_in_flight_seconds")
+        if oldest_cancel is not None and oldest_cancel >= 30:
+            alerts.append({
+                "code": "CANCELLATION_PENDING_TOO_LONG",
+                "message": (
+                    "An in-flight cancellation has waited at least 30 seconds for reconciliation."
+                ),
+            })
     return {
         "status": "ATTENTION" if alerts else "NORMAL",
         "alerts": alerts,

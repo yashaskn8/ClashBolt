@@ -21,7 +21,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from clashbolt.policy import Policy
-from clashbolt.store import SCHEMA_LOCK_ID, _record_schema_revision
+from clashbolt.store import _PROJECT_SCHEMA_NAME, SCHEMA_LOCK_ID, _record_schema_revision
 
 ROLES = ("viewer", "operator", "reviewer")
 USERNAME = re.compile(r"[a-z][a-z0-9._-]{2,47}\Z")
@@ -224,6 +224,22 @@ class AccountStore(Policy):
                     """
                 )
             _record_schema_revision(conn, "accounts", ACCOUNT_SCHEMA_VERSION)
+            for workspace in conn.execute(
+                """
+                SELECT schema_name FROM public.project_workspace
+                WHERE schema_name != 'public' ORDER BY project_id
+                """
+            ).fetchall():
+                schema_name = workspace["schema_name"]
+                if not _PROJECT_SCHEMA_NAME.fullmatch(schema_name):
+                    raise ValueError("Untrusted registered project schema")
+                conn.execute(
+                    sql.SQL("SET LOCAL search_path TO {}").format(
+                        sql.Identifier(schema_name)
+                    )
+                )
+                self._apply_policy_schema(conn)
+            conn.execute("SET LOCAL search_path TO public")
 
     def create_project(self, project_id: str) -> str:
         """Atomically create a fresh isolated project with its complete policy.

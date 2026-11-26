@@ -21,6 +21,11 @@ from psycopg import Error as DatabaseError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from clashbolt.accounting import (
+    DEFAULT_RESERVED_CPU_MS,
+    MAX_RESERVED_CPU_MS,
+    MIN_RESERVED_CPU_MS,
+)
 from clashbolt.accounts import (
     ACCOUNT_SCHEMA_VERSION,
     AccountStore,
@@ -105,12 +110,18 @@ class RunRequest(ExperimentRequest):
     step_budget: int = Field(default=4, ge=4, le=32)
     approved_oracle_id: UUID
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
+    reserved_cpu_ms: StrictInt = Field(
+        default=DEFAULT_RESERVED_CPU_MS, ge=MIN_RESERVED_CPU_MS, le=MAX_RESERVED_CPU_MS
+    )
 
 
 class RunPreviewRequest(ExperimentRequest):
     step_budget: int = Field(default=4, ge=4, le=32)
     approved_oracle_id: UUID | None = None
     execution_backend: Literal["memory", "native-postgresql"] = "memory"
+    reserved_cpu_ms: StrictInt = Field(
+        default=DEFAULT_RESERVED_CPU_MS, ge=MIN_RESERVED_CPU_MS, le=MAX_RESERVED_CPU_MS
+    )
 
 
 class CancelRequest(BaseModel):
@@ -700,6 +711,7 @@ def create_app() -> FastAPI:
             approved_oracle_id=request.approved_oracle_id,
             execution_backend=request.execution_backend,
             step_budget=request.step_budget,
+            reserved_cpu_ms=request.reserved_cpu_ms,
         )
 
     @app.post("/api/runs", status_code=201)
@@ -717,6 +729,7 @@ def create_app() -> FastAPI:
                 step_budget=request.step_budget,
                 approved_oracle_id=request.approved_oracle_id,
                 execution_backend=request.execution_backend,
+                reserved_cpu_ms=request.reserved_cpu_ms,
             )
         except ValueError as error:
             status = 429 if "quota" in str(error).lower() else 409
