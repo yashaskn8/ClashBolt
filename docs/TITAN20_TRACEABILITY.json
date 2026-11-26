@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "8b7a08d0ed85122e34e3706951c6f24dd7e2fcdf",
+  "reviewed_head": "d0548c662d51448b1440299fe75bbc27c8dd8aa3",
   "last_successful_ci": {
-    "commit": "d9e3231c17a0b8a31202df1b9830af6080b01e82",
-    "run_id": 45602906318
+    "commit": "d0548c662d51448b1440299fe75bbc27c8dd8aa3",
+    "run_id": 45828804758
   },
   "scope": "File-level candidate traceability; mappings are not acceptance evidence.",
   "requirements": [
@@ -12,6 +12,7 @@
       "id": "B1",
       "title": "Durable Experiment Ledger",
       "pdf_pages": [
+        14,
         24,
         26
       ],
@@ -25,6 +26,8 @@
       ],
       "tests": [
         "backend/tests/test_store.py",
+        "backend/tests/test_backup.py",
+        "backend/tests/test_backup_failure_paths.py",
         "backend/tests/test_cold_restore.py",
         "backend/tests/test_migration_rollback.py"
       ],

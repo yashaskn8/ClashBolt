@@ -27,6 +27,21 @@ All observed verdicts are limited to a shipped synthetic fixture. Partial is not
 | P5 Live Run Operations | Cancellation, SSE reconnect, per-project status and run projections, model uncertainty, worker and queue gauges, quarantine diagnostics, fail-closed operator/read-index refresh, serialized polling and identity-fenced client state | Real CPU/provider cost, notification delivery, production alert tuning and load-tested UX |
 | S1 Semantic Conflict Frontier | Deterministic receipt-ranked inventory conflict frontier with exploration penalty and operator-gated typed plans | Model-guided novel conflict discovery and independent equal-budget held-out superiority |
 
+## Traceability cycles and streamed backups (26 November 2026)
+
+The traceability validator now rejects multi-track cycles and reports which
+requirements form the cycle. Its 25 focused tests covered all 60 statements and
+32 branches in `ci/check_traceability.py`.
+
+B1 archive creation and disposable restore use bounded SHA-256 reads.
+The restore passes the already verified archive descriptor to `pg_restore` and
+retains the 100 MB restore limit. Seven focused cases passed on Windows,
+including a native restore and cleanup on an independent PostgreSQL 17.11
+cluster. In a seven-run local microbenchmark on a 64 MiB file, median peak
+traced Python allocation was 2.01 MiB, down from 64.01 MiB. This measurement
+covers checksum reading. B1 still requires independent failover and
+production migration validation.
+
 ## Engineering toolchain (26 November 2026)
 
 The backend CI job checks the `clashbolt` import contracts for core modules and

@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
 TRACKS = {f"B{i}" for i in range(1, 8)} | {f"A{i}" for i in range(1, 8)} | {
@@ -27,6 +28,7 @@ def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
     if len(ids) != len(TRACKS) or set(ids) != TRACKS:
         raise ValueError("Expected exactly the twenty TITAN-20 tracks")
     reverse: dict[str, list[str]] = {}
+    dependencies: dict[str, list[str]] = {}
     for row in rows:
         track = row["id"]
         if row["status"] not in STATES or not row["acceptance"].strip():
@@ -38,6 +40,7 @@ def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
         deps = row["dependencies"]
         if len(deps) != len(set(deps)) or track in deps or not set(deps) <= TRACKS:
             raise ValueError(f"Invalid dependencies: {track}")
+        dependencies[track] = deps
         if row["status"] == "VERIFIED":
             if row["blockers"] or not row["evidence"] or any(
                 not SHA.fullmatch(item.get("commit", ""))
@@ -59,6 +62,11 @@ def validate(ledger: dict, tracked: set[str]) -> dict[str, list[str]]:
                 if not path.startswith(prefixes) or path not in tracked:
                     raise ValueError(f"Untracked or misplaced {kind} link: {track}: {path}")
                 reverse.setdefault(path, []).append(track)
+    try:
+        TopologicalSorter(dependencies).prepare()
+    except CycleError as error:
+        cycle = " -> ".join(error.args[1])
+        raise ValueError(f"Cyclic TITAN-20 dependencies: {cycle}") from error
     return {path: sorted(ids) for path, ids in sorted(reverse.items())}
 
 

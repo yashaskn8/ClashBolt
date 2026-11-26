@@ -33,8 +33,11 @@ def test_custom_archive_roundtrip_read_and_manifest(tmp_path):
 
 
 
-def test_disposable_restore_drill_does_not_change_control_database(tmp_path):
+def test_streaming_disposable_restore_drill_does_not_change_control_database(
+    tmp_path, monkeypatch,
+):
     import psycopg
+    from clashbolt import backup
     from clashbolt.policy import Policy
 
     dsn = os.getenv("CLASHBOLT_TEST_DATABASE_URL")
@@ -44,9 +47,19 @@ def test_disposable_restore_drill_does_not_change_control_database(tmp_path):
     Policy(dsn).migrate()
     archive = tmp_path / "control.dump"
     backup_control(archive, dsn)
-    from clashbolt.backup import verify_disposable_restore
+    run = backup.subprocess.run
 
-    result = verify_disposable_restore(archive, dsn, target)
+    def check_restore_input(command, **kwargs):
+        assert command[0] == "pg_restore"
+        assert str(archive) not in command
+        stream = kwargs["stdin"]
+        assert stream.tell() == 0
+        assert stream.read(5) == b"PGDMP"
+        stream.seek(0)
+        return run(command, **kwargs)
+
+    monkeypatch.setattr(backup.subprocess, "run", check_restore_input)
+    result = backup.verify_disposable_restore(archive, dsn, target)
     assert result["status"] == "RESTORE_VERIFIED"
     assert result["restored_schema_revisions"]["control"] >= 1
     with psycopg.connect(target, autocommit=True) as conn:
@@ -57,4 +70,4 @@ def test_disposable_restore_drill_does_not_change_control_database(tmp_path):
         assert exists is None
     archive.write_bytes(b"not the original archive")
     with pytest.raises(ValueError, match="manifest"):
-        verify_disposable_restore(archive, dsn, target)
+        backup.verify_disposable_restore(archive, dsn, target)

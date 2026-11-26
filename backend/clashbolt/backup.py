@@ -13,6 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
+from typing import BinaryIO
 from uuid import uuid4
 
 import psycopg
@@ -20,6 +21,9 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from clashbolt.target_db import validate_target_cluster
+
+RESTORE_ARCHIVE_LIMIT = 100_000_000
+MANIFEST_LIMIT = 16_384
 
 
 def _loopback(value: str) -> bool:
@@ -56,6 +60,17 @@ def _database_args(dsn: str) -> tuple[list[str], str]:
         "--username", config["user"], "--dbname", database,
     ]
     return command, config["password"]
+
+
+def _archive_checksum(stream: BinaryIO, *, size_limit: int | None = None) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := stream.read(1024 * 1024):
+        size += len(chunk)
+        if size_limit is not None and size > size_limit:
+            raise ValueError("Restore drills are limited to 100 MB archives")
+        digest.update(chunk)
+    return size, digest.hexdigest()
 
 
 def backup_control(destination: Path, dsn: str) -> dict:
@@ -99,13 +114,15 @@ def backup_control(destination: Path, dsn: str) -> dict:
             )
         except (OSError, subprocess.SubprocessError) as error:
             raise RuntimeError("Native PostgreSQL backup or integrity check failed") from error
-        data = Path(temporary).read_bytes()
-        if not data.startswith(b"PGDMP"):
-            raise ValueError("Backup does not contain a PostgreSQL custom archive")
+        with Path(temporary).open("rb") as archive:
+            if archive.read(5) != b"PGDMP":
+                raise ValueError("Backup does not contain a PostgreSQL custom archive")
+            archive.seek(0)
+            archive_size, archive_checksum = _archive_checksum(archive)
         manifest = {
             "format": "clashbolt-control-backup-v1",
-            "archive_sha256": hashlib.sha256(data).hexdigest(),
-            "archive_bytes": len(data),
+            "archive_sha256": archive_checksum,
+            "archive_bytes": archive_size,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "restore_status": "NOT_ATTEMPTED",
             "contains_sensitive_data": True,
@@ -141,24 +158,35 @@ def verify_disposable_restore(
     manifest_path = archive.with_suffix(".sha256.json")
     if not archive.is_file() or not manifest_path.is_file():
         raise ValueError("Archive and SHA-256 manifest are both required")
-    if archive.stat().st_size > 100_000_000:
-        raise ValueError("Restore drills are limited to 100 MB archives")
-    if manifest_path.stat().st_size > 16_384:
-        raise ValueError("Backup manifest exceeds the size limit")
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (ValueError, RecursionError) as error:
-        raise ValueError("Invalid backup manifest") from error
-    if (
-        not isinstance(manifest, dict)
-        or type(manifest.get("archive_bytes")) is not int
-        or manifest.get("format") != "clashbolt-control-backup-v1"
-        or manifest.get("archive_bytes") != archive.stat().st_size
-        or manifest.get("archive_sha256")
-            != hashlib.sha256(archive.read_bytes()).hexdigest()
-    ):
-        raise ValueError("Archive does not match the expected backup manifest")
+    # pg_restore reads the same descriptor and must see the rewind at the OS level.
+    with archive.open("rb", buffering=0) as stream:
+        size = os.fstat(stream.fileno()).st_size
+        if size > RESTORE_ARCHIVE_LIMIT:
+            raise ValueError("Restore drills are limited to 100 MB archives")
+        with manifest_path.open("rb") as sidecar:
+            raw_manifest = sidecar.read(MANIFEST_LIMIT + 1)
+        if len(raw_manifest) > MANIFEST_LIMIT:
+            raise ValueError("Backup manifest exceeds the size limit")
+        try:
+            manifest = json.loads(raw_manifest.decode("utf-8"))
+        except (ValueError, RecursionError) as error:
+            raise ValueError("Invalid backup manifest") from error
+        if (
+            not isinstance(manifest, dict)
+            or type(manifest.get("archive_bytes")) is not int
+            or manifest.get("format") != "clashbolt-control-backup-v1"
+            or manifest.get("archive_bytes") != size
+        ):
+            raise ValueError("Archive does not match the expected backup manifest")
+        if _archive_checksum(stream, size_limit=RESTORE_ARCHIVE_LIMIT) != (
+            size, manifest.get("archive_sha256"),
+        ):
+            raise ValueError("Archive does not match the expected backup manifest")
+        stream.seek(0)
+        return _restore_verified_archive(stream, target_admin_dsn)
 
+
+def _restore_verified_archive(archive: BinaryIO, target_admin_dsn: str) -> dict:
     config = conninfo_to_dict(target_admin_dsn)
     if not config.get("user") or not config.get("password"):
         raise ValueError("A dedicated native target administrator is required")
@@ -181,13 +209,13 @@ def verify_disposable_restore(
             try:
                 subprocess.run(
                     [
-                        "pg_restore", "--exit-on-error", "--no-owner", "--no-acl",
+                        "pg_restore", "--format=custom", "--exit-on-error",
+                        "--no-owner", "--no-acl",
                         "--no-password", "--host", config["host"],
                         "--port", str(config.get("port", "5432")),
                         "--username", config["user"], "--dbname", scratch,
-                        str(archive),
                     ],
-                    env=environment, check=True, capture_output=True, timeout=120,
+                    stdin=archive, env=environment, check=True, capture_output=True, timeout=120,
                 )
             except (OSError, subprocess.SubprocessError) as error:
                 raise RuntimeError("Disposable restore could not complete") from error

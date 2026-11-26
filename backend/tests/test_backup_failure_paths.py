@@ -4,6 +4,7 @@ The first tests use a simulated native dump utility. Restore failure cleanup
 is exercised against only the two disposable PostgreSQL CI clusters.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -46,7 +47,7 @@ def test_backup_refuses_bad_paths_before_creating_archive(tmp_path):
         backup.backup_control(dest, dsn)
 
 
-def _mock_native_dump(monkeypatch, *, error=False, invalid=False):
+def _mock_native_dump(monkeypatch, *, error=False, invalid=False, payload=b"PGDMPfixed"):
     commands = []
     environments = []
 
@@ -58,7 +59,7 @@ def _mock_native_dump(monkeypatch, *, error=False, invalid=False):
         if command[0] == "pg_dump":
             path = next(value.split("=", 1)[1] for value in command
                         if value.startswith("--file="))
-            Path(path).write_bytes(b"invalid-dump" if invalid else b"PGDMPfixed")
+            Path(path).write_bytes(b"invalid-dump" if invalid else payload)
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(backup.subprocess, "run", simulate)
@@ -136,6 +137,56 @@ def test_mock_native_dump_generates_private_manifest_without_credentials(
     assert dest.read_bytes() == b"PGDMPfixed"
     assert json.loads((tmp_path / "control.sha256.json").read_text()) == result
     assert dest.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("size", [5, 1024 * 1024, 2 * 1024 * 1024 + 13])
+def test_streaming_backup_hashes_archive_without_read_bytes(tmp_path, monkeypatch, size):
+    payload = b"PGDMP" + b"x" * (size - 5)
+    _mock_native_dump(monkeypatch, payload=payload)
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda _path: pytest.fail("Archive must be read in bounded chunks"),
+    )
+    destination = tmp_path / "control.dump"
+    manifest = backup.backup_control(
+        destination, "postgresql://worker:local-secret@127.0.0.1/control",
+    )
+    assert manifest["archive_bytes"] == size
+    assert manifest["archive_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert destination.stat().st_size == size
+
+
+@pytest.mark.parametrize("damage", ["wrong_size", "wrong_digest", "over_restore_limit"])
+def test_streaming_restore_refuses_bad_archive_before_database_access(
+    tmp_path, monkeypatch, damage,
+):
+    payload = b"PGDMP" + b"x" * (2 * 1024 * 1024)
+    archive = tmp_path / "control.dump"
+    archive.write_bytes(payload)
+    receipt = {
+        "format": "clashbolt-control-backup-v1",
+        "archive_bytes": len(payload),
+        "archive_sha256": hashlib.sha256(payload).hexdigest(),
+    }
+    if damage == "wrong_size":
+        receipt["archive_bytes"] += 1
+    elif damage == "wrong_digest":
+        receipt["archive_sha256"] = "0" * 64
+    else:
+        with archive.open("r+b") as stream:
+            stream.truncate(100_000_001)
+    archive.with_suffix(".sha256.json").write_text(json.dumps(receipt), encoding="utf-8")
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda _path: pytest.fail("Archive must be read in bounded chunks"),
+    )
+    monkeypatch.setattr(
+        backup.psycopg, "connect", lambda *_a, **_k: pytest.fail("No database access"),
+    )
+    message = "100 MB" if damage == "over_restore_limit" else "expected backup manifest"
+    with pytest.raises(ValueError, match=message):
+        backup.verify_disposable_restore(
+            archive, "postgresql://u:p@127.0.0.1:5432/control",
+            "postgresql://u:p@127.0.0.1:5433/postgres",
+        )
 
 
 def test_restore_refuses_absent_and_corrupt_manifests_without_touching_target(
