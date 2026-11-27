@@ -193,10 +193,11 @@ JSON-serializable. Native PostgreSQL tests remain responsible for concurrent
 transaction and worker behavior. These changes add verification infrastructure
 and carry no TITAN-20 acceptance claims.
 
-Schemathesis is deferred. The inspected FastAPI schema has 55 operations and
-17 declared request bodies. Successful responses lack structured schemas, so
-generation would mainly exercise request validation already covered by pytest.
-Revisit when the API declares more response contracts.
+Schemathesis is deferred. The current OpenAPI document lists 55 operations and
+18 declared request bodies. Successful JSON responses have empty schemas or
+permit arbitrary object fields. Generated requests would mainly add input
+validation cases, which pytest already covers. Revisit when the API declares
+field-level success response schemas.
 
 ## CI coverage count reconciliation (25 November 2026)
 

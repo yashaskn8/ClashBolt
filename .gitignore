@@ -4,6 +4,7 @@ __pycache__/
 .ruff_cache/
 .hypothesis/
 .importlintercache/
+.import_linter_cache/
 .codegraph/
 .venv/
 *.egg-info/

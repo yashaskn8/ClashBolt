@@ -59,29 +59,34 @@ pragmatic engineering guidelines. It is not an official Andrej Karpathy document
   `/ponytail-audit`, `/ponytail-debt`, `/ponytail-gain` and `/ponytail-help`.
   Use `/ponytail ultra` for demonstrated
   excess complexity. Preserve concurrency, transaction and validation guarantees.
-- **Engineering skills:** Antigravity CLI 1.5.6 registers the `agent-skills`
-  commands by skill name. Start with `/using-agent-skills`. Use
-  `/incremental-implementation` for changes, `/test-driven-development` and
-  `/debugging-and-error-recovery` for regressions, `/doubt-driven-development`
-  for consequential assumptions, and `/code-review-and-quality` before commits.
-  Apply the CI, security, accessibility, browser or frontend skills when their
+- **Engineering skills:** Antigravity CLI 1.5.6 exposes the `agent-skills`
+  plugin as unprefixed slash commands. Use `agy plugin list` to check the
+  installed skills. Start with `/using-agent-skills`.
+  Use `/incremental-implementation` for changes, `/test-driven-development`
+  for behavior changes, `/debugging-and-error-recovery` for reproducible failures,
+  `/doubt-driven-development` for consequential assumptions, and
+  `/code-review-and-quality` before commits. Apply `/ci-cd-and-automation`,
+  `/security-and-hardening`, `/accessibility-engineering`,
+  `/browser-testing-with-devtools` and `/frontend-ui-engineering` when their
   areas change. For module design, use `/codebase-design` and
   `/improve-codebase-architecture`.
-- **RTK and Context7:** Prefix supported terminal commands with `rtk`. Recover
+- **RTK and Context7:** Reuse the registered Antigravity RTK hook. Prefix
+  supported commands with `rtk` in shells that run outside that hook. Recover
   full diagnostics with `rtk bypass <command>`. Use Context7
   `resolve-library-id` and `query-docs` for consequential version-specific
   behavior. Send only public library names, versions and documentation questions.
 - **Browser verification:** Reuse Antigravity's Playwright MCP registration with
   `--isolated` for interactive checks against disposable loopback environments.
-  Use `npm --prefix frontend run test:e2e` for automated browser coverage.
+  From `frontend`, run `rtk npm run test:e2e` for automated browser coverage.
 - **Architecture and regression checks:** From the root, install the backend
-  with `.venv\Scripts\python.exe -m pip install -e ".[dev]"` and the frontend
-  with `npm --prefix frontend ci`. Run `.venv\Scripts\lint-imports.exe`,
-  `npm --prefix frontend run check:architecture`,
-  `.venv\Scripts\python.exe -m ruff check .`,
-  `.venv\Scripts\python.exe -m pytest` and `npm --prefix frontend run build`.
+  with `.venv\Scripts\python.exe -m pip install -e ".[dev]"`. Run
+  `.venv\Scripts\lint-imports.exe`, `.venv\Scripts\python.exe -m ruff check .`
+  and `.venv\Scripts\python.exe -m pytest`. From `frontend`, run `npm ci`,
+  `rtk npm run check:architecture` and `rtk npm run build`. On Windows, running
+  the architecture check from `frontend` selects the pinned local executable.
   Verify contract changes with isolated failing fixtures. Use bounded Hypothesis
-  cases for pure invariants and keep generated failures reproducible. Verify
+  cases for pure invariants. Use `--hypothesis-seed=<seed>` to repeat a seeded run
+  and `--hypothesis-show-statistics` to check generated examples. Verify
   concurrency and transaction behavior with the native PostgreSQL integration
   suite on separate disposable control and target clusters. Check GitHub Actions
   on the exact commit pushed to `main`.
