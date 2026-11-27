@@ -34,6 +34,12 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
   const runs = await page.request.get('/api/runs')
   expect(runs.ok()).toBe(true)
   const runId = ((await runs.json()) as { runs: { run_id: string }[] }).runs[0].run_id
+  const panelBeforeReview = page.getByRole('region', {
+    name: 'Independent synthetic witness review',
+  })
+  await expect(panelBeforeReview.getByLabel('Audited portable bundle exports')).toContainText(
+    'No audited ZIP bundle export recorded yet.',
+  )
 
   const jsonExport = page.getByRole('button', { name: 'Export synthetic evidence (JSON)' })
   const witnessPath = `**/api/runs/${runId}/witness`
@@ -97,6 +103,10 @@ test('reviewer records only worker-reproduced synthetic evidence', async ({ page
     hasText: runId.slice(0, 13),
   }).click()
   const panel = page.getByRole('region', { name: 'Independent synthetic witness review' })
+  await expect(panel.getByLabel('Audited portable bundle exports')).toContainText('CURRENT v')
+  await expect(panel.getByLabel('Audited portable bundle exports')).toContainText(
+    actualSha.slice(0, 16),
+  )
   await expect(panel.getByLabel('Synthetic replay readiness'))
     .toContainText('VERIFIED SYNTHETIC REPLAY')
   await expect(panel.getByLabel('Synthetic replay readiness'))

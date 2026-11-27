@@ -74,6 +74,62 @@ def test_pure_reconciliation_distinguishes_measured_partial_and_unavailable():
     assert partial["measured"]["application"]["status"] == "PARTIAL"
     assert partial["reconciliation"]["overspent"] is None
 
+    # App wall only + missing steps -> application PARTIAL.
+    _, partial_wall_only = reconcile_run_accounting(
+        execution_backend="native-postgresql",
+        step_budget=4,
+        reserved_cpu_ms=3000,
+        terminal_status="COMPLETE",
+        cancel_requested=False,
+        valid_witness=False,
+        consumed_steps=None,
+        measurements={
+            "worker_cpu_ms": 10.0,
+            "child_cpu_ms": 2.0,
+            "wall_ms": 15.0,
+            "database": None,
+        },
+    )
+    assert partial_wall_only["measured"]["application"]["status"] == "PARTIAL"
+    assert partial_wall_only["measured"]["database"]["status"] == "UNAVAILABLE"
+
+    # Cancelled + invalid witness + unknown status uncertainty reasons.
+    _, cancel_uncertain = reconcile_run_accounting(
+        execution_backend="memory",
+        step_budget=4,
+        reserved_cpu_ms=3000,
+        terminal_status="UNKNOWN",
+        cancel_requested=True,
+        valid_witness=False,
+        consumed_steps=None,
+        measurements={},
+    )
+    assert "Cancelled during execution" in cancel_uncertain["reconciliation"]["uncertainty_reason"]
+
+    _, bad_witness_uncertain = reconcile_run_accounting(
+        execution_backend="memory",
+        step_budget=4,
+        reserved_cpu_ms=3000,
+        terminal_status="UNKNOWN",
+        cancel_requested=False,
+        valid_witness=False,
+        consumed_steps=None,
+        measurements={},
+    )
+    assert "Valid witness missing" in bad_witness_uncertain["reconciliation"]["uncertainty_reason"]
+
+    _, unknown_uncertain = reconcile_run_accounting(
+        execution_backend="memory",
+        step_budget=4,
+        reserved_cpu_ms=3000,
+        terminal_status="UNKNOWN",
+        cancel_requested=False,
+        valid_witness=True,
+        consumed_steps=4,
+        measurements={},
+    )
+    assert "Run ended UNKNOWN" in unknown_uncertain["reconciliation"]["uncertainty_reason"]
+
     state_ok, reconciled = reconcile_run_accounting(
         execution_backend="native-postgresql",
         step_budget=4,

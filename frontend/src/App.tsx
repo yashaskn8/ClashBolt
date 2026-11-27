@@ -75,6 +75,14 @@ type RunPreview = {
     max_reserved_cpu_ms: number
     cpu_budget_available: boolean
   }
+  historical_estimate?: {
+    sample_count: number
+    uncertainty: string
+    uncertainty_reason: string
+    median_worker_cpu_ms: number | null
+    median_app_wall_ms: number | null
+    median_db_active_ms: number | null
+  }
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -756,7 +764,9 @@ export default function App() {
                       {runPreview.resource_bound.disposable_databases === 1
                         ? 'One disposable native database requested. '
                         : 'Fresh in-memory fixture requested. '}
-                      CPU/provider cost is not measured.
+                      {runPreview.historical_estimate && runPreview.historical_estimate.sample_count > 0
+                        ? `Measured preview (${runPreview.historical_estimate.uncertainty}, n=${runPreview.historical_estimate.sample_count}): median CPU ${runPreview.historical_estimate.median_worker_cpu_ms} ms · wall ${runPreview.historical_estimate.median_app_wall_ms} ms${typeof runPreview.historical_estimate.median_db_active_ms === 'number' ? ` · DB ${runPreview.historical_estimate.median_db_active_ms} ms` : ''}. Provider cost unavailable.`
+                        : `Historical CPU preview: ${runPreview.historical_estimate?.uncertainty ?? 'UNAVAILABLE'}. Provider cost unavailable.`}
                     </small>
                     <small>
                       {runPreview.preflight_ok

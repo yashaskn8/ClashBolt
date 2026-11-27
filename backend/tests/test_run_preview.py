@@ -68,6 +68,10 @@ def test_advisory_preview_cannot_grant_approval_or_reserve_quota(preview_lab):
             "disposable_databases": 0,
             "cpu_seconds_estimate": None,
         }
+        assert unapproved["budget"]["measured_cost_status"] == "UNAVAILABLE_BEFORE_EXECUTION"
+        assert unapproved["historical_estimate"]["uncertainty"] == "UNAVAILABLE"
+        assert unapproved["historical_estimate"]["sample_count"] == 0
+        assert unapproved["historical_estimate"]["provider_cost_usd"] is None
 
         proposal = preview_lab.propose("preview-author")
         pid = UUID(proposal["id"])
@@ -124,3 +128,50 @@ def test_native_preview_reports_configuration_not_security_certification(preview
         )
         assert malformed.status_code == 422
         assert _preview(client, str(uuid4())).status_code == 200
+
+
+def test_historical_measured_preview_updates_with_explicit_uncertainty(preview_lab):
+    import asyncio
+
+    from clashbolt.worker import process_one
+
+    proposal = preview_lab.propose("hist-preview-author")
+    oracle_id = UUID(proposal["id"])
+    preview_lab.approve(oracle_id, ORACLE_HASH, "hist-preview-reviewer")
+
+    with preview_lab.connect() as conn:
+        conn.execute(
+            "UPDATE project_quota SET max_open = 20 WHERE project_id = 'local'"
+        )
+
+    assert preview_lab.preview_run(
+        approved_oracle_id=oracle_id, execution_backend="memory"
+    )["historical_estimate"]["uncertainty"] == "UNAVAILABLE"
+
+    for idx in range(5):
+        preview_lab.admit(
+            client_key=f"hist-preview-{idx}",
+            variant="locked",
+            schedule="serial",
+            approved_oracle_id=oracle_id,
+        )
+        assert asyncio.run(process_one(preview_lab, "preview-worker")) is True
+        current = preview_lab.preview_run(
+            approved_oracle_id=oracle_id, execution_backend="memory"
+        )
+        expected_uncertainty = "LOW_SAMPLE_SIZE" if idx < 4 else "LOCAL_SYNTHETIC_ONLY"
+        assert current["historical_estimate"]["sample_count"] == idx + 1
+        assert current["historical_estimate"]["uncertainty"] == expected_uncertainty
+        assert current["historical_estimate"]["median_worker_cpu_ms"] >= 0
+        assert current["historical_estimate"]["median_app_wall_ms"] > 0
+        assert current["historical_estimate"]["median_db_active_ms"] is None
+        assert current["historical_estimate"]["provider_cost_usd"] is None
+        assert current["budget"]["measured_cost_status"] == "HISTORICAL_ESTIMATE_ONLY"
+        assert current["resource_bound"]["cpu_seconds_estimate"] is not None
+
+    # Different backend without samples stays explicitly UNAVAILABLE.
+    native_preview = preview_lab.preview_run(
+        approved_oracle_id=oracle_id, execution_backend="native-postgresql"
+    )
+    assert native_preview["historical_estimate"]["uncertainty"] == "UNAVAILABLE"
+    assert native_preview["resource_bound"]["cpu_seconds_estimate"] is None

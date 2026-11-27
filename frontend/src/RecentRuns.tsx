@@ -19,6 +19,10 @@ type Operations = {
     in_flight: number
     oldest_in_flight_seconds: number | null
   }
+  target_reset?: {
+    sample_count: number
+    reset_p95_ms: number | null
+  }
   resources?: {
     project_id: string
     open_runs: number
@@ -170,6 +174,10 @@ export default function RecentRuns({
             Measured (7d): Worker CPU {formatMs(currentOperations.resources.runs_7d.measured_worker_cpu_ms_total)} ·{' '}
             App wall {formatMs(currentOperations.resources.runs_7d.measured_app_wall_ms_total)} ·{' '}
             DB active {formatMs(currentOperations.resources.runs_7d.measured_db_active_ms_total)} ·{' '}
+            Target reset P95:{' '}
+            {typeof currentOperations.target_reset?.reset_p95_ms === 'number'
+              ? `${currentOperations.target_reset.reset_p95_ms} ms (${currentOperations.target_reset.sample_count})`
+              : 'no samples'} ·{' '}
             Cancel P95:{' '}
             {typeof currentOperations.cancellation?.p95_seconds === 'number'
               ? `${currentOperations.cancellation.p95_seconds.toFixed(3)}s (${currentOperations.cancellation.sample_count})`
@@ -182,6 +190,11 @@ export default function RecentRuns({
           Operator check: {alert.message}
         </p>
       ))}
+      {!!currentOperations?.diagnostics?.alerts.length && (
+        <p className="help-text" aria-label="Operational alert delivery status">
+          Alert delivery: in-app polling only · no external notifications sent.
+        </p>
+      )}
       {error && (
         <div className="error" role="alert">
           <span>{error}</span>{' '}

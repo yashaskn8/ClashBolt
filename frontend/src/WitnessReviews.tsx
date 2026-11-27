@@ -9,6 +9,13 @@ type Review = {
   current: boolean
   created_at: string
 }
+type ExportRecord = {
+  export_id: string
+  run_version: number
+  artifact_sha256: string
+  artifact_bytes: number
+  current: boolean
+}
 type Snapshot = {
   run_id: string
   project_id: string
@@ -18,6 +25,7 @@ type Snapshot = {
   scope: 'SYNTHETIC_ONLY'
   independent_external_reproduction: false
   reviews: Review[]
+  exports?: ExportRecord[]
 }
 type Props = {
   run: DurableRun
@@ -45,18 +53,32 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
     const controller = new AbortController()
     setSnapshot(null)
     setError('')
-    fetch(`/api/runs/${runId}/reviews`, {
-      cache: 'no-store', signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Review evidence is unavailable')
-        const data = (await response.json()) as Snapshot
+    Promise.all([
+      fetch(`/api/runs/${runId}/reviews`, {
+        cache: 'no-store', signal: controller.signal,
+      }),
+      fetch(`/api/runs/${runId}/exports`, {
+        cache: 'no-store', signal: controller.signal,
+      }),
+    ])
+      .then(async ([reviewResp, exportResp]) => {
+        if (!reviewResp.ok || !exportResp.ok) throw new Error('Review evidence is unavailable')
+        const data = (await reviewResp.json()) as Snapshot
+        const exportsPayload = (await exportResp.json()) as {
+          run_id: string
+          project_id: string
+          exports: ExportRecord[]
+        }
         if (data.run_id !== runId || data.project_id !== projectId
           || data.run_version !== runVersion || data.evidence_sha256 !== evidenceHash
           || data.scope !== 'SYNTHETIC_ONLY' || data.independent_external_reproduction !== false
           || !Array.isArray(data.reviews) || typeof data.replay_verified !== 'boolean'
+          || exportsPayload.run_id !== runId || exportsPayload.project_id !== projectId
+          || !Array.isArray(exportsPayload.exports)
         ) throw new Error('Review data did not match the current witness')
-        if (!controller.signal.aborted) setSnapshot(data)
+        if (!controller.signal.aborted) {
+          setSnapshot({ ...data, exports: exportsPayload.exports })
+        }
       })
       .catch(() => {
         if (!controller.signal.aborted) setError('Review data is unavailable for this project.')
@@ -108,6 +130,16 @@ export default function WitnessReviews({ run, projectId, role, replayStatus }: P
         onClick={() => setRefresh((current) => current + 1)}>
         Refresh evidence review
       </button>
+      {currentSnapshot && (
+        <p className="help-text" aria-label="Audited portable bundle exports">
+          Audited ZIP exports:{' '}
+          {currentSnapshot.exports && currentSnapshot.exports.length > 0
+            ? currentSnapshot.exports
+              .map((exp) => `${exp.current ? 'CURRENT' : 'SUPERSEDED'} v${exp.run_version} (${exp.artifact_sha256.slice(0, 16)}…, ${exp.artifact_bytes} B)`)
+              .join(' · ')
+            : 'No audited ZIP bundle export recorded yet.'}
+        </p>
+      )}
       {currentSnapshot?.reviews.map((entry) => (
         <p className="help-text" key={entry.review_id}>
           {entry.decision} · {entry.current ? 'CURRENT' : 'SUPERSEDED'} ·

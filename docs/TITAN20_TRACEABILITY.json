@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "24db6d881a22f03ff9332014125f3144458f201e",
+  "reviewed_head": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
   "last_successful_ci": {
-    "commit": "24db6d881a22f03ff9332014125f3144458f201e",
-    "run_id": 45872681107
+    "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+    "run_id": 45879599140
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -60,9 +60,14 @@
           "acceptance_record": "Partial B1 evidence: the mandatory release passed with synchronous standby promotion, two acknowledged runs recovered, and stale and duplicate receipts rejected on a disposable single host."
         },
         {
-          "commit": "de83579e8130cc48c30c6d7aabd0b8cc57de9041",
+          "commit": "de83579e8130cc48c31c21248e7f20c346910703",
           "run_id": 45846867286,
           "acceptance_record": "Partial B1 evidence: Windows backup ACL protection and all 10 mandatory CI release-gate jobs passed."
+        },
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B1 evidence: ledger, backup/restore, migration rollback, standby failover, and 471 backend tests (90.31% combined coverage) passed all 10 mandatory CI release-gate jobs."
         }
       ]
     },
@@ -89,7 +94,13 @@
       "blockers": [
         "Independent partition and failover validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B2 evidence: fault matrix and POSIX SIGKILL native-worker crash recovery across PROVISIONING and ACTIVE stages passed Linux CI release-gate."
+        }
+      ]
     },
     {
       "id": "B3",
@@ -115,7 +126,13 @@
       "blockers": [
         "Independent host isolation and multi-host recovery validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B3 evidence: disposable PG target isolation, provision/teardown latency tracking, orphan cleanup, and native systemd isolation check passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "B4",
@@ -142,7 +159,13 @@
       "blockers": [
         "Independent supported-boundary reproduction"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B4 evidence: bounded schedule controller, ungated baseline sampling, and controlled-vs-ungated overhead measurement on disposable PG passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "B5",
@@ -168,7 +191,13 @@
       "blockers": [
         "Independent adjudication and broader rule validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B5 evidence: independent invariant checker, strict witness validation, and mutant-oracle sensitivity tests passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "B6",
@@ -197,7 +226,13 @@
       "blockers": [
         "Cold-machine independent reproduction"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial B6 evidence: deterministic ZIP witness bundle, standalone replay verifier, and worker-queued minimization passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "B7",
@@ -262,7 +297,13 @@
       "blockers": [
         "Independent ground truth and rule review"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A1 evidence: fixed-template rule candidate validation, hash-bound vectors, and reviewer approval gate passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A2",
@@ -289,7 +330,13 @@
       "blockers": [
         "Independent held-out cost evidence"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A2 evidence: deterministic baseline planner, bounded model-plan call/token reservation, and fallback handling passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A3",
@@ -313,7 +360,13 @@
       "blockers": [
         "Independent authorization and tenancy validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A3 evidence: scoped capability issuance, oracle/issuer lock-ordered authorization, revocation fencing, and redteam tests passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A4",
@@ -338,7 +391,13 @@
       "blockers": [
         "Independent adjudication of ambiguous outcomes"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A4 evidence: persisted evidence-gap classifications, malformed-verdict abstention, and uncertified UNKNOWN handling passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A5",
@@ -362,7 +421,13 @@
       "blockers": [
         "Independent signature and recovery validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A5 evidence: append-only SHA-256 agent history, versioned obligations, integrity quarantine sweeps, and child-crash timeout tests passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A6",
@@ -388,7 +453,13 @@
       "blockers": [
         "Independent held-out ablation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial A6 evidence: idempotent counterexample feedback records and bounded unprivileged follow-up planning passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "A7",
@@ -439,7 +510,13 @@
       "blockers": [
         "Independent wider browser and operational validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial P1 evidence: approved-oracle composer, versioned account/project drafts, project-switching fencing, and advisory previews passed CI release-gate and Chromium E2E."
+        }
+      ]
     },
     {
       "id": "P2",
@@ -470,6 +547,11 @@
           "commit": "03b3fad5170c231ddd84220db1e3917562ba2da5",
           "run_id": 45839727374,
           "acceptance_record": "Partial P2 evidence: mandatory Chromium verified a stalled snapshot abort and a subsequent authoritative poll while the stream was unavailable."
+        },
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial P2 evidence: unobserved-checkpoint trace-gap markers, cursor-paged SSE/snapshot reconciliation, and Chromium coverage passed CI release-gate."
         }
       ]
     },
@@ -498,7 +580,13 @@
       "blockers": [
         "Independent portable adjudication"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial P3 evidence: audited SHA256 ZIP exports, worker replay gating, and named reviewer desk checks passed CI release-gate and Chromium E2E."
+        }
+      ]
     },
     {
       "id": "P4",
@@ -525,7 +613,13 @@
       "blockers": [
         "Independent identity and tenancy validation"
       ],
-      "evidence": []
+      "evidence": [
+        {
+          "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+          "run_id": 45879599140,
+          "acceptance_record": "Partial P4 evidence: named roles, project schema isolation, session revocation atomicity, and role-sync browser checks passed CI release-gate."
+        }
+      ]
     },
     {
       "id": "P5",

@@ -234,3 +234,55 @@ def test_feedback_creates_new_unprivileged_versioned_question(policy):
     assert policy.plan_history(UUID(next_plan["id"]))["integrity"]["status"] == (
         "VERIFIED"
     )
+
+
+@pytest.mark.parametrize(
+    "attr,new_value",
+    [("TOOL_SCHEMA_VERSION", "synthetic-tool-v2"), ("CONTEXT_VERSION", 2)],
+)
+def test_incompatible_decision_schema_requires_review_and_quarantines(
+    policy, monkeypatch, attr, new_value,
+):
+    import clashbolt.policy as policy_mod
+
+    oracle_id, plan_id = _ready(policy)
+    token = policy.issue(oracle_id, "racy", "overlap", plan_id=plan_id)["token"]
+    compatible_hist = policy.plan_history(plan_id)
+    assert compatible_hist["schema_compatibility"]["compatible"] is True
+    assert compatible_hist["schema_compatibility"]["migration_review_required"] is False
+
+    monkeypatch.setattr(policy_mod, attr, new_value)
+    incompatible_hist = policy.plan_history(plan_id)
+    assert incompatible_hist["integrity"]["status"] == "INCOMPATIBLE_SCHEMA"
+    assert incompatible_hist["integrity"]["migration_review_required"] is True
+    assert incompatible_hist["schema_compatibility"]["compatible"] is False
+    assert policy.get_plan(plan_id)["schema_compatibility"]["migration_review_required"] is True
+    assert policy.plan_uncertainty(uuid4()) is None
+
+    with pytest.raises(ValueError, match="pending approved plan"):
+        policy.issue(oracle_id, "racy", "overlap", plan_id=plan_id)
+    assert not policy.authorize(token, "racy", "overlap", plan_id)
+    assert policy.reconcile_corrupt_plans() == 1
+    gaps = policy.evidence_gaps(plan_id)
+    assert len(gaps) == 1
+    assert gaps[0]["classification"] == "SCHEMA_INCOMPATIBLE"
+
+    monkeypatch.setenv("CLASHBOLT_DATABASE_URL", policy.dsn)
+    monkeypatch.setenv("CLASHBOLT_ACCESS_MODE", "local")
+    with TestClient(create_app()) as client:
+        resp = client.get(f"/api/agent/plans/{plan_id}/gaps")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["uncertainty"]["uncertainty_state"] == "ABSTAINED_QUARANTINED"
+        assert body["uncertainty"]["abstention_required"] is True
+        assert body["uncertainty"]["calibrated_confidence"] is None
+        assert body["uncertainty"]["gap_classifications"] == ["SCHEMA_INCOMPATIBLE"]
+
+    # Fresh plan under the bumped schema version records and executes cleanly.
+    fresh_plan = policy.record_plan(
+        oracle_id, choose_plan(strategy="semantic", variant="racy")
+    )
+    assert fresh_plan["obligation"][
+        "tool_schema_version" if attr == "TOOL_SCHEMA_VERSION" else "context_version"
+    ] == new_value
+    assert policy.plan_history(UUID(fresh_plan["id"]))["integrity"]["status"] == "VERIFIED"

@@ -9,6 +9,21 @@ test('operator sees queue diagnostics but viewer does not', async ({ page }) => 
         responsive_workers: 0,
         runs: { PENDING: 3 },
         verifications: { PENDING: 1 },
+        target_reset: { sample_count: 1, reset_p95_ms: 42.5 },
+        resources: {
+          project_id: 'local',
+          open_runs: 3,
+          max_open: 20,
+          open_reserved_cpu_ms: 9000,
+          max_reserved_cpu_ms: 180000,
+          runs_7d: {
+            overspent_count: 0,
+            uncertain_count: 0,
+            measured_worker_cpu_ms_total: null,
+            measured_app_wall_ms_total: null,
+            measured_db_active_ms_total: null,
+          },
+        },
         diagnostics: {
           status: 'ATTENTION',
           notifications_sent: false,
@@ -29,6 +44,12 @@ test('operator sees queue diagnostics but viewer does not', async ({ page }) => 
   await expect(page.getByText(
     'Operator check: Pending experiments have no recently responsive worker.',
   )).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByLabel('Operational alert delivery status')).toContainText(
+    'Alert delivery: in-app polling only · no external notifications sent.',
+  )
+  await expect(page.getByLabel('Measured resources and cancellation latency')).toContainText(
+    'Target reset P95: 42.5 ms (1)',
+  )
 
   await page.getByLabel('Account name').fill('browser.viewer')
   await page.getByLabel('Account password').fill('browser-local-password-000')
@@ -221,14 +242,24 @@ test('live operator workspace displays project budget, resource accounting, and 
   await page.getByLabel('Account password').fill('browser-local-password-000')
   await page.getByRole('button', { name: 'Switch named account' }).click()
   await expect(page.getByText('Signed in: browser.operator (operator)')).toBeVisible()
+  await expect(page.getByLabel('Run resource preview')).toContainText(
+    'Historical CPU preview: UNAVAILABLE. Provider cost unavailable.',
+  )
 
   await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
   await expect(page.locator('.run-status')).toHaveText('COMPLETE', { timeout: 20_000 })
+  await expect(page.getByLabel('Run resource preview')).toContainText(
+    'Measured preview (LOW_SAMPLE_SIZE',
+  )
+  await expect(page.getByLabel('Run resource preview')).toContainText('Provider cost unavailable.')
   const accounting = page.getByLabel('Run resource accounting')
   await expect(accounting).toBeVisible()
   await expect(accounting).toContainText('Reserved 3000 ms CPU')
   await expect(accounting).toContainText('Provider cost: unavailable')
   await expect(page.getByLabel('Measured resources and cancellation latency')).toContainText(
     'Worker CPU',
+  )
+  await expect(page.getByLabel('Measured resources and cancellation latency')).toContainText(
+    'Target reset P95: no samples',
   )
 })

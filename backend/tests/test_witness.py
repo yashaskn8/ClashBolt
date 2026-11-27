@@ -125,3 +125,89 @@ def test_witness_cli_rejects_duplicate_nested_keys(tmp_path, monkeypatch, capsys
     with pytest.raises(SystemExit, match="2"):
         main()
     assert "Duplicate evidence field: initial_stock" in capsys.readouterr().err
+
+
+def test_witness_contract_and_cli_boundary_cases(tmp_path, monkeypatch, capsys):
+    from clashbolt import witness as witness_mod
+
+    assert witness_mod.validate_contract(["not-an-object"]) == "Expected a JSON object"
+    evidence = asyncio.run(execute("racy", "overlap"))
+
+    bad_count = json.loads(json.dumps(evidence))
+    bad_count["observed_steps"] = []
+    bad_count["evidence_sha256"] = evidence_digest(bad_count)
+    assert "missing checkpoints" in witness_mod.validate_contract(bad_count)
+
+    over_count = json.loads(json.dumps(evidence))
+    over_count["observed_steps"].append({"sequence": 5})
+    over_count["evidence_sha256"] = evidence_digest(over_count)
+    assert "Invalid observed checkpoint count" in witness_mod.validate_contract(over_count)
+
+    non_dict_step = json.loads(json.dumps(evidence))
+    non_dict_step["observed_steps"][0] = "bad"
+    non_dict_step["evidence_sha256"] = evidence_digest(non_dict_step)
+    assert "structured observation" in witness_mod.validate_contract(non_dict_step)
+
+    bad_read_fields = json.loads(json.dumps(evidence))
+    bad_read_fields["observed_steps"][0]["extra"] = 1
+    bad_read_fields["evidence_sha256"] = evidence_digest(bad_read_fields)
+    assert "Unexpected fields in a stock read" in witness_mod.validate_contract(bad_read_fields)
+
+    bad_commit_fields = json.loads(json.dumps(evidence))
+    bad_commit_fields["observed_steps"][2]["extra"] = 1
+    bad_commit_fields["evidence_sha256"] = evidence_digest(bad_commit_fields)
+    assert "Unexpected fields in a commit" in witness_mod.validate_contract(bad_commit_fields)
+
+    no_preceding_read = json.loads(json.dumps(evidence))
+    no_preceding_read["requested_gates"] = ["a.commit", "b.read", "a.read", "b.commit"]
+    # Keep schedule matching to isolate complete=False incomplete verdict check too.
+    incomplete = json.loads(json.dumps(evidence))
+    incomplete["complete"] = False
+    incomplete["verdict"] = "UNKNOWN"
+    incomplete["evidence_sha256"] = evidence_digest(incomplete)
+    assert asyncio.run(verify(incomplete))["status"] == "UNCONFIRMED"
+
+    wrong_verdict = json.loads(json.dumps(evidence))
+    wrong_verdict["verdict"] = "PASS"
+    wrong_verdict["evidence_sha256"] = evidence_digest(wrong_verdict)
+    assert "Verdict disagrees" in witness_mod.validate_contract(wrong_verdict)
+
+    # Native verification unconfigured and failing target paths.
+    native = json.loads(json.dumps(evidence))
+    native["execution_backend"] = "native-postgresql"
+    native["evidence_sha256"] = evidence_digest(native)
+    monkeypatch.delenv("CLASHBOLT_TARGET_ADMIN_URL", raising=False)
+    monkeypatch.delenv("CLASHBOLT_DATABASE_URL", raising=False)
+    assert asyncio.run(verify(native))["status"] == "UNCONFIRMED"
+
+    class BrokenTarget:
+        def __enter__(self):
+            raise RuntimeError("target boom")
+
+        def __exit__(self, *args):
+            return False
+
+    assert asyncio.run(verify(native, target_factory=BrokenTarget))["reason"] == (
+        "Native target replay failed"
+    )
+
+    # CLI checks: missing file, oversized file, valid exit 0, and invalid exit 2.
+    monkeypatch.setattr(sys, "argv", ["witness", str(tmp_path / "missing.json")])
+    with pytest.raises(SystemExit, match="2"):
+        witness_mod.main()
+    oversized = tmp_path / "huge.json"
+    oversized.write_bytes(b"x" * 100_005)
+    monkeypatch.setattr(sys, "argv", ["witness", str(oversized)])
+    with pytest.raises(SystemExit, match="2"):
+        witness_mod.main()
+
+    valid_path = tmp_path / "valid.json"
+    valid_path.write_text(json.dumps(evidence), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["witness", str(valid_path)])
+    assert witness_mod.main() == 0
+    bad_path = tmp_path / "invalid.json"
+    evidence_bad = {**evidence, "verdict": "PASS"}
+    bad_path.write_text(json.dumps(evidence_bad), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["witness", str(bad_path)])
+    assert witness_mod.main() == 2
+    capsys.readouterr()

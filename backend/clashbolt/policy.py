@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from clashbolt.agent_feedback import decide_feedback, gap_class
+from clashbolt.agent_feedback import decide_feedback, gap_class, summarize_uncertainty
 from clashbolt.agent_history import append_history, verify_history
 from clashbolt.experiment import (
     ORACLE_HASH,
@@ -253,12 +253,73 @@ _POLICY_SCHEMA = (
         classification TEXT NOT NULL CHECK (
             classification IN (
                 'MISSING_RECEIPT', 'WITHDRAWN_ORACLE',
-                'INCOMPLETE_OBSERVATION', 'CONFLICTING_EVIDENCE'
+                'INCOMPLETE_OBSERVATION', 'CONFLICTING_EVIDENCE',
+                'SCHEMA_INCOMPATIBLE'
             )
         ),
         reason TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+    """,
+    """
+    DO $$
+    DECLARE c RECORD;
+    BEGIN
+        FOR c IN
+            SELECT conname, pg_get_constraintdef(oid) AS def
+            FROM pg_constraint
+            WHERE conrelid = 'agent_obligation'::regclass
+              AND contype = 'c'
+        LOOP
+            IF c.def LIKE '%context_version%' OR c.def LIKE '%tool_schema_version%' THEN
+                EXECUTE format('ALTER TABLE agent_obligation DROP CONSTRAINT %I', c.conname);
+            END IF;
+        END LOOP;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'agent_obligation'::regclass
+              AND conname = 'agent_obligation_context_version_bounds'
+        ) THEN
+            ALTER TABLE agent_obligation
+            ADD CONSTRAINT agent_obligation_context_version_bounds
+            CHECK (context_version BETWEEN 1 AND 1000);
+        END IF;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'agent_obligation'::regclass
+              AND conname = 'agent_obligation_tool_schema_bounds'
+        ) THEN
+            ALTER TABLE agent_obligation
+            ADD CONSTRAINT agent_obligation_tool_schema_bounds
+            CHECK (tool_schema_version ~ '^synthetic-tool-v[1-9][0-9]*$');
+        END IF;
+        FOR c IN
+            SELECT conname, pg_get_constraintdef(oid) AS def
+            FROM pg_constraint
+            WHERE conrelid = 'agent_evidence_gap'::regclass
+              AND contype = 'c'
+        LOOP
+            IF c.def NOT LIKE '%SCHEMA_INCOMPATIBLE%' THEN
+                EXECUTE format('ALTER TABLE agent_evidence_gap DROP CONSTRAINT %I', c.conname);
+            END IF;
+        END LOOP;
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'agent_evidence_gap'::regclass
+              AND conname = 'agent_evidence_gap_classification_v2'
+        ) THEN
+            ALTER TABLE agent_evidence_gap
+            ADD CONSTRAINT agent_evidence_gap_classification_v2
+            CHECK (
+                classification IN (
+                    'MISSING_RECEIPT', 'WITHDRAWN_ORACLE',
+                    'INCOMPLETE_OBSERVATION', 'CONFLICTING_EVIDENCE',
+                    'SCHEMA_INCOMPATIBLE'
+                )
+            );
+        END IF;
+    END
+    $$
     """,
     """
     CREATE TABLE IF NOT EXISTS search_feedback (
@@ -277,7 +338,7 @@ _POLICY_SCHEMA = (
 
 CONTEXT_VERSION = 1
 TOOL_SCHEMA_VERSION = "synthetic-tool-v1"
-POLICY_SCHEMA_VERSION = 11
+POLICY_SCHEMA_VERSION = 12
 
 
 class Policy(Ledger):
@@ -1076,12 +1137,24 @@ class Policy(Ledger):
                 or initial.get("rule_sha256") != ORACLE_HASH
                 or context is None
                 or initial.get("obligation") != context
-                or context["context_version"] != CONTEXT_VERSION
-                or context["tool_schema_version"] != TOOL_SCHEMA_VERSION
             ):
                 integrity = {
                     "status": "INVALID",
                     "reason": "Stored agent plan or context differs from approved decision",
+                }
+            elif (
+                context["context_version"] != CONTEXT_VERSION
+                or context["tool_schema_version"] != TOOL_SCHEMA_VERSION
+            ):
+                integrity = {
+                    "status": "INCOMPATIBLE_SCHEMA",
+                    "reason": (
+                        f"Recorded decision schema (context v{context['context_version']}, "
+                        f"{context['tool_schema_version']}) is incompatible with current "
+                        f"(context v{CONTEXT_VERSION}, {TOOL_SCHEMA_VERSION}); "
+                        "explicit review and new plan required"
+                    ),
+                    "migration_review_required": True,
                 }
             elif (
                 (planned["state"] == "PROPOSED"
@@ -1210,6 +1283,30 @@ class Policy(Ledger):
                 quarantined += 1
             return quarantined
 
+    @staticmethod
+    def _schema_compatibility(obligation: dict | None) -> dict:
+        if obligation is None:
+            return {
+                "compatible": False,
+                "recorded_context_version": None,
+                "current_context_version": CONTEXT_VERSION,
+                "recorded_tool_schema_version": None,
+                "current_tool_schema_version": TOOL_SCHEMA_VERSION,
+                "migration_review_required": True,
+            }
+        compatible = (
+            obligation["context_version"] == CONTEXT_VERSION
+            and obligation["tool_schema_version"] == TOOL_SCHEMA_VERSION
+        )
+        return {
+            "compatible": compatible,
+            "recorded_context_version": obligation["context_version"],
+            "current_context_version": CONTEXT_VERSION,
+            "recorded_tool_schema_version": obligation["tool_schema_version"],
+            "current_tool_schema_version": TOOL_SCHEMA_VERSION,
+            "migration_review_required": not compatible,
+        }
+
     def plan_history(self, plan_id: UUID) -> dict | None:
         with self.connect() as conn:
             plan = conn.execute(
@@ -1222,10 +1319,12 @@ class Policy(Ledger):
             obligation = conn.execute(
                 "SELECT * FROM agent_obligation WHERE plan_id = %s", (plan_id,)
             ).fetchone()
+            public_ob = self._public_obligation(obligation)
             return {
                 "plan_id": str(plan_id),
                 "current_state": plan["state"],
-                "obligation": self._public_obligation(obligation),
+                "obligation": public_ob,
+                "schema_compatibility": self._schema_compatibility(public_ob),
                 "integrity": status,
                 "entries": [
                     {**row, "created_at": row["created_at"].isoformat()}
@@ -1244,12 +1343,35 @@ class Policy(Ledger):
             obligation = conn.execute(
                 "SELECT * FROM agent_obligation WHERE plan_id = %s", (plan_id,)
             ).fetchone()
+            public_ob = self._public_obligation(obligation)
             return {
                 **row,
                 "id": str(row["id"]),
                 "proposal_id": str(row["proposal_id"]),
-                "obligation": self._public_obligation(obligation),
+                "obligation": public_ob,
+                "schema_compatibility": self._schema_compatibility(public_ob),
             }
+
+    def plan_uncertainty(self, plan_id: UUID) -> dict | None:
+        with self.connect() as conn:
+            plan = conn.execute(
+                "SELECT id, state, result FROM agent_plan WHERE id = %s",
+                (plan_id,),
+            ).fetchone()
+            if not plan:
+                return None
+            gaps = conn.execute(
+                """
+                SELECT classification, reason, created_at
+                FROM agent_evidence_gap WHERE plan_id = %s
+                """,
+                (plan_id,),
+            ).fetchall()
+            feedback = conn.execute(
+                "SELECT remaining_budget FROM search_feedback WHERE plan_id = %s",
+                (plan_id,),
+            ).fetchone()
+            return summarize_uncertainty(plan, gaps, feedback)
 
     @staticmethod
     def _record_gap(conn, plan_id: UUID, reason: str) -> None:

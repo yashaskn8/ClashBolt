@@ -80,4 +80,14 @@ def diagnose_operations(snapshot: dict) -> dict:
         "alerts": alerts,
         "notifications_sent": False,
         "automatic_remediation": False,
+        "delivery": {
+            "mode": "IN_APP_POLLING_ONLY",
+            "project_scoped": True,
+            "external_channels_configured": False,
+            "reliable_outbound_delivery": False,
+            "reason": (
+                "Operational review hints are served only via authenticated project "
+                "polling; no external alerting transport is configured."
+            ),
+        },
     }

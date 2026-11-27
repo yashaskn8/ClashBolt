@@ -29,6 +29,10 @@ def test_active_work_without_heartbeat(runs, jobs, workers, codes):
     assert result["status"] == ("ATTENTION" if codes else "NORMAL")
     assert result["notifications_sent"] is False
     assert result["automatic_remediation"] is False
+    assert result["delivery"]["mode"] == "IN_APP_POLLING_ONLY"
+    assert result["delivery"]["project_scoped"] is True
+    assert result["delivery"]["external_channels_configured"] is False
+    assert result["delivery"]["reliable_outbound_delivery"] is False
     assert snapshot == before
 
 

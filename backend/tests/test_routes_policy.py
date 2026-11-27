@@ -344,3 +344,101 @@ def test_oracle_audit_is_read_only_for_authenticated_operator(policy_client):
     events = policy_client.get("/api/oracle/audit", headers=headers)
     assert events.status_code == 200
     assert any(event["action"] == "APPROVED" for event in events.json()["events"])
+
+
+def test_policy_route_error_and_model_reservation_paths(policy_client, monkeypatch):
+    from uuid import uuid4
+
+    header = {"X-Operator-Token": "ci-local-only-secret"}
+    proposal = policy_client.post(
+        "/api/oracle/proposals", json={"proposed_by": "route-errors"}
+    ).json()
+    pid = proposal["id"]
+    unknown_id = str(uuid4())
+
+    assert (
+        policy_client.post(f"/api/oracle/proposals/{pid}/revoke", headers=header).status_code
+        == 409
+    )
+    assert (
+        policy_client.post(
+            f"/api/tool-capabilities/{unknown_id}/revoke", headers=header
+        ).status_code
+        == 404
+    )
+    assert policy_client.post(
+        f"/api/agent/frontier/{pid}/plans",
+        json={"proposal_id": unknown_id, "variant": "racy"},
+        headers=header,
+    ).status_code == 409
+    assert policy_client.post(
+        "/api/agent/plans/model",
+        json={"proposal_id": pid, "variant": "racy"},
+        headers=header,
+    ).status_code == 409
+    assert (
+        policy_client.get(f"/api/agent/plans/{unknown_id}/history", headers=header).status_code
+        == 404
+    )
+    assert policy_client.get(f"/api/agent/plans/{unknown_id}/feedback").status_code == 404
+
+    policy_client.post(
+        f"/api/oracle/proposals/{pid}/approve",
+        json={"expected_hash": ORACLE_HASH, "reviewer": "reviewer"},
+        headers=header,
+    )
+    # Local model without CLASHBOLT_LOCAL_MODEL falls back cleanly without reservation.
+    monkeypatch.delenv("CLASHBOLT_LOCAL_MODEL", raising=False)
+    fallback_plan = policy_client.post(
+        "/api/agent/plans/model",
+        json={"proposal_id": pid, "variant": "racy"},
+        headers=header,
+    )
+    assert fallback_plan.status_code == 201
+
+    # Simulated late/unconfirmed model reservation must fall back deterministically.
+    monkeypatch.setenv("CLASHBOLT_LOCAL_MODEL", "dummy-local-model")
+
+    async def fake_model_plan(variant):
+        return {
+            "strategy": "semantic",
+            "variant": variant,
+            "schedule": "overlap",
+            "model_status": "VALIDATED_PROPOSAL",
+            "model_tokens_used": 64,
+        }
+
+    import clashbolt.routes_policy as rp_mod
+
+    monkeypatch.setattr(rp_mod, "propose_model_plan", fake_model_plan)
+    monkeypatch.setattr(Policy, "model_reservation_state", lambda self, res: "UNKNOWN")
+    late_plan = policy_client.post(
+        "/api/agent/plans/model",
+        json={"proposal_id": pid, "variant": "racy"},
+        headers=header,
+    )
+    assert late_plan.status_code == 201
+    assert late_plan.json()["plan"]["model_status"] == "LATE_OR_UNCONFIRMED_RESERVATION"
+
+    # Exception during model call still settles reservation cleanly.
+    async def boom_model_plan(variant):
+        raise RuntimeError("model endpoint failed")
+
+    monkeypatch.setattr(rp_mod, "propose_model_plan", boom_model_plan)
+    with pytest.raises(RuntimeError, match="model endpoint failed"):
+        policy_client.post(
+            "/api/agent/plans/model",
+            json={"proposal_id": pid, "variant": "racy"},
+            headers=header,
+        )
+
+    # Budget exhaustion returns 429.
+    def _exhausted(self):
+        raise ValueError("Local model daily reservation budget exhausted")
+
+    monkeypatch.setattr(Policy, "reserve_model_call", _exhausted)
+    assert policy_client.post(
+        "/api/agent/plans/model",
+        json={"proposal_id": pid, "variant": "racy"},
+        headers=header,
+    ).status_code == 429

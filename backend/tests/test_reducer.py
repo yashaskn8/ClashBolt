@@ -30,3 +30,10 @@ def test_native_witness_requires_native_replay_cluster():
 
     witness["evidence_sha256"] = evidence_digest(witness)
     assert reduce_witness(witness)["status"] == "UNCONFIRMED"
+
+
+def test_reducer_missing_read_returns_unknown_and_respects_trial_cap():
+    from clashbolt.reducer import _probe, _trial
+
+    assert _probe("racy", ["a.commit"], None) == "UNKNOWN"
+    assert _trial("racy", "overlap", ["a.read", "a.commit"], None) == "PASS"

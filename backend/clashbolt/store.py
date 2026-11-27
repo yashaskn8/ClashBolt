@@ -461,6 +461,55 @@ class Ledger:
                 ).fetchone()
                 if approved_oracle_id else None
             )
+            hist = conn.execute(
+                """
+                SELECT
+                    count(*) AS sample_count,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY measured_worker_cpu_ms)
+                        AS median_worker_cpu_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY measured_worker_cpu_ms)
+                        AS p95_worker_cpu_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY measured_app_wall_ms)
+                        AS median_app_wall_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY measured_app_wall_ms)
+                        AS p95_app_wall_ms,
+                    count(measured_db_active_ms) AS db_sample_count,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY measured_db_active_ms)
+                        FILTER (WHERE measured_db_active_ms IS NOT NULL)
+                        AS median_db_active_ms,
+                    count(*) FILTER (
+                        WHERE (resource_accounting->'reconciliation'->>'overspent') = 'true'
+                    ) AS overspent_samples
+                FROM experiment_run
+                WHERE project_id = 'local'
+                  AND execution_backend = %s
+                  AND status = 'COMPLETE'
+                  AND accounting_state IN ('RECONCILED', 'PARTIAL')
+                  AND measured_worker_cpu_ms IS NOT NULL
+                  AND created_at >= now() - interval '7 days'
+                """,
+                (execution_backend,),
+            ).fetchone()
+            reset_hist = (
+                conn.execute(
+                    """
+                    SELECT
+                        count(*) AS sample_count,
+                        percentile_cont(0.5) WITHIN GROUP (ORDER BY provision_ms + teardown_ms)
+                            AS median_target_reset_ms
+                    FROM target_instance t
+                    JOIN experiment_run r ON r.id = t.run_id
+                    WHERE r.project_id = 'local'
+                      AND r.execution_backend = 'native-postgresql'
+                      AND t.status = 'CLEANED'
+                      AND t.provision_ms IS NOT NULL
+                      AND t.teardown_ms IS NOT NULL
+                      AND t.created_at >= now() - interval '7 days'
+                    """
+                ).fetchone()
+                if execution_backend == "native-postgresql"
+                else None
+            )
         approved = bool(
             approval and approval["state"] == "APPROVED"
             and approval["rule_hash"] == ORACLE_HASH
@@ -489,6 +538,36 @@ class Ledger:
             blockers.append("Active CPU reservation budget is full")
         if not backend_configured:
             blockers.append("Separate native target cluster is not configured")
+
+        sample_count = int(hist["sample_count"] or 0)
+        if sample_count == 0:
+            uncertainty = "UNAVAILABLE"
+            uncertainty_reason = (
+                "No recent reconciled runs for this backend in this project; "
+                "resource cost is not estimated."
+            )
+        elif sample_count < 5:
+            uncertainty = "LOW_SAMPLE_SIZE"
+            uncertainty_reason = (
+                f"Based on {sample_count} local synthetic run(s) over 7 days; "
+                "sample size is below 5 and external provider billing is excluded."
+            )
+        else:
+            uncertainty = "LOCAL_SYNTHETIC_ONLY"
+            uncertainty_reason = (
+                f"Based on {sample_count} local synthetic runs over 7 days; "
+                "workload variance and external provider billing are excluded."
+            )
+
+        def _round_opt(value: object, digits: int = 3) -> float | None:
+            return round(max(0.0, float(value)), digits) if value is not None else None
+
+        median_cpu_ms = _round_opt(hist["median_worker_cpu_ms"])
+        cpu_seconds_estimate = (
+            round(median_cpu_ms / 1000.0, 4)
+            if sample_count > 0 and median_cpu_ms is not None
+            else None
+        )
         return {
             "project_id": self.project_id,
             "step_budget": step_budget,
@@ -502,15 +581,45 @@ class Ledger:
             "resource_bound": {
                 "checkpoint_limit": step_budget,
                 "disposable_databases": int(execution_backend == "native-postgresql"),
-                "cpu_seconds_estimate": None,
+                "cpu_seconds_estimate": cpu_seconds_estimate,
             },
             "budget": {
                 "reserved_cpu_ms_request": reserved_cpu_ms,
                 "open_reserved_cpu_ms": open_reserved_cpu_ms,
                 "max_reserved_cpu_ms": max_reserved_cpu_ms,
                 "cpu_budget_available": cpu_budget_available,
-                "measured_cost_status": "UNAVAILABLE_BEFORE_EXECUTION",
+                "measured_cost_status": (
+                    "HISTORICAL_ESTIMATE_ONLY"
+                    if sample_count > 0
+                    else "UNAVAILABLE_BEFORE_EXECUTION"
+                ),
                 "provider_cost_estimate_usd": None,
+            },
+            "historical_estimate": {
+                "basis": "PROJECT_MEASURED_7D",
+                "execution_backend": execution_backend,
+                "sample_count": sample_count,
+                "uncertainty": uncertainty,
+                "uncertainty_reason": uncertainty_reason,
+                "median_worker_cpu_ms": median_cpu_ms,
+                "p95_worker_cpu_ms": _round_opt(hist["p95_worker_cpu_ms"]),
+                "median_app_wall_ms": _round_opt(hist["median_app_wall_ms"]),
+                "p95_app_wall_ms": _round_opt(hist["p95_app_wall_ms"]),
+                "db_sample_count": int(hist["db_sample_count"] or 0),
+                "median_db_active_ms": (
+                    _round_opt(hist["median_db_active_ms"])
+                    if execution_backend == "native-postgresql"
+                    and (hist["db_sample_count"] or 0) > 0
+                    else None
+                ),
+                "median_target_reset_ms": (
+                    _round_opt(reset_hist["median_target_reset_ms"])
+                    if reset_hist and (reset_hist["sample_count"] or 0) > 0
+                    else None
+                ),
+                "overspent_samples": int(hist["overspent_samples"] or 0),
+                "provider_cost_usd": None,
+                "provider_cost_status": "UNAVAILABLE",
             },
         }
 

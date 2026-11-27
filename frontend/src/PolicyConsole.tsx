@@ -255,14 +255,21 @@ export default function PolicyConsole({
   async function reviewDecisionHistory() {
     if (!plan) return
     await action(async () => {
-      const record = await request<{
-        plan_id: string
-        current_state: string
-        integrity: { status: string; head_sha256?: string; entries?: number }
-        entries: { sequence: number; event: string; entry_sha256: string }[]
-      }>(`/api/agent/plans/${plan.id}/history`, undefined, operator)
+      const [record, gaps] = await Promise.all([
+        request<{
+          plan_id: string
+          current_state: string
+          integrity: { status: string; head_sha256?: string; entries?: number }
+          entries: { sequence: number; event: string; entry_sha256: string }[]
+        }>(`/api/agent/plans/${plan.id}/history`, undefined, operator),
+        request<{ gaps: { classification: string; reason: string }[]; uncertainty: unknown }>(
+          `/api/agent/plans/${plan.id}/gaps`,
+        ),
+      ])
       return {
         ...record,
+        evidence_gaps: gaps.gaps,
+        uncertainty: gaps.uncertainty,
         note: 'Digest-chain verification does not prove independent external execution.',
       }
     })

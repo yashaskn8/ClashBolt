@@ -373,7 +373,11 @@ def policy_router(dsn: str | None) -> APIRouter:
 
     @router.get("/agent/plans/{plan_id}/gaps")
     def read_evidence_gaps(plan_id: UUID, http_request: Request):
-        return {"gaps": require_policy(http_request).evidence_gaps(plan_id)}
+        store = require_policy(http_request)
+        return {
+            "gaps": store.evidence_gaps(plan_id),
+            "uncertainty": store.plan_uncertainty(plan_id),
+        }
 
     @router.get("/agent/plans/{plan_id}/feedback")
     def read_feedback(plan_id: UUID, http_request: Request):
