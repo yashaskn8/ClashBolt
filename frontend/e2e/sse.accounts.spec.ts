@@ -260,3 +260,106 @@ test('stale cancellation is fenced and the timeline recovers authoritatively', a
     timeout: 12_000,
   })
 })
+
+test('cancelled runs converge cleanly and stop background polling', async ({ page }) => {
+  test.setTimeout(60_000)
+  const cancelledRunId = '00000000-0000-4000-8000-00000000c4ac'
+  const createdAt = new Date().toISOString()
+  const cancelledRun = {
+    run_id: cancelledRunId,
+    project_id: 'local',
+    variant: 'locked',
+    schedule: 'serial',
+    oracle_hash: '0'.repeat(64),
+    approved_oracle_id: '00000000-0000-4000-8000-000000000001',
+    step_budget: 4,
+    consumed_steps: 0,
+    execution_backend: 'memory',
+    reserved_cpu_ms: 3000,
+    accounting_state: 'RELEASED',
+    status: 'CANCELLED',
+    version: 2,
+    lease_generation: 0,
+    cancel_requested: true,
+    verdict: null,
+    witness: null,
+    created_at: createdAt,
+    updated_at: createdAt,
+  }
+  let snapshotFetches = 0
+  let eventSourceClosed = false
+  await page.addInitScript(() => {
+    const NativeSource = window.EventSource
+    ;(window as typeof window & { __closedStreams?: number }).__closedStreams = 0
+    window.EventSource = class extends NativeSource {
+      override close() {
+        ;(window as typeof window & { __closedStreams: number }).__closedStreams += 1
+        super.close()
+      }
+    }
+  })
+  await page.route(
+    (url) => url.pathname === '/api/runs' && url.searchParams.get('limit') === '10',
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ runs: [cancelledRun] }),
+      })
+    },
+  )
+  await page.route(`**/api/runs/${cancelledRunId}`, async (route) => {
+    snapshotFetches += 1
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(cancelledRun),
+    })
+  })
+  await page.route(`**/api/runs/${cancelledRunId}/events*`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        run_id: cancelledRunId,
+        next_after: 2,
+        has_more: false,
+        events: [
+          { version: 1, status: 'PENDING', note: 'admitted', created_at: createdAt },
+          {
+            version: 2,
+            status: 'CANCELLED',
+            note: 'operator requested cancellation',
+            created_at: createdAt,
+          },
+        ],
+      }),
+    })
+  })
+  await page.route(`**/api/runs/${cancelledRunId}/stream*`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: ': connected\n\n',
+    })
+  })
+
+  await page.goto('/')
+  await signIn(page, 'operator')
+  await expect(page.locator('.recent-list button')).toHaveCount(1)
+  await page.locator('.recent-list button').first().click()
+  await expect(page.locator('.run-status')).toHaveText('CANCELLED')
+  await expect(page.locator('.transition-list li strong', { hasText: 'CANCELLED' })).toBeVisible()
+
+  await expect.poll(() =>
+    page.evaluate(
+      () => (window as typeof window & { __closedStreams?: number }).__closedStreams ?? 0,
+    ),
+  ).toBeGreaterThan(0)
+  eventSourceClosed = true
+  expect(eventSourceClosed).toBe(true)
+
+  const fetchesAtConverge = snapshotFetches
+  await page.waitForTimeout(3500)
+  expect(snapshotFetches).toBe(fetchesAtConverge)
+})

@@ -87,6 +87,13 @@ type RunPreview = {
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { detail?: unknown } | null
+    const detail = typeof body?.detail === 'string'
+      ? body.detail.replace(/\s+/g, ' ').trim().slice(0, 240)
+      : ''
+    if (detail) {
+      throw new Error(`API request failed (${response.status}). ${detail}`)
+    }
     throw new Error(`API request failed (${response.status}). Check that the local backend is running.`)
   }
   return (await response.json()) as T
@@ -745,7 +752,7 @@ export default function App() {
                 >
                   Save experiment draft
                 </button>
-                {draftMessage && <p className="help-text">{draftMessage}</p>}
+                {draftMessage && <p className="help-text" aria-live="polite">{draftMessage}</p>}
               </>
             )}
             {catalog?.storage === 'postgresql' && (

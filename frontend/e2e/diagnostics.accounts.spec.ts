@@ -262,4 +262,21 @@ test('live operator workspace displays project budget, resource accounting, and 
   await expect(page.getByLabel('Measured resources and cancellation latency')).toContainText(
     'Target reset P95: no samples',
   )
+
+  // Surface authoritative server JSON detail messages cleanly on admission rejection.
+  await page.route('**/api/runs', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Active CPU reservation quota exhausted' }),
+      })
+      return
+    }
+    await route.continue()
+  })
+  await page.getByRole('button', { name: /Submit synthetic experiment/ }).click()
+  await expect(
+    page.getByText('API request failed (429). Active CPU reservation quota exhausted'),
+  ).toBeVisible()
 })

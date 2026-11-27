@@ -1,10 +1,10 @@
 {
   "specification": "INTERLEAVE TITAN-20 Architecture",
   "revision": "2026-11-03",
-  "reviewed_head": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
+  "reviewed_head": "c8442e387cb85046c9ec4f90b645ce48d9df679a",
   "last_successful_ci": {
-    "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
-    "run_id": 45879599140
+    "commit": "c8442e387cb85046c9ec4f90b645ce48d9df679a",
+    "run_id": 45954570516
   },
   "scope": "File-level candidate traceability. Status describes the whole requirement and each evidence record has the scope stated in its acceptance record.",
   "requirements": [
@@ -31,6 +31,8 @@
         "backend/tests/test_windows_backup.py",
         "backend/tests/test_cold_restore.py",
         "backend/tests/test_migration_rollback.py",
+        "backend/tests/test_architecture_evolution.py",
+        "backend/tests/test_edge_coverage.py",
         "ci/tests/test_gate_validation.py"
       ],
       "acceptance": "No lost accepted runs or duplicate terminal states",
@@ -68,6 +70,11 @@
           "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
           "run_id": 45879599140,
           "acceptance_record": "Partial B1 evidence: ledger, backup/restore, migration rollback, standby failover, and 471 backend tests (90.31% combined coverage) passed all 10 mandatory CI release-gate jobs."
+        },
+        {
+          "commit": "c8442e387cb85046c9ec4f90b645ce48d9df679a",
+          "run_id": 45954570516,
+          "acceptance_record": "Partial B1 evidence: schema v11 targeted indexes, startup session timeouts, single-pass operations aggregation, and 491 executed backend checks (91.71% combined, 86.06% branch coverage) passed all 10 mandatory CI jobs."
         }
       ]
     },
@@ -88,7 +95,8 @@
       ],
       "tests": [
         "backend/tests/test_fault_matrix.py",
-        "backend/tests/test_native_worker_crash.py"
+        "backend/tests/test_native_worker_crash.py",
+        "backend/tests/test_architecture_evolution.py"
       ],
       "acceptance": "Zero accepted stale-generation results in the declared fault matrix",
       "blockers": [
@@ -99,6 +107,11 @@
           "commit": "281e7423dca8e24e954760a20255a1c48bc2c4e5",
           "run_id": 45879599140,
           "acceptance_record": "Partial B2 evidence: fault matrix and POSIX SIGKILL native-worker crash recovery across PROVISIONING and ACTIVE stages passed Linux CI release-gate."
+        },
+        {
+          "commit": "c8442e387cb85046c9ec4f90b645ce48d9df679a",
+          "run_id": 45954570516,
+          "acceptance_record": "Partial B2 evidence: generation/clock-fenced Ledger and VerificationJobs lease renewal plus graceful worker shutdown passed Linux CI release-gate."
         }
       ]
     },
@@ -185,7 +198,9 @@
       ],
       "tests": [
         "backend/tests/test_witness.py",
-        "backend/tests/test_oracle_workshop.py"
+        "backend/tests/test_oracle_workshop.py",
+        "backend/tests/test_property_invariants.py",
+        "backend/tests/test_edge_coverage.py"
       ],
       "acceptance": "Measure false-positive rate and mutation sensitivity; approved versions only",
       "blockers": [
@@ -220,7 +235,10 @@
       "tests": [
         "backend/tests/test_reducer.py",
         "backend/tests/test_witness_bundle.py",
-        "backend/tests/test_verification_jobs.py"
+        "backend/tests/test_verification_jobs.py",
+        "backend/tests/test_architecture_evolution.py",
+        "backend/tests/test_property_invariants.py",
+        "backend/tests/test_edge_coverage.py"
       ],
       "acceptance": "Independent replay success and trace size",
       "blockers": [
@@ -257,7 +275,9 @@
         "backend/tests/test_multi_project_fair_load.py",
         "backend/tests/test_retry_storm.py",
         "backend/tests/test_worker_deadlocks.py",
-        "backend/tests/test_resource_accounting.py"
+        "backend/tests/test_resource_accounting.py",
+        "backend/tests/test_architecture_evolution.py",
+        "backend/tests/test_property_invariants.py"
       ],
       "acceptance": "Bounded fair load, queue age, start latency and overspend rate",
       "blockers": [
@@ -273,6 +293,11 @@
           "commit": "24db6d881a22f03ff9332014125f3144458f201e",
           "run_id": 45872681107,
           "acceptance_record": "Partial B7 evidence: CPU reservation quotas, worker/child/app/DB accounting, overspend/uncertainty tracking, and 90.26% combined / 83.92% branch backend coverage passed all 10 CI jobs."
+        },
+        {
+          "commit": "c8442e387cb85046c9ec4f90b645ce48d9df679a",
+          "run_id": 45954570516,
+          "acceptance_record": "Partial B7 evidence: single-pass operations SQL aggregation, Hypothesis accounting invariants, and bounded worker lease heartbeats passed Linux CI release-gate."
         }
       ]
     },
@@ -385,7 +410,8 @@
       ],
       "tests": [
         "backend/tests/test_agent_feedback.py",
-        "backend/tests/test_agent_obligations.py"
+        "backend/tests/test_agent_obligations.py",
+        "backend/tests/test_property_invariants.py"
       ],
       "acceptance": "Measure false claims and appropriate abstention",
       "blockers": [
@@ -447,7 +473,8 @@
       ],
       "tests": [
         "backend/tests/test_agent_feedback.py",
-        "backend/tests/test_agent_obligations.py"
+        "backend/tests/test_agent_obligations.py",
+        "backend/tests/test_property_invariants.py"
       ],
       "acceptance": "Incremental adjudicated yield per budget",
       "blockers": [
@@ -504,6 +531,7 @@
       "tests": [
         "backend/tests/test_run_preview.py",
         "backend/tests/test_account_drafts.py",
+        "backend/tests/test_edge_coverage.py",
         "frontend/e2e/drafts.accounts.spec.ts"
       ],
       "acceptance": "Measure valid submission rate and version-bound admission",
@@ -642,6 +670,7 @@
         "backend/tests/test_active_operations.py",
         "backend/tests/test_ops_alerts.py",
         "backend/tests/test_resource_accounting.py",
+        "backend/tests/test_property_invariants.py",
         "frontend/e2e/diagnostics.accounts.spec.ts"
       ],
       "acceptance": "Measure cancellation latency and authoritative state agreement",

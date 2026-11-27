@@ -113,6 +113,8 @@ export default function DurableMonitor({
     let refreshAgain = false
     let activeRequest: AbortController | null = null
     let acceptedHistory: Event[] = []
+    let timer: number | undefined
+    let stream: EventSource | null = null
     setEvents([])
 
     async function refresh() {
@@ -132,6 +134,7 @@ export default function DurableMonitor({
           activeRequest = controller
           try {
             const snapshotResponse = await fetch(`/api/runs/${runId}`, {
+              cache: 'no-store',
               signal: controller.signal,
             })
             if (!snapshotResponse.ok) throw new Error('Snapshot refresh failed')
@@ -146,6 +149,7 @@ export default function DurableMonitor({
             const history: Event[] = []
             for (let pageNumber = 0; pageNumber < 10 && more; pageNumber++) {
               const response = await fetch(`/api/runs/${runId}/events?after=${cursor}`, {
+                cache: 'no-store',
                 signal: controller.signal,
               })
               if (!response.ok) throw new Error('History refresh failed')
@@ -206,6 +210,12 @@ export default function DurableMonitor({
               ))
               setEvents(history)
               setError(more ? 'Timeline is partial; refresh to inspect more events.' : '')
+              // CANCELLED is strictly irreversible: once timeline history has converged,
+              // stop background polling and close the advisory SSE stream cleanly.
+              if (run.status === 'CANCELLED' && !more && cursor >= run.version) {
+                window.clearInterval(timer)
+                stream?.close()
+              }
             }
           } catch {
             if (mounted) setError('Cannot refresh the authoritative run snapshot.')
@@ -221,16 +231,16 @@ export default function DurableMonitor({
 
     void refresh()
     refreshRef.current = () => void refresh()
-    const timer = setInterval(() => void refresh(), 3000)
-    const stream = new EventSource(`/api/runs/${runId}/stream?after=${initial.version}`)
+    timer = window.setInterval(() => void refresh(), 3000)
+    stream = new EventSource(`/api/runs/${runId}/stream?after=${initial.version}`)
     stream.addEventListener('transition', () => void refresh())
     stream.onerror = () => void refresh()
     return () => {
       mounted = false
       refreshRef.current = () => {}
-      clearInterval(timer)
+      window.clearInterval(timer)
       activeRequest?.abort()
-      stream.close()
+      stream?.close()
     }
   }, [runId, onUpdate])
 
@@ -281,7 +291,7 @@ export default function DurableMonitor({
       if (audit.run_version !== initial.version) {
         throw new Error('The run changed during export')
       }
-      const response = await fetch(`/api/runs/${runId}/bundle`)
+      const response = await fetch(`/api/runs/${runId}/bundle`, { cache: 'no-store' })
       if (!response.ok) throw new Error('Bundle export rejected')
       const blob = await response.blob()
       const bytes = await blob.arrayBuffer()
