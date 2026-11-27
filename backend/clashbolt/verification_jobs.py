@@ -9,7 +9,12 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
-from clashbolt.store import GLOBAL_NATIVE_LOCK_ID, GLOBAL_NATIVE_SLOTS, Ledger
+from clashbolt.store import (
+    GLOBAL_NATIVE_LOCK_ID,
+    GLOBAL_NATIVE_SLOTS,
+    Ledger,
+    validate_target_latencies,
+)
 
 KINDS = ("REPLAY", "REDUCE")
 
@@ -132,6 +137,34 @@ class VerificationJobs:
             ).fetchone()
             return {**_public(row), "lease_generation": row["lease_generation"]}
 
+    def renew_lease(
+        self,
+        job_id: UUID,
+        owner: str,
+        generation: int,
+        lease_seconds: int = 30,
+    ) -> bool:
+        """Extend an active verification lease under the current owner and generation."""
+        if not 1 <= len(owner) <= 100 or not 5 <= lease_seconds <= 300:
+            raise ValueError("Invalid verification worker or lease duration")
+        if type(generation) is not int or generation < 1:
+            raise ValueError("Invalid verification lease generation")
+        with self.ledger.connect() as conn:
+            row = conn.execute(
+                """
+                UPDATE verification_job
+                SET lease_until = now() + (%s * interval '1 second'),
+                    updated_at = now()
+                WHERE id = %s AND status = 'RUNNING'
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_until > clock_timestamp()
+                RETURNING id
+                """,
+                (lease_seconds, job_id, owner, generation),
+            ).fetchone()
+            return row is not None
+
     def track_target(
         self, job_id: UUID, owner: str, generation: int, instance_id: UUID
     ) -> bool:
@@ -162,17 +195,28 @@ class VerificationJobs:
             )
             return True
 
-    def mark_target(self, instance_id: UUID, status: str) -> None:
+    def mark_target(
+        self,
+        instance_id: UUID,
+        status: str,
+        *,
+        provision_ms: float | None = None,
+        teardown_ms: float | None = None,
+    ) -> None:
         if status not in ("ACTIVE", "CLEANED", "UNKNOWN"):
             raise ValueError("Invalid verification target state")
+        prov, tear = validate_target_latencies(provision_ms, teardown_ms)
         with self.ledger.connect() as conn:
             conn.execute(
                 """
                 UPDATE verification_target_instance
-                SET status = %s, updated_at = now()
+                SET status = %s,
+                    provision_ms = COALESCE(%s, provision_ms),
+                    teardown_ms = COALESCE(%s, teardown_ms),
+                    updated_at = now()
                 WHERE id = %s AND status != 'CLEANED'
                 """,
-                (status, instance_id),
+                (status, prov, tear, instance_id),
             )
 
     def claim_abandoned_targets(self, limit: int = 8) -> list[UUID]:

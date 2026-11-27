@@ -34,7 +34,7 @@ SCHEMA_LOCK_ID = 538192047
 GLOBAL_NATIVE_LOCK_ID = 538192048
 GLOBAL_NATIVE_SLOTS = 2
 MAX_CLAIM_GENERATIONS = 3
-BASE_SCHEMA_VERSION = 10
+BASE_SCHEMA_VERSION = 11
 MAX_EVENT_VERSION = 2**63 - 1
 _PROJECT_SCHEMA_NAME = re.compile(r'(?:public|cbp_[0-9a-f]{24})\Z')
 
@@ -113,6 +113,15 @@ _SCHEMA = (
     ON experiment_run (status, created_at)
     """,
     """
+    CREATE INDEX IF NOT EXISTS experiment_run_project_created_idx
+    ON experiment_run (project_id, created_at DESC, id DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS experiment_run_preview_complete_idx
+    ON experiment_run (project_id, execution_backend, created_at DESC)
+    WHERE status = 'COMPLETE' AND measured_worker_cpu_ms IS NOT NULL
+    """,
+    """
     CREATE TABLE IF NOT EXISTS target_instance (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES experiment_run(id),
@@ -133,6 +142,14 @@ _SCHEMA = (
     "teardown_ms DOUBLE PRECISION "
     "CHECK (teardown_ms IS NULL OR teardown_ms >= 0)",
     """
+    CREATE INDEX IF NOT EXISTS target_instance_cleanup_idx
+    ON target_instance (status, updated_at)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS target_instance_created_idx
+    ON target_instance (created_at)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS run_transition (
         run_id UUID NOT NULL REFERENCES experiment_run(id),
         version BIGINT NOT NULL,
@@ -141,6 +158,11 @@ _SCHEMA = (
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (run_id, version)
     )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS run_transition_cancel_idx
+    ON run_transition (created_at)
+    WHERE note = 'operator requested cancellation'
     """,
     """
     CREATE TABLE IF NOT EXISTS run_reduction (
@@ -217,6 +239,12 @@ _SCHEMA = (
     CREATE INDEX IF NOT EXISTS verification_target_cleanup_idx
     ON verification_target_instance (status, updated_at)
     """,
+    "ALTER TABLE verification_target_instance ADD COLUMN IF NOT EXISTS "
+    "provision_ms DOUBLE PRECISION "
+    "CHECK (provision_ms IS NULL OR provision_ms >= 0)",
+    "ALTER TABLE verification_target_instance ADD COLUMN IF NOT EXISTS "
+    "teardown_ms DOUBLE PRECISION "
+    "CHECK (teardown_ms IS NULL OR teardown_ms >= 0)",
     """
     CREATE TABLE IF NOT EXISTS witness_export (
         id UUID PRIMARY KEY,
@@ -340,6 +368,25 @@ def _record_schema_revision(conn, component: str, version: int) -> None:
     )
 
 
+def validate_target_latencies(
+    provision_ms: float | None, teardown_ms: float | None
+) -> tuple[float | None, float | None]:
+    """Validate and round optional non-negative finite target lifecycle latencies."""
+    validated: list[float | None] = []
+    for latency in (provision_ms, teardown_ms):
+        if latency is None:
+            validated.append(None)
+        elif (
+            type(latency) not in (int, float)
+            or not math.isfinite(float(latency))
+            or float(latency) < 0
+        ):
+            raise ValueError("Target latency must be a non-negative finite number")
+        else:
+            validated.append(round(float(latency), 3))
+    return validated[0], validated[1]
+
+
 class Ledger:
     def __init__(
         self, dsn: str, *, schema: str = "public", project_id: str = "local",
@@ -364,13 +411,23 @@ class Ledger:
         self.required_role = required_role
 
     def connect(self) -> psycopg.Connection:
-        conn = psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+        if not _PROJECT_SCHEMA_NAME.fullmatch(self.schema):
+            raise ValueError("Unrecognized project database schema")
+        # Never fall back to public from an isolated project: a missing project
+        # table must error, not silently expose another workspace. Also fail
+        # closed on runaway analytical scans or contended lock chains via
+        # connection startup parameters (saving 3 round-trips per connection).
+        conn = psycopg.connect(
+            self.dsn,
+            row_factory=dict_row,
+            connect_timeout=5,
+            options=(
+                f"-c search_path={self.schema} "
+                "-c statement_timeout=30000 "
+                "-c lock_timeout=10000"
+            ),
+        )
         try:
-            # Never fall back to public from an isolated project: a missing
-            # project table must error, not silently expose another workspace.
-            conn.execute(
-                sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema))
-            )
             if self.actor_account_id is not None:
                 # Database row locks span the entire operation. A concurrent
                 # grant revocation waits for this transaction, or a new
@@ -813,19 +870,107 @@ class Ledger:
     def operations(self) -> dict:
         """Snapshot counts only: no worker secrets or target DSNs."""
         with self.connect() as conn:
-            runs = conn.execute(
+            exp_summary = conn.execute(
                 """
-                SELECT status, count(*) AS count FROM experiment_run
-                WHERE project_id = 'local' GROUP BY status
+                SELECT
+                    count(*) FILTER (WHERE status = 'PENDING') AS pending_count,
+                    count(*) FILTER (WHERE status = 'RUNNING') AS running_count,
+                    count(*) FILTER (WHERE status = 'CANCELLING') AS cancelling_count,
+                    count(*) FILTER (WHERE status = 'CANCELLED') AS cancelled_count,
+                    count(*) FILTER (WHERE status = 'COMPLETE') AS complete_count,
+                    count(*) FILTER (WHERE status = 'UNKNOWN') AS unknown_count,
+                    count(*) FILTER (
+                        WHERE execution_backend = 'native-postgresql'
+                          AND status IN ('RUNNING', 'CANCELLING')
+                          AND lease_until > now()
+                    ) AS native_slots_occupied,
+                    count(*) FILTER (
+                        WHERE status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                    ) AS open_runs,
+                    COALESCE(sum(reserved_cpu_ms) FILTER (
+                        WHERE status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                    ), 0) AS open_reserved_cpu_ms,
+                    COALESCE(sum(reserved_target_dbs) FILTER (
+                        WHERE status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                    ), 0) AS open_reserved_target_dbs,
+                    EXTRACT(EPOCH FROM (
+                        now() - min(created_at) FILTER (WHERE status = 'PENDING')
+                    ))::double precision AS oldest_pending_seconds,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS total_runs,
+                    COALESCE(sum(reserved_cpu_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ), 0) AS reserved_cpu_ms_total,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state = 'RECONCILED'
+                    ) AS reconciled_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state = 'PARTIAL'
+                    ) AS partial_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state = 'UNCERTAIN'
+                    ) AS uncertain_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state = 'RELEASED'
+                    ) AS released_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state = 'RESERVED'
+                    ) AS reserved_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND (resource_accounting->'reconciliation'->>'overspent') = 'true'
+                    ) AS overspent_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND (resource_accounting->'reconciliation'->>'overspent')
+                              IN ('true', 'false')
+                          AND accounting_state != 'RELEASED'
+                    ) AS overspend_evaluated_count,
+                    count(*) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                          AND accounting_state IN ('UNCERTAIN', 'PARTIAL')
+                          AND (resource_accounting->'reconciliation'->>'overspent') IS NULL
+                    ) AS overspend_uncertain_count,
+                    sum(measured_worker_cpu_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_worker_cpu_ms_total,
+                    count(measured_worker_cpu_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_worker_cpu_samples,
+                    sum(measured_app_wall_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_app_wall_ms_total,
+                    count(measured_app_wall_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_app_wall_samples,
+                    sum(measured_db_active_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_db_active_ms_total,
+                    count(measured_db_active_ms) FILTER (
+                        WHERE created_at >= now() - interval '7 days'
+                    ) AS measured_db_active_samples
+                FROM experiment_run
+                WHERE project_id = 'local'
                 """
-            ).fetchall()
+            ).fetchone()
             verifications = conn.execute(
                 "SELECT status, count(*) AS count FROM verification_job GROUP BY status"
             ).fetchall()
-            # Base-only ledger installations have no policy schema. Keep the
-            # operational projection usable in both modes, never fabricate a
-            # role-sensitive agent finding from a corrupt decision record.
-            if conn.execute("SELECT to_regclass('agent_plan') AS name").fetchone()["name"]:
+            # Base-only ledger installations have no policy schema. Check both
+            # optional tables in one catalog round-trip.
+            optional_tables = conn.execute(
+                """
+                SELECT to_regclass('agent_plan') AS agent_plan_tbl,
+                       to_regclass('model_budget') AS model_budget_tbl
+                """
+            ).fetchone()
+            if optional_tables["agent_plan_tbl"]:
                 quarantined = conn.execute(
                     """
                     SELECT count(*) AS count FROM agent_plan
@@ -835,62 +980,10 @@ class Ledger:
                 ).fetchone()["count"]
             else:
                 quarantined = 0
-            native_slots = conn.execute(
-                """
-                SELECT count(*) AS occupied FROM experiment_run
-                WHERE project_id = 'local'
-                  AND execution_backend = 'native-postgresql'
-                  AND status IN ('RUNNING', 'CANCELLING')
-                  AND lease_until > now()
-                """
-            ).fetchone()["occupied"]
             quota = conn.execute(
                 """
                 SELECT max_open, max_native_active, max_reserved_cpu_ms
                 FROM project_quota WHERE project_id = 'local'
-                """
-            ).fetchone()
-            open_summary = conn.execute(
-                """
-                SELECT count(*) AS open_runs,
-                       COALESCE(sum(reserved_cpu_ms), 0) AS open_reserved_cpu_ms,
-                       COALESCE(sum(reserved_target_dbs), 0) AS open_reserved_target_dbs
-                FROM experiment_run
-                WHERE project_id = 'local'
-                  AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
-                """
-            ).fetchone()
-            run_resources = conn.execute(
-                """
-                SELECT
-                    count(*) AS total_runs,
-                    COALESCE(sum(reserved_cpu_ms), 0) AS reserved_cpu_ms_total,
-                    count(*) FILTER (WHERE accounting_state = 'RECONCILED') AS reconciled_count,
-                    count(*) FILTER (WHERE accounting_state = 'PARTIAL') AS partial_count,
-                    count(*) FILTER (WHERE accounting_state = 'UNCERTAIN') AS uncertain_count,
-                    count(*) FILTER (WHERE accounting_state = 'RELEASED') AS released_count,
-                    count(*) FILTER (WHERE accounting_state = 'RESERVED') AS reserved_count,
-                    count(*) FILTER (
-                        WHERE (resource_accounting->'reconciliation'->>'overspent') = 'true'
-                    ) AS overspent_count,
-                    count(*) FILTER (
-                        WHERE (resource_accounting->'reconciliation'->>'overspent')
-                              IN ('true', 'false')
-                          AND accounting_state != 'RELEASED'
-                    ) AS overspend_evaluated_count,
-                    count(*) FILTER (
-                        WHERE accounting_state IN ('UNCERTAIN', 'PARTIAL')
-                          AND (resource_accounting->'reconciliation'->>'overspent') IS NULL
-                    ) AS overspend_uncertain_count,
-                    sum(measured_worker_cpu_ms) AS measured_worker_cpu_ms_total,
-                    count(measured_worker_cpu_ms) AS measured_worker_cpu_samples,
-                    sum(measured_app_wall_ms) AS measured_app_wall_ms_total,
-                    count(measured_app_wall_ms) AS measured_app_wall_samples,
-                    sum(measured_db_active_ms) AS measured_db_active_ms_total,
-                    count(measured_db_active_ms) AS measured_db_active_samples
-                FROM experiment_run
-                WHERE project_id = 'local'
-                  AND created_at >= now() - interval '7 days'
                 """
             ).fetchone()
             cancel_latency = conn.execute(
@@ -919,24 +1012,27 @@ class Ledger:
                   AND req.created_at >= now() - interval '7 days'
                 """
             ).fetchone()
-            cancel_inflight = conn.execute(
-                """
-                SELECT
-                    count(*) AS in_flight,
-                    EXTRACT(EPOCH FROM (
-                        now() - min(COALESCE(req.created_at, r.updated_at))
-                    ))::double precision AS oldest_in_flight_seconds
-                FROM experiment_run r
-                LEFT JOIN LATERAL (
-                    SELECT created_at FROM run_transition
-                    WHERE run_id = r.id AND note = 'operator requested cancellation'
-                    ORDER BY version DESC LIMIT 1
-                ) req ON TRUE
-                WHERE r.project_id = 'local' AND r.status = 'CANCELLING'
-                """
-            ).fetchone()
+            if exp_summary["cancelling_count"] > 0:
+                cancel_inflight = conn.execute(
+                    """
+                    SELECT
+                        count(*) AS in_flight,
+                        EXTRACT(EPOCH FROM (
+                            now() - min(COALESCE(req.created_at, r.updated_at))
+                        ))::double precision AS oldest_in_flight_seconds
+                    FROM experiment_run r
+                    LEFT JOIN LATERAL (
+                        SELECT created_at FROM run_transition
+                        WHERE run_id = r.id AND note = 'operator requested cancellation'
+                        ORDER BY version DESC LIMIT 1
+                    ) req ON TRUE
+                    WHERE r.project_id = 'local' AND r.status = 'CANCELLING'
+                    """
+                ).fetchone()
+            else:
+                cancel_inflight = {"in_flight": 0, "oldest_in_flight_seconds": None}
             model_budget_summary = None
-            if conn.execute("SELECT to_regclass('model_budget') AS name").fetchone()["name"]:
+            if optional_tables["model_budget_tbl"]:
                 mb_row = conn.execute(
                     """
                     SELECT call_limit, token_limit, calls_reserved, tokens_reserved,
@@ -976,14 +1072,6 @@ class Ledger:
                     "provider_cost_status": "UNAVAILABLE",
                     "provider_cost_usd": None,
                 }
-            pending_age = conn.execute(
-                """
-                SELECT EXTRACT(EPOCH FROM (now() - min(created_at)))
-                    AS oldest_pending_seconds
-                FROM experiment_run
-                WHERE project_id = 'local' AND status = 'PENDING'
-                """
-            ).fetchone()["oldest_pending_seconds"]
             latency = conn.execute(
                 """
                 SELECT percentile_cont(0.95) WITHIN GROUP (
@@ -1040,8 +1128,20 @@ class Ledger:
                 ORDER BY last_seen DESC LIMIT 20
                 """
             ).fetchall()
+            runs = {
+                status: exp_summary[col]
+                for status, col in (
+                    ("PENDING", "pending_count"),
+                    ("RUNNING", "running_count"),
+                    ("CANCELLING", "cancelling_count"),
+                    ("CANCELLED", "cancelled_count"),
+                    ("COMPLETE", "complete_count"),
+                    ("UNKNOWN", "unknown_count"),
+                )
+                if exp_summary[col] > 0
+            }
             return {
-                "runs": {row["status"]: row["count"] for row in runs},
+                "runs": runs,
                 "verifications": {
                     row["status"]: row["count"] for row in verifications
                 },
@@ -1055,9 +1155,11 @@ class Ledger:
                 ],
                 "responsive_workers": sum(row["responsive"] for row in workers),
                 "quarantined_agent_plans": quarantined,
-                "native_slots_occupied": native_slots,
+                "native_slots_occupied": exp_summary["native_slots_occupied"],
                 "native_slots_limit": quota["max_native_active"] if quota else 2,
-                "oldest_pending_seconds": max(0.0, float(pending_age or 0)),
+                "oldest_pending_seconds": max(
+                    0.0, float(exp_summary["oldest_pending_seconds"] or 0)
+                ),
                 "start_p95_seconds": max(0.0, float(latency or 0)),
                 "cancellation": {
                     "sample_count": cancel_latency["sample_count"],
@@ -1079,53 +1181,53 @@ class Ledger:
                 },
                 "resources": {
                     "project_id": self.project_id,
-                    "open_runs": open_summary["open_runs"],
+                    "open_runs": exp_summary["open_runs"],
                     "max_open": quota["max_open"] if quota else 20,
-                    "open_reserved_cpu_ms": open_summary["open_reserved_cpu_ms"],
+                    "open_reserved_cpu_ms": exp_summary["open_reserved_cpu_ms"],
                     "max_reserved_cpu_ms": (
                         quota["max_reserved_cpu_ms"] if quota else DEFAULT_MAX_RESERVED_CPU_MS
                     ),
-                    "open_reserved_target_dbs": open_summary["open_reserved_target_dbs"],
+                    "open_reserved_target_dbs": exp_summary["open_reserved_target_dbs"],
                     "provider_cost_status": "UNAVAILABLE",
                     "provider_cost_usd": None,
                     "runs_7d": {
-                        "total_runs": run_resources["total_runs"],
-                        "reserved_cpu_ms_total": run_resources["reserved_cpu_ms_total"],
-                        "reconciled_count": run_resources["reconciled_count"],
-                        "partial_count": run_resources["partial_count"],
-                        "uncertain_count": run_resources["uncertain_count"],
-                        "released_count": run_resources["released_count"],
-                        "reserved_count": run_resources["reserved_count"],
-                        "overspent_count": run_resources["overspent_count"],
-                        "overspend_evaluated_count": run_resources["overspend_evaluated_count"],
-                        "overspend_uncertain_count": run_resources["overspend_uncertain_count"],
+                        "total_runs": exp_summary["total_runs"],
+                        "reserved_cpu_ms_total": exp_summary["reserved_cpu_ms_total"],
+                        "reconciled_count": exp_summary["reconciled_count"],
+                        "partial_count": exp_summary["partial_count"],
+                        "uncertain_count": exp_summary["uncertain_count"],
+                        "released_count": exp_summary["released_count"],
+                        "reserved_count": exp_summary["reserved_count"],
+                        "overspent_count": exp_summary["overspent_count"],
+                        "overspend_evaluated_count": exp_summary["overspend_evaluated_count"],
+                        "overspend_uncertain_count": exp_summary["overspend_uncertain_count"],
                         "overspend_rate": (
                             round(
-                                run_resources["overspent_count"]
-                                / run_resources["overspend_evaluated_count"],
+                                exp_summary["overspent_count"]
+                                / exp_summary["overspend_evaluated_count"],
                                 4,
                             )
-                            if run_resources["overspend_evaluated_count"] > 0
+                            if exp_summary["overspend_evaluated_count"] > 0
                             else None
                         ),
                         "measured_worker_cpu_ms_total": (
-                            round(float(run_resources["measured_worker_cpu_ms_total"]), 3)
-                            if run_resources["measured_worker_cpu_samples"] > 0
+                            round(float(exp_summary["measured_worker_cpu_ms_total"]), 3)
+                            if exp_summary["measured_worker_cpu_samples"] > 0
                             else None
                         ),
-                        "measured_worker_cpu_samples": run_resources["measured_worker_cpu_samples"],
+                        "measured_worker_cpu_samples": exp_summary["measured_worker_cpu_samples"],
                         "measured_app_wall_ms_total": (
-                            round(float(run_resources["measured_app_wall_ms_total"]), 3)
-                            if run_resources["measured_app_wall_samples"] > 0
+                            round(float(exp_summary["measured_app_wall_ms_total"]), 3)
+                            if exp_summary["measured_app_wall_samples"] > 0
                             else None
                         ),
-                        "measured_app_wall_samples": run_resources["measured_app_wall_samples"],
+                        "measured_app_wall_samples": exp_summary["measured_app_wall_samples"],
                         "measured_db_active_ms_total": (
-                            round(float(run_resources["measured_db_active_ms_total"]), 3)
-                            if run_resources["measured_db_active_samples"] > 0
+                            round(float(exp_summary["measured_db_active_ms_total"]), 3)
+                            if exp_summary["measured_db_active_samples"] > 0
                             else None
                         ),
-                        "measured_db_active_samples": run_resources["measured_db_active_samples"],
+                        "measured_db_active_samples": exp_summary["measured_db_active_samples"],
                     },
                     "model_budget": model_budget_summary,
                 },
@@ -1607,6 +1709,35 @@ class Ledger:
             _event(conn, claimed, "worker claimed run")
             return _public(claimed, self.project_id)
 
+    def renew_lease(
+        self,
+        run_id: UUID,
+        owner: str,
+        generation: int,
+        lease_seconds: int = 30,
+    ) -> bool:
+        """Extend an active worker claim without mutating lease_generation."""
+        if not owner or len(owner) > 100 or not 5 <= lease_seconds <= 300:
+            raise ValueError("Invalid worker or lease duration")
+        if type(generation) is not int or generation < 1:
+            raise ValueError("Invalid lease generation")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                UPDATE experiment_run
+                SET lease_until = now() + (%s * interval '1 second'),
+                    updated_at = now()
+                WHERE id = %s AND project_id = 'local'
+                  AND status IN ('RUNNING', 'CANCELLING')
+                  AND lease_owner = %s
+                  AND lease_generation = %s
+                  AND lease_until > clock_timestamp()
+                RETURNING id
+                """,
+                (lease_seconds, run_id, owner, generation),
+            ).fetchone()
+            return row is not None
+
     def track_target(
         self, run_id: UUID, generation: int, owner: str, instance_id: UUID
     ) -> bool:
@@ -1647,18 +1778,7 @@ class Ledger:
         """Target records are facts; do not infer run success from cleanup."""
         if status not in ("ACTIVE", "CLEANED", "UNKNOWN"):
             raise ValueError("Invalid target lifecycle status")
-        validated: list[float | None] = []
-        for latency in (provision_ms, teardown_ms):
-            if latency is None:
-                validated.append(None)
-            elif (
-                type(latency) not in (int, float)
-                or not math.isfinite(float(latency))
-                or float(latency) < 0
-            ):
-                raise ValueError("Target latency must be a non-negative finite number")
-            else:
-                validated.append(round(float(latency), 3))
+        prov, tear = validate_target_latencies(provision_ms, teardown_ms)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -1669,7 +1789,7 @@ class Ledger:
                     updated_at = now()
                 WHERE id = %s AND status != 'CLEANED'
                 """,
-                (status, validated[0], validated[1], instance_id),
+                (status, prov, tear, instance_id),
             )
 
     def claim_abandoned_targets(self, limit: int = 8) -> list[UUID]:

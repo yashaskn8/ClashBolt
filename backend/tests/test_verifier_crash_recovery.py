@@ -36,8 +36,8 @@ from clashbolt.worker import process_verification_one
 original = VerificationJobs.mark_target
 
 
-def stop_after_active(self, instance_id, status):
-    original(self, instance_id, status)
+def stop_after_active(self, instance_id, status, *args, **kwargs):
+    original(self, instance_id, status, *args, **kwargs)
     if status == "ACTIVE":
         Path(os.environ["CLASHBOLT_CRASH_MARKER"]).write_text(str(instance_id))
         while True:
@@ -88,22 +88,30 @@ def test_killed_verifier_reclaims_real_target_and_never_accepts_receipt(
     submitted = queue.submit(UUID(run["run_id"]), "REPLAY")
     job_id = UUID(submitted["job_id"])
     marker = tmp_path / "target-ready"
+    stderr_log = tmp_path / "verifier.stderr.log"
     monkeypatch.setenv("CLASHBOLT_TARGET_ADMIN_URL", admin)
     child_env = {
         **os.environ,
         "CLASHBOLT_DATABASE_URL": control,
         "CLASHBOLT_CRASH_MARKER": str(marker),
     }
+    stderr_file = stderr_log.open("w", encoding="utf-8")
     child = subprocess.Popen(
         [sys.executable, "-c", CRASHING_VERIFIER],
-        env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=child_env, stdout=subprocess.DEVNULL, stderr=stderr_file,
     )
     registered = []
     try:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline and not marker.is_file():
             if child.poll() is not None:
-                pytest.fail("Verifier exited before the ACTIVE crash point")
+                stderr_file.flush()
+                diag = stderr_log.read_text(encoding="utf-8", errors="replace")[-3000:]
+                diag = diag.replace(control, "<redacted>").replace(admin, "<redacted>")
+                pytest.fail(
+                    f"Verifier exited before the ACTIVE crash point "
+                    f"(rc={child.returncode}):\n{diag}"
+                )
             time.sleep(0.05)
         assert marker.is_file(), "Verifier did not reach ACTIVE crash point"
         instance_id = UUID(marker.read_text())
@@ -175,6 +183,7 @@ def test_killed_verifier_reclaims_real_target_and_never_accepts_receipt(
         if child.poll() is None:
             child.kill()
         child.wait(timeout=5)
+        stderr_file.close()
         with ledger.connect() as conn:
             registered = [
                 row["id"] for row in conn.execute(
